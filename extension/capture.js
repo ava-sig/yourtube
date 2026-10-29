@@ -3,11 +3,12 @@
   const youtubePlaylistAdapters = [
     { selector: 'ytd-radio-renderer, ytd-compact-radio-renderer', kind: 'mix', allowWatchList: true },
     { selector: 'ytd-grid-playlist-renderer, ytd-compact-playlist-renderer, ytd-playlist-renderer', kind: 'playlist', allowWatchList: true },
-    { selector: 'yt-lockup-view-model', kind: 'playlist', allowWatchList: false }
+    { selector: 'yt-lockup-view-model, ytd-rich-item-renderer', kind: 'playlist', allowWatchList: true, requirePlaylistCue: true }
   ];
   let pending = 0;
   let lastSent = '';
-  let lastPlaylistSearchSignature = '';
+  let lastPlaylistSignature = '';
+  const playlistSyncInFlight = new Set();
   let expandedCount = 0;
   const expandedControls = new WeakSet();
   const observedAvatarImages = new WeakSet();
@@ -80,8 +81,10 @@
   function playlistIdFrom(link) {
     try {
       const url = new URL(link, location.origin);
-      if (!['www.youtube.com', 'm.youtube.com'].includes(url.hostname)) return '';
-      return ['/playlist', '/watch'].includes(url.pathname) ? (url.searchParams.get('list') || '') : '';
+      if (!(url.hostname === 'youtube.com' || url.hostname.endsWith('.youtube.com'))) return '';
+      if (!['/playlist', '/watch'].includes(url.pathname)) return '';
+      const id = url.searchParams.get('list') || '';
+      return /^[A-Za-z0-9_-]{1,160}$/.test(id) ? id : '';
     } catch { return ''; }
   }
 
@@ -333,8 +336,20 @@
 
   function playlistTitleFrom(card, anchor) {
     const titleElement = card?.querySelector('.yt-lockup-metadata-view-model__title, #video-title, #title, h3, [title]');
-    return dedupeLabel(text(titleElement) || titleElement?.getAttribute('title') || anchor?.getAttribute('aria-label') || '')
+    return dedupeLabel(text(titleElement) || titleElement?.getAttribute('title') || anchor?.getAttribute('aria-label') || anchor?.getAttribute('title') || card?.getAttribute('aria-label') || '')
       .replace(/\s*\d[\d,.]*\s+videos?\s*$/i, '').trim();
+  }
+
+  function playlistItemCount(value) {
+    const match = String(value || '').match(/([\d,]+)\s+(?:videos?|songs?|tracks?)\b/i);
+    return match ? Number.parseInt(match[1].replaceAll(',', ''), 10) || 0 : 0;
+  }
+
+  function hasPlaylistCue(card, id) {
+    if (/^RD/i.test(id)) return true;
+    const labels = [card?.getAttribute('aria-label'), card?.querySelector('[aria-label]')?.getAttribute('aria-label'), text(card)].filter(Boolean).join(' ');
+    return /\b(?:playlist|mix)\b|\d[\d,.]*\s+(?:videos?|songs?|tracks?)\b/i.test(labels) ||
+      Boolean(card?.querySelector('ytd-thumbnail-overlay-side-panel-renderer, ytd-thumbnail-overlay-playlist-renderer, yt-playlist-thumbnail, [class*="playlist-thumbnail"]'));
   }
 
   function adaptYouTubePlaylistRenderer(card, adapter) {
@@ -342,15 +357,19 @@
     const anchor = anchors.find(candidate => {
       try {
         const url = new URL(candidate.href, location.origin);
-        return url.pathname === '/playlist' || (adapter.allowWatchList && url.pathname === '/watch');
+        const id = playlistIdFrom(candidate.href);
+        if (!id) return false;
+        return url.pathname === '/playlist' || (adapter.allowWatchList && url.pathname === '/watch' &&
+          (!adapter.requirePlaylistCue || hasPlaylistCue(card, id)));
       } catch { return false; }
     });
     const id = anchor ? playlistIdFrom(anchor.href) : '';
-    if (!id || !/^[A-Za-z0-9_-]{1,160}$/.test(id)) return null;
-    const title = playlistTitleFrom(card, anchor);
-    if (!title || /^watch$/i.test(title)) return null;
-    const itemCountMatch = text(card).match(/([\d,]+)\s+videos?/i);
-    const itemCount = itemCountMatch ? Number.parseInt(itemCountMatch[1].replaceAll(',', ''), 10) : 0;
+    if (!id) return null;
+    const discoveredTitle = playlistTitleFrom(card, anchor);
+    const title = discoveredTitle && !/^watch$/i.test(discoveredTitle)
+      ? discoveredTitle
+      : /^RD/i.test(id) ? 'YouTube Mix' : 'YouTube playlist';
+    const itemCount = playlistItemCount(text(card));
     const image = card.querySelector('ytd-thumbnail img, yt-thumbnail-view-model img, img');
     const channelAnchor = card.querySelector('a[href*="/@"], a[href*="/channel/"], a[href*="/user/"], a[href*="/c/"]');
     return {
@@ -366,18 +385,24 @@
 
   function readPlaylists(renderedVideos) {
     const playlists = new Map();
-    const currentId = new URL(location.href).searchParams.get('list') || '';
-    if (currentId && /^[A-Za-z0-9_-]{1,160}$/.test(currentId)) {
-      const header = document.querySelector('ytd-playlist-header-renderer, ytd-playlist-page-header-renderer, ytd-playlist-sidebar-renderer, yt-page-header-renderer');
-      const title = playlistTitleFrom(header, null) || document.title.replace(/\s*-\s*YouTube.*$/i, '').trim();
-      if (title && !/^YouTube$/i.test(title)) {
+    const currentId = playlistIdFrom(location.href);
+    if (currentId) {
+      const header = document.querySelector('ytd-playlist-header-renderer, ytd-playlist-page-header-renderer, ytd-playlist-sidebar-renderer, ytd-playlist-panel-renderer, yt-page-header-renderer');
+      const playlistTitle = document.querySelector('ytd-playlist-header-renderer #title, ytd-playlist-page-header-renderer #title, ytd-playlist-sidebar-renderer #title, ytd-playlist-panel-renderer #header-title, ytd-playlist-panel-renderer #title, #playlist-title, yt-page-header-view-model #page-header-view-model-title');
+      const pageTitle = location.pathname === '/playlist' ? document.title.replace(/\s*-\s*YouTube.*$/i, '').trim() : '';
+      const discoveredTitle = dedupeLabel(text(playlistTitle) || playlistTitle?.getAttribute('title') || '') || pageTitle;
+      const title = discoveredTitle && !/^YouTube$/i.test(discoveredTitle)
+        ? discoveredTitle
+        : /^RD/i.test(currentId) ? 'YouTube Mix' : 'YouTube playlist';
+      if (title) {
         const headerText = text(header);
-        const countMatch = headerText.match(/([\d,]+)\s+videos?/i);
-        const itemCount = countMatch ? Number.parseInt(countMatch[1].replaceAll(',', ''), 10) : 0;
-        const playlistContainers = [...document.querySelectorAll('ytd-playlist-video-list-renderer, ytd-playlist-panel-renderer, ytd-playlist-video-list-renderer')];
+        const itemCount = Math.max(playlistItemCount(headerText), playlistItemCount(text(playlistTitle)));
+        const playlistContainers = [...document.querySelectorAll('ytd-playlist-video-list-renderer, ytd-playlist-panel-renderer, ytd-playlist-sidebar-renderer')];
         const sourceCards = playlistContainers.length
-          ? playlistContainers.flatMap(container => [...container.querySelectorAll(cardSelector)])
-          : renderedVideos.map(item => item.card);
+          ? [...new Set(playlistContainers.flatMap(container => [...container.querySelectorAll(cardSelector)]))]
+          : location.pathname === '/playlist'
+            ? renderedVideos.map(item => item.card).filter(card => card.matches('ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer'))
+            : [];
         const items = [];
         sourceCards.forEach((card, index) => {
           const video = readCard(card);
@@ -410,6 +435,21 @@
       }
     }
     return [...playlists.values()];
+  }
+
+  function syncPlaylistRecords(playlists) {
+    if (!Array.isArray(playlists) || !playlists.length) return;
+    const signature = JSON.stringify(playlists);
+    if (signature === lastPlaylistSignature || playlistSyncInFlight.has(signature)) return;
+    playlistSyncInFlight.add(signature);
+    chrome.runtime.sendMessage({
+      type: 'yourtube:sync', videos: [], subscriptions: [], playlists,
+      provisionCategory: 'other'
+    }, result => {
+      const runtimeError = chrome.runtime.lastError;
+      playlistSyncInFlight.delete(signature);
+      if (!runtimeError && (result?.ok || result?.queued)) lastPlaylistSignature = signature;
+    });
   }
 
   function readSubscriptions() {
@@ -537,6 +577,7 @@
       channelPendingFinalMessage = message;
     }
     expandMoreControls();
+    syncPlaylistRecords(readPlaylists([...document.querySelectorAll(cardSelector)].map(card => ({ card }))));
     const profile = readChannelProfile();
     const changed = [];
     for (const card of document.querySelectorAll(cardSelector)) {
@@ -662,6 +703,7 @@
     const cards = [...cardsById.values()].map((video, position) => ({ ...video, position }));
     const subscriptions = readSubscriptions();
     const playlistRecords = readPlaylists([...document.querySelectorAll(cardSelector)].map(card => ({ card })));
+    syncPlaylistRecords(playlistRecords);
     if (trackedSearch()) {
       const changedCards = cards.filter(video => {
         const signature = JSON.stringify(video);
@@ -675,22 +717,16 @@
           videos: changedCards, complete: searchComplete
         });
       }
-      const playlistSignature = JSON.stringify(playlistRecords);
-      if (playlistSignature !== lastPlaylistSearchSignature && playlistRecords.length) {
-        lastPlaylistSearchSignature = playlistSignature;
-        chrome.runtime.sendMessage({ type: 'yourtube:sync', videos: [], subscriptions: [], playlists: playlistRecords, provisionCategory: 'other' });
-      }
       return;
     }
     const signature = JSON.stringify([
       cards.map(video => [video.id, video.title, video.channel, video.thumbnail, video.avatar, video.duration, video.section, video.topic, video.sourceChannelKey, video.sourceTab]),
-      subscriptions.map(subscription => [subscription.key, subscription.name]),
-      playlistRecords
+      subscriptions.map(subscription => [subscription.key, subscription.name])
     ]);
     if ((!cards.length && !subscriptions.length) || signature === lastSent) return;
     lastSent = signature;
     chrome.runtime.sendMessage({
-      type: 'yourtube:sync', videos: cards, subscriptions, playlists: playlistRecords,
+      type: 'yourtube:sync', videos: cards, subscriptions,
       provisionCategory: location.pathname === '/' ? 'homepage' : 'other'
     });
   }
@@ -713,6 +749,11 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === 'yourtube:mode-changed') {
+      if (message.mode === 'online') scheduleCapture();
+      sendResponse({ ok: true });
+      return;
+    }
     if (message?.type !== 'yourtube:start-channel-capture') return;
     const captureId = String(message.captureId || '');
     const channelKey = validChannelKey(message.channelKey);

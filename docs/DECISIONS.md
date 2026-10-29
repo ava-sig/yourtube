@@ -100,11 +100,11 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Use a read-only adapter for YouTube playlists
 
-**Decision:** Recognize playlists and Mixes by rendered YouTube structures and IDs, then import their displayed items as read-only local records. Keep local playlists editable in YourTube.
+**Decision:** Normalize YouTube playlist and Mix identity across rendered tile, search, channel, and playlist-page captures. Treat `/playlist?list=` and valid `/watch?list=` links as inputs to one adapter and one sync path. Import captured entries as read-only local records; keep local playlists editable in YourTube.
 
-**Reason:** Homepage/search playlist cards are meaningful content, not just a user's personal playlist list. Renderer adapters can identify them without title-string grep rules.
+**Reason:** Homepage/search/channel playlist cards are meaningful content, not just a user's personal playlist list. Structural cues and list IDs are more stable than title-string rules, and a shared sync path prevents a surface-specific capture from being silently skipped.
 
-**Consequence:** The extension imports what YouTube has rendered; it does not change the user's YouTube playlists or guarantee hidden/unloaded entries are captured.
+**Consequence:** The extension imports what YouTube has rendered; it does not change the user's YouTube playlists or guarantee hidden/unloaded entries are captured. Playlist records discovered from tiles can initially have no entries; opening their YouTube playlist page captures the visible entry list and updates the same record.
 
 ## Keep local metadata bounded and useful
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YourTube Local Feed",
-  "version": "0.5.10",
+  "version": "0.5.12",
   "description": "Capture rendered YouTube feeds, searches, playlists, channel sections, and browser-visible video metadata for your local YourTube library.",
   "permissions": ["storage", "alarms"],
   "action": { "default_title": "YourTube network mode", "default_popup": "popup.html" },

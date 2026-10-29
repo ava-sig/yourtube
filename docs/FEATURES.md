@@ -28,7 +28,7 @@ Search collection requires Online mode and the extension. YouTube-mode results a
 - Local channel pages show captured channel identity, banner/avatar, description, and section tabs for Home, Videos, Shorts, Live, Playlists, and Community.
 - Opening a channel asks the extension to prefetch the requested section first, then the remaining requested sections. Section progress and delivery failures are recorded; channel-section tabs are processed sequentially.
 - Captured cards retain channel and section provenance. The channel page renders saved items while background capture fills more.
-- The adapter recognizes YouTube playlist and Mix renderers structurally. Imports are read-only relative to YouTube.
+- One adapter recognizes playlist and Mix cards across homepage, search, channel playlist tabs, and open playlist pages. It normalizes `/playlist?list=` and `/watch?list=` links and sends metadata and captured entries through the same extension sync path. A capture is marked delivered only after server or retry-queue acknowledgement; open YouTube pages recapture when the app returns Online. Playlist-page entries are taken from the playlist container, so watch recommendations are not mistaken for playlist members. Imports are read-only relative to YouTube; entries still unloaded on YouTube remain marked incomplete.
 - Local playlists support create, rename, add/remove, reorder, Watch later, shuffle, sequential playback, and adding items to the playback queue. Card menus also expose download and recommendation feedback. Share and Report are present as inactive choices.
 
 ## Local playback and Up next

@@ -342,6 +342,8 @@ try { database.exec('ALTER TABLE video_progress ADD COLUMN completed INTEGER NOT
 try { database.exec("ALTER TABLE playlists ADD COLUMN kind TEXT NOT NULL DEFAULT 'playlist'"); } catch (error) {
   if (!String(error.message).includes('duplicate column name') && !String(error.message).includes('no such table')) throw error;
 }
+database.prepare("UPDATE playlists SET kind = 'mix', source_url = 'https://www.youtube.com/watch?list=' || playlist_id WHERE source = 'youtube' AND playlist_id GLOB 'RD*'").run();
+database.prepare("UPDATE playlists SET source_url = 'https://www.youtube.com/playlist?list=' || playlist_id WHERE source = 'youtube' AND kind <> 'mix' AND source_url = ''").run();
 const playlistItemColumns = database.prepare('PRAGMA table_info(playlist_items)').all().map(column => column.name);
 if (playlistItemColumns.length && (!playlistItemColumns.includes('item_id') || !playlistItemColumns.includes('source_key'))) {
   database.exec(`ALTER TABLE playlist_items RENAME TO playlist_items_legacy;
@@ -546,11 +548,15 @@ function cleanPlaylist(value) {
   if (!value || typeof value !== 'object') return null;
   const id = String(value.id || '').trim().slice(0, 160);
   const title = cleanRepeatedLabel(value.title).slice(0, 300);
-  if (!/^[A-Za-z0-9_-]{1,160}$/.test(id) || !title) return null;
-  const sourceUrl = `https://www.youtube.com/playlist?list=${encodeURIComponent(id)}`;
+  if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) return null;
   const items = (Array.isArray(value.items) ? value.items : []).slice(0, 500)
     .map((item, position) => cleanVideo({ ...item, section: 'playlist' }, position))
     .filter(Boolean);
+  if (!title && !items.length) return null;
+  const kind = value.kind === 'mix' || /^RD/i.test(id) ? 'mix' : 'playlist';
+  const sourceUrl = kind === 'mix'
+    ? `https://www.youtube.com/watch?list=${encodeURIComponent(id)}`
+    : `https://www.youtube.com/playlist?list=${encodeURIComponent(id)}`;
   const declaredItemCount = Number.isInteger(value.itemCount)
     ? Math.max(items.length, Math.min(100000, value.itemCount))
     : items.length;
@@ -558,7 +564,7 @@ function cleanPlaylist(value) {
     id,
     title,
     source: 'youtube',
-    kind: value.kind === 'mix' || /^RD/i.test(id) ? 'mix' : 'playlist',
+    kind,
     sourceUrl,
     channel: cleanRepeatedLabel(value.channel).slice(0, 200),
     thumbnail: safeImage(value.thumbnail),
@@ -4075,18 +4081,23 @@ const server = createServer(async (request, response) => {
         incomingPlaylists.forEach(raw => {
           const playlist = cleanPlaylist(raw);
           if (!playlist) return;
-          const existing = database.prepare('SELECT source FROM playlists WHERE playlist_id = ?').get(playlist.id);
+          const existing = database.prepare('SELECT source, title FROM playlists WHERE playlist_id = ?').get(playlist.id);
           if (existing?.source === 'local') return;
+          const playlistTitle = playlist.title || existing?.title || (playlist.kind === 'mix' ? 'YouTube Mix' : 'YouTube playlist');
           database.prepare(`INSERT INTO playlists
             (playlist_id, title, source, kind, source_url, channel, thumbnail, declared_item_count, is_complete, created_at, updated_at)
             VALUES (?, ?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(playlist_id) DO UPDATE SET
-              title = excluded.title, kind = excluded.kind, source_url = excluded.source_url, channel = excluded.channel,
+              title = CASE WHEN lower(excluded.title) IN ('youtube playlist', 'youtube mix')
+                AND playlists.title <> '' AND lower(playlists.title) NOT IN ('youtube playlist', 'youtube mix')
+                THEN playlists.title ELSE excluded.title END,
+              kind = excluded.kind, source_url = excluded.source_url,
+              channel = CASE WHEN excluded.channel <> '' THEN excluded.channel ELSE playlists.channel END,
               thumbnail = CASE WHEN excluded.thumbnail <> '' THEN excluded.thumbnail ELSE playlists.thumbnail END,
               declared_item_count = MAX(playlists.declared_item_count, excluded.declared_item_count),
               is_complete = MAX(playlists.is_complete, excluded.is_complete), updated_at = excluded.updated_at
             WHERE playlists.source = 'youtube'`)
-            .run(playlist.id, playlist.title, playlist.kind, playlist.sourceUrl, playlist.channel, playlist.thumbnail,
+            .run(playlist.id, playlistTitle, playlist.kind, playlist.sourceUrl, playlist.channel, playlist.thumbnail,
               playlist.itemCount, playlist.complete ? 1 : 0, now, now);
           acceptedPlaylists += 1;
           const addItem = database.prepare(`INSERT INTO playlist_items (playlist_id, video_id, position, source_key, added_at)

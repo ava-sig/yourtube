@@ -40,6 +40,12 @@ async function saveMode(mode) {
   await chrome.storage.local.set({ [MODE_KEY]: mode });
   if (mode === 'preparing' || mode === 'offline' && previousMode !== mode) await pauseActiveChannelCaptureForOffline(mode);
   if (mode === 'online' && previousMode !== 'online') {
+    try {
+      const tabs = await chrome.tabs.query({ url: ['https://www.youtube.com/*', 'https://m.youtube.com/*'] });
+      await Promise.all(tabs.filter(tab => tab.id !== undefined).map(tab =>
+        chrome.tabs.sendMessage(tab.id, { type: 'yourtube:mode-changed', mode }).catch(() => {})
+      ));
+    } catch {}
     drainRetryQueue();
     launchNextChannelCapture();
     pollMetadataCaptureQueue();
