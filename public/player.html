@@ -1,0 +1,2079 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <title>YourTube Player</title>
+    <style>
+      :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #0f0f0f; color: #f1f1f1; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; }
+      a { color: inherit; text-decoration: none; }
+      .watch-app { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 0; align-items: start; }
+      .watch-navigation { position: sticky; top: 56px; height: calc(100vh - 56px); min-height: 0; overflow-y: auto; padding: 12px; scrollbar-width: thin; }
+      .watch-nav-link { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 22px; padding: 0 12px; border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      .watch-nav-link:hover, .watch-nav-link.selected { background: #272727; }
+      .watch-nav-link[hidden] { display: none; }
+      .watch-nav-icon { width: 20px; flex: 0 0 20px; text-align: center; font-size: 18px; }
+      .watch-nav-heading { padding: 10px 12px 5px; font-weight: 700; }
+      .watch-nav-divider { height: 1px; margin: 10px 0; border: 0; background: #303030; }
+      .watch-subscriptions { display: grid; }
+      .watch-subscription { min-width: 0; }
+      .watch-subscription .watch-sub-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .watch-sub-avatar { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #303030; font-size: 11px; font-weight: 700; }
+      .watch-sub-avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .watch-sidebar-stats { position: sticky; bottom: 0; display: grid; gap: 7px; margin-top: 14px; padding: 12px 10px 4px; border-top: 1px solid #303030; background: #0f0f0f; color: #aaa; font-size: 11px; }
+      .watch-sidebar-stats-title { color: #ddd; font-size: 12px; font-weight: 700; }
+      .watch-sidebar-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 5px; }
+      .watch-sidebar-stat strong { color: #f1f1f1; font-variant-numeric: tabular-nums; }
+      .watch-content { width: min(100%, 1740px); min-width: 0; margin: 0 auto; padding: 24px 34px 80px; }
+      .watch-header { position: sticky; top: 0; z-index: 20; display: grid; width: 100%; height: 56px; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 24px; padding: 0 24px; background: #0f0f0f; }
+      .header-value-ticker { position: absolute; top: 50%; z-index: 1; height: 36px; display: flex; align-items: center; overflow: hidden; transform: translateY(-50%); pointer-events: none; }
+      .header-value-line { overflow: hidden; color: #ddd; font-size: 13px; font-weight: 550; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+      .header-value-line.is-animating { animation: header-value-cycle 5s ease both; }
+      @keyframes header-value-cycle { 0%, 8% { opacity: 0; transform: translateY(8px); } 16%, 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-7px); } }
+      .header-mode-controls { grid-column: 3; justify-self: end; z-index: 6; display: flex; align-items: center; gap: 4px; }
+      .network-mode-feedback { position: absolute; top: 100%; right: 16px; margin: 0; padding: 8px 12px; border-radius: 0 0 8px 8px; background: #302218; color: #ffd9a0; font-size: 12px; }
+      .network-mode-toggle, .auto-delete-toggle { display: inline-flex; align-items: center; gap: 9px; padding: 6px 4px 6px 10px; border: 0; border-radius: 18px; background: transparent; color: #ddd; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+      .network-mode-switch { position: relative; width: 34px; height: 18px; border-radius: 12px; background: #555; transition: background .18s ease; }
+      .network-mode-switch::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #ddd; content: ''; transition: transform .18s ease; }
+      .network-mode-toggle[aria-checked="true"] .network-mode-switch { background: #3ea6ff; }
+      .network-mode-toggle[aria-checked="true"] .network-mode-switch::after { transform: translateX(16px); background: #07131d; }
+      .auto-delete-toggle[aria-checked="true"] .network-mode-switch { background: #c23b47; }
+      .auto-delete-toggle[aria-checked="true"] .network-mode-switch::after { transform: translateX(16px); background: #fff; }
+      .network-mode-toggle:disabled, .auto-delete-toggle:disabled { opacity: .65; cursor: progress; }
+      .watch-header .brand { margin: 0; }
+      .watch-search { position: absolute; left: calc(50% + 120px); transform: translateX(-50%); width: min(120px, 24vw); height: 40px; display: flex; align-items: center; overflow: visible; border: 1px solid #303030; border-radius: 22px; background: #121212; transition: width .24s ease, border-color .2s ease, background .2s ease; z-index: 5; }
+      .watch-search:hover, .watch-search:focus-within { width: min(560px, calc(100% - 300px)); border-color: #383838; background: #121212; }
+      .watch-search:not(:hover):not(:focus-within)::before { position: absolute; left: 16px; color: #999; content: 'Search'; font-size: 13px; pointer-events: none; }
+      .watch-search input { width: 0; min-width: 0; flex: 1; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: #fff; opacity: 0; transition: opacity .16s ease, padding .16s ease; }
+      .watch-search:hover input, .watch-search:focus-within input { padding: 0 12px 0 16px; opacity: 1; }
+      .watch-search input::placeholder { color: #888; }
+      .watch-search-toggle { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; margin: 0 5px 0 auto; padding: 5px 7px; border: 0; border-radius: 16px; background: #202020; color: #999; font: inherit; font-size: 10px; white-space: nowrap; cursor: pointer; }
+      .watch-search-toggle .mode-label.active { color: #fff; font-weight: 700; }
+      .watch-search-switch { position: relative; width: 28px; height: 16px; border-radius: 12px; background: #555; transition: background .18s ease; }
+      .watch-search-switch::after { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #eee; content: ''; transition: transform .18s ease; }
+      .watch-search-toggle[aria-checked="true"] .watch-search-switch { background: #3ea6ff; }
+      .watch-search-toggle[aria-checked="true"] .watch-search-switch::after { transform: translateX(12px); background: #07131d; }
+      .watch-search:not(:hover):not(:focus-within) input { pointer-events: none; }
+      .watch-search:not(:hover):not(:focus-within) .watch-search-toggle { opacity: 0; pointer-events: none; }
+      .search-dropdown[hidden] { display: none; }
+      .search-dropdown { position: absolute; top: calc(100% + 9px); left: 0; width: min(720px, calc(100vw - 300px)); max-height: min(72vh, 720px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #383838; border-radius: 14px; background: #181818; box-shadow: 0 12px 36px #000b; }
+      .search-dropdown-status { flex: 0 0 auto; padding: 11px 16px; border-bottom: 1px solid #303030; color: #aaa; font-size: 13px; }
+      .search-dropdown-results { display: grid; flex: 1 1 auto; min-height: 0; gap: 14px; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 18px; }
+      .search-result { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 14px; color: inherit; text-decoration: none; }
+      .search-result-thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 9px; background: #292929; }
+      .search-result-thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .search-result-duration, .active-download-duration { position: absolute; right: 5px; bottom: 5px; padding: 2px 4px; border-radius: 3px; background: #000c; color: #fff; font-size: 11px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+      .search-result-title { display: -webkit-box; overflow: hidden; color: #f1f1f1; font-size: 15px; font-weight: 600; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      .search-result-channel, .search-result-meta { margin-top: 6px; color: #aaa; font-size: 13px; }
+      .search-dropdown-empty { padding: 24px 12px; color: #aaa; text-align: center; }
+      .watch-app.expanded { grid-template-columns: minmax(220px, .8fr) minmax(0, 1.5fr) minmax(280px, 1fr); grid-template-areas: "main main main" "navigation comments upnext"; column-gap: 24px; row-gap: 20px; }
+      .watch-app.expanded .watch-content, .watch-app.expanded .watch-layout { display: contents; }
+      .watch-app.expanded .watch-navigation { grid-area: navigation; position: static; max-height: none; }
+      .watch-app.expanded .watch-main { grid-area: main; width: 100%; }
+      .watch-app.expanded .comments { grid-area: comments; margin-top: 0; }
+      .watch-app.expanded .watch-side { grid-area: upnext; position: static; min-width: 0; }
+      .watch-app.expanded .player-shell { max-height: 84vh; }
+      .brand { display: inline-block; margin-bottom: 0; font-size: 20px; font-weight: 700; }
+      .brand { display: inline-flex; align-items: center; }
+      .logo-cycle { position: relative; display: inline-grid; width: 22px; height: 24px; place-items: center; margin-right: 5px; color: #ff0033; }
+      .logo-cycle > span { grid-area: 1 / 1; }
+      .mark { font-size: 22px; line-height: 1; }
+      .brand-download-count { display: inline-grid; min-width: 19px; height: 19px; place-items: center; border-radius: 50%; background: #ff0033; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: 0; opacity: 0; transform: scale(.45); }
+      .logo-cycle.is-downloading .mark { animation: logo-mark-cycle 3.2s ease-in-out infinite; }
+      .logo-cycle.is-downloading .brand-download-count { animation: logo-count-cycle 3.2s ease-in-out infinite; }
+      @keyframes logo-mark-cycle { 0%, 54% { opacity: 1; transform: scale(1) rotate(0); } 64%, 92% { opacity: 0; transform: scale(.55) rotate(-35deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
+      @keyframes logo-count-cycle { 0%, 58% { opacity: 0; transform: scale(.45); } 68%, 90% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.45); } }
+      @media (prefers-reduced-motion: reduce) { .logo-cycle.is-downloading .mark, .logo-cycle.is-downloading .brand-download-count { animation: none; } .logo-cycle.is-downloading .brand-download-count { opacity: 1; transform: none; } .logo-cycle.is-downloading .mark { opacity: 0; } }
+      .stage { display: grid; min-height: 55vh; place-items: center; border-radius: 14px; background: #181818; overflow: hidden; }
+      .stage.playing { min-height: 0; background: #000; }
+      .loading { display: grid; justify-items: center; gap: 14px; color: #ccc; }
+      .spinner { width: 42px; height: 42px; border: 4px solid #444; border-top-color: #f33; border-radius: 50%; animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .progress-wrap { width: min(420px, 78vw); display: grid; gap: 8px; }
+      .progress-track { height: 8px; overflow: hidden; border-radius: 8px; background: #383838; }
+      .progress-fill { height: 100%; width: 0%; border-radius: inherit; background: #f33; transition: width .35s ease; }
+      .progress-track.indeterminate .progress-fill { width: 35%; animation: indeterminate 1.4s ease-in-out infinite; }
+      @keyframes indeterminate { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+      .progress-caption { display: flex; justify-content: space-between; gap: 16px; color: #aaa; font-size: 13px; }
+      .player-shell { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 72vh; overflow: hidden; background: #000; color: #fff; outline: none; }
+      .player-shell:fullscreen { width: 100vw; height: 100vh; max-height: none; aspect-ratio: auto; }
+      .player-shell video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+      .center-play { position: absolute; z-index: 2; top: 50%; left: 50%; display: grid; width: 68px; height: 68px; place-items: center; transform: translate(-50%, -50%); border: 0; border-radius: 50%; background: #e62117; color: #fff; font-size: 27px; cursor: pointer; box-shadow: 0 2px 14px #0008; }
+      .center-play:hover { background: #f12b20; transform: translate(-50%, -50%) scale(1.06); }
+      .player-shell.is-playing .center-play { opacity: 0; pointer-events: none; }
+      .player-controls { position: absolute; right: 0; bottom: 0; left: 0; z-index: 3; padding: 34px 16px 10px; background: linear-gradient(transparent, #000c 35%, #000e); opacity: 1; transition: opacity .2s ease; }
+      .player-shell.controls-hidden .player-controls { opacity: 0; }
+      .player-shell.controls-hidden { cursor: none; }
+      .seek-row { height: 18px; display: flex; align-items: center; margin-bottom: 4px; }
+      .seek { width: 100%; height: 4px; margin: 0; appearance: none; border-radius: 5px; outline: none; cursor: pointer; background: linear-gradient(to right, #f33 0%, #f33 var(--played, 0%), #ffffff70 var(--played, 0%), #ffffff70 100%); }
+      .seek:hover { height: 6px; }
+      .seek::-webkit-slider-thumb { width: 12px; height: 12px; appearance: none; border-radius: 50%; background: #f33; opacity: 0; }
+      .seek:hover::-webkit-slider-thumb, .seek:focus::-webkit-slider-thumb { opacity: 1; }
+      .seek::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #f33; opacity: 0; }
+      .seek:hover::-moz-range-thumb, .seek:focus::-moz-range-thumb { opacity: 1; }
+      .control-row { display: flex; align-items: center; gap: 12px; min-height: 36px; }
+      .control-spacer { flex: 1; }
+      .control-button { display: inline-grid; min-width: 34px; height: 34px; place-items: center; padding: 0 5px; border: 0; border-radius: 4px; background: transparent; color: #fff; font: inherit; font-size: 19px; cursor: pointer; }
+      .control-button:hover { background: #ffffff20; }
+      .download-link { text-decoration: none; }
+      .time-display { color: #eee; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .volume-control { display: flex; align-items: center; gap: 5px; }
+      .volume { width: 76px; accent-color: #f33; cursor: pointer; }
+      .speed-select { max-width: 70px; padding: 5px 4px; border: 0; border-radius: 4px; background: transparent; color: white; font: inherit; cursor: pointer; }
+      .speed-select option { background: #222; }
+      .player-title { position: absolute; top: 0; left: 0; z-index: 2; max-width: 80%; padding: 14px 18px; overflow: hidden; color: white; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; opacity: 0; transition: opacity .2s ease; text-shadow: 0 1px 4px #000; }
+      .player-shell:not(.controls-hidden) .player-title { opacity: 1; }
+      .watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; grid-template-areas: "main upnext" "comments upnext"; gap: 24px; align-items: start; }
+      .watch-main { grid-area: main; min-width: 0; }
+      .downloads-panel { min-height: 55vh; padding: 22px; border-radius: 14px; background: #181818; }
+      .downloads-panel[hidden] { display: none; }
+      .downloads-heading { margin: 0 0 6px; font-size: 22px; }
+      .downloads-subtitle { margin: 0 0 20px; color: #aaa; }
+      .queued-downloads-heading-row { margin: 30px 0 12px; padding-top: 20px; border-top: 1px solid #3a3a3a; }
+      .queued-downloads-heading { margin: 0 0 6px; color: #aaa; font-size: 17px; }
+      .queued-downloads-subtitle { margin: 0 0 16px; color: #777; font-size: 13px; }
+      .paused-downloads-heading { margin: 30px 0 6px; padding-top: 20px; border-top: 1px solid #3a3a3a; color: #aaa; font-size: 17px; }
+      .paused-downloads-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #3a3a3a; }
+      .paused-downloads-heading-row .paused-downloads-heading { margin: 0 0 6px; padding: 0; border: 0; }
+      .paused-downloads-subtitle { margin: 0 0 16px; color: #777; font-size: 13px; }
+      .delete-paused-downloads { padding: 7px 12px; border: 1px solid #594040; border-radius: 16px; background: #302525; color: #d9baba; font: inherit; font-size: 12px; cursor: pointer; }
+      .delete-paused-downloads:hover { background: #443030; }
+      .delete-paused-downloads:disabled { opacity: .5; cursor: default; }
+      .active-downloads { display: grid; gap: 18px; }
+      .active-download { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; align-items: center; }
+      .active-download.is-paused { opacity: .82; }
+      .active-download.is-paused .active-download-thumb img { filter: grayscale(.8); opacity: .58; }
+      .active-download-thumb { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #292929; }
+      .active-download-thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .active-download-thumb-actions { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; background: #0008; opacity: 0; pointer-events: none; transition: opacity .16s ease; }
+      .active-download-thumb:hover .active-download-thumb-actions, .active-download-thumb:focus-within .active-download-thumb-actions { opacity: 1; pointer-events: auto; }
+      .active-download-thumb-action { display: grid; width: 40px; height: 40px; padding: 0; place-items: center; border: 1px solid #ffffff65; border-radius: 50%; background: #171717eF; color: #fff; cursor: pointer; transition: background .16s ease, transform .16s ease; }
+      .active-download-thumb-action:hover { transform: scale(1.08); background: #333; }
+      .active-download-thumb-action.finish { border-color: #f33; background: #d22e2e; }
+      .active-download-thumb-action.finish:hover { background: #f33; }
+      .active-download-thumb-action:disabled { opacity: .6; cursor: progress; transform: none; }
+      .active-download-thumb-action svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+      .active-download-paused-overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #0009; color: #ddd; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+      .active-download-title { margin: 0 0 3px; overflow: hidden; font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .active-download-detail { margin-bottom: 9px; color: #aaa; font-size: 12px; }
+      .active-download-size { margin: -4px 0 9px; color: #bbb; font-size: 12px; }
+      .active-download-progress { height: 7px; overflow: hidden; border-radius: 8px; background: #383838; }
+      .active-download-progress-fill { height: 100%; border-radius: inherit; background: #f33; transition: width .45s ease; }
+      .active-download-progress.indeterminate .active-download-progress-fill { width: 35%; animation: indeterminate 1.4s ease-in-out infinite; }
+      .active-download-status { display: flex; justify-content: space-between; gap: 10px; margin-top: 5px; color: #aaa; font-size: 11px; }
+      .active-download-paused-message { margin-top: 8px; color: #efc2c2; font-size: 12px; line-height: 1.45; }
+      .active-download-feedback { margin-top: 7px; color: #c3c3c3; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+      .active-download-feedback .retry-timing { display: block; margin-top: 3px; color: #999; font-size: 11px; }
+      .active-download-retry { margin-top: 9px; padding: 6px 12px; border: 1px solid #555; border-radius: 16px; background: #292929; color: #ddd; cursor: pointer; }
+      .active-download-retry:hover { background: #383838; }
+      .active-download-live-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .active-download-live-actions button { padding: 7px 12px; border: 1px solid #555; border-radius: 16px; background: #292929; color: #eee; cursor: pointer; }
+      .active-download-live-actions .discard-live-button { border-color: #594040; background: #302525; color: #d9baba; }
+      .active-download-live-actions button:disabled { opacity: .55; cursor: default; }
+      .downloads-empty { padding: 40px 12px; color: #aaa; text-align: center; }
+      .watch-side { grid-area: upnext; position: sticky; top: 16px; min-width: 0; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+      .side-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+      .side-heading { margin: 0; font-size: 18px; }
+      .autoplay-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 5px 0 5px 8px; border: 0; background: transparent; color: #ddd; font: inherit; font-size: 13px; cursor: pointer; }
+      .autoplay-toggle[hidden] { display: none; }
+      .autoplay-switch { position: relative; width: 34px; height: 18px; border-radius: 12px; background: #555; transition: background .18s ease; }
+      .autoplay-switch::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #ddd; content: ''; transition: transform .18s ease; }
+      .autoplay-toggle[aria-pressed="true"] .autoplay-switch { background: #3ea6ff; }
+      .autoplay-toggle[aria-pressed="true"] .autoplay-switch::after { transform: translateX(16px); background: #07131d; }
+      .recommendations { display: grid; gap: 10px; }
+      .watch-playlist { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid #383838; }
+      .playlist-recommendations { max-height: min(48vh, 620px); overflow: auto; overscroll-behavior: contain; }
+      .recommendation[aria-current="true"] { background: #282828; outline: 1px solid #555; }
+      .playlist-now-playing { color: #3ea6ff; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+      .recommendation-section { display: grid; gap: 10px; min-width: 0; }
+      .recommendation-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .recommendation-section-title { margin: 4px 0 2px; color: #eee; font-size: 13px; font-weight: 700; }
+      .recommendation-section-actions { display: flex; align-items: center; gap: 5px; }
+      .recommendation-section-toggle { position: relative; flex: 0 0 auto; width: 34px; height: 18px; padding: 0; border: 0; border-radius: 12px; background: #555; cursor: pointer; transition: background .18s ease; }
+      .recommendation-section-toggle::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #ddd; content: ''; transition: transform .18s ease; }
+      .recommendation-section-toggle[aria-pressed="true"] { background: #3ea6ff; }
+      .recommendation-section-toggle[aria-pressed="true"]::after { transform: translateX(16px); background: #07131d; }
+      .recommendation-section-expand { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #ddd; font-size: 19px; cursor: pointer; }
+      .recommendation-section-expand:hover { background: #ffffff1a; }
+      .recommendation-section-expand[hidden], .recommendation-section-body[hidden] { display: none; }
+      .recommendation-section-body { display: grid; gap: 10px; }
+      .recommendation-show-more { justify-self: start; padding: 5px 10px; border: 1px solid #454545; border-radius: 18px; background: #222; color: #eee; font: inherit; font-size: 12px; cursor: pointer; }
+      .recommendation-show-more:hover { background: #333; }
+      .recommendation-separator { height: 1px; margin: 4px 0 6px; background: #fff; opacity: .8; }
+      .recommendation { display: grid; grid-template-columns: 164px minmax(0, 1fr); gap: 10px; color: inherit; text-decoration: none; }
+      .recommendation:hover .recommendation-title { color: #fff; }
+      .recommendation-thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #222; }
+      .recommendation-thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .recommendation-progress-track { position: absolute; right: 0; bottom: 0; left: 0; z-index: 2; height: 2px; background: #ffffff70; }
+      .recommendation-progress-fill { height: 100%; background: #f33; }
+      .recommendation-duration { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; background: #000c; font-size: 11px; }
+      .recommendation-title { display: -webkit-box; overflow: hidden; color: #eee; font-size: 13px; font-weight: 600; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+      .recommendation-channel { margin-top: 5px; overflow: hidden; color: #aaa; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .recommendation-channel-link { display: table; cursor: pointer; }
+      .recommendation-channel-link:hover { color: #f1f1f1; text-decoration: underline; }
+      .recommendation-reason { margin-bottom: 4px; color: #aaa; font-size: 11px; line-height: 1.3; }
+      .expand-toggle[aria-pressed="true"] { background: #ffffff26; }
+      .comments { grid-area: comments; min-width: 0; margin-top: 28px; }
+      .comments-heading { display: flex; align-items: baseline; gap: 10px; margin: 0 0 16px; font-size: 20px; }
+      .comments-count { color: #aaa; font-size: 14px; font-weight: 400; }
+      .comments-list { display: grid; gap: 20px; }
+      .comment { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; }
+      .comment-avatar { display: grid; width: 40px; height: 40px; place-items: center; overflow: hidden; border-radius: 50%; background: #444; color: #eee; font-weight: 600; }
+      .comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .comment-author { color: #eee; font-size: 13px; font-weight: 600; }
+      .comment-time { margin-left: 6px; color: #999; font-size: 12px; font-weight: 400; }
+      .comment-text { margin-top: 4px; color: #eee; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .comment-likes { margin-top: 7px; color: #aaa; font-size: 12px; }
+      .comments-state, .recommendations-state { color: #aaa; font-size: 14px; }
+      .comments-loading { display: flex; align-items: center; gap: 10px; }
+      .small-spinner { width: 18px; height: 18px; border: 2px solid #555; border-top-color: #f33; border-radius: 50%; animation: spin .8s linear infinite; }
+      @media (max-width: 900px) { .watch-app:not(.expanded) { grid-template-columns: 72px minmax(0, 1fr); gap: 0; } .watch-navigation { padding: 10px 6px; } .watch-nav-link { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 2px; font-size: 10px; } .watch-nav-icon { font-size: 18px; } .watch-nav-label, .watch-nav-heading, .watch-nav-divider, .watch-subscriptions, .watch-sub-more, .watch-nav-more { display: none; } .watch-header .watch-search { left: calc(50% + 36px); } }
+      @media (max-width: 900px) { .watch-sidebar-stats { gap: 5px; padding: 9px 2px 3px; font-size: 9px; } .watch-sidebar-stats-title { display: none; } .watch-sidebar-stat { flex-direction: column; align-items: center; gap: 0; line-height: 1.15; } .watch-sidebar-stat span { color: #999; } .watch-sidebar-stat strong { font-size: 10px; } }
+      @media (max-width: 980px) { .watch-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "comments" "upnext"; gap: 28px; } .watch-side { position: static; } .recommendation { grid-template-columns: minmax(140px, 28%) minmax(0, 1fr); } .watch-app.expanded { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "main main" "navigation upnext" "comments comments"; } .watch-app.expanded .watch-layout { display: contents; } }
+      @media (max-width: 620px) { .watch-content { padding: 14px 12px 60px; } .watch-app:not(.expanded) { grid-template-columns: 58px minmax(0, 1fr); gap: 0; } .watch-navigation { padding: 10px 4px; } .watch-nav-link { min-height: 40px; } .watch-header .watch-search { left: calc(50% + 29px); } }
+      @media (max-width: 560px) { .watch-app.expanded { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "navigation" "comments" "upnext"; } }
+      @media (max-width: 560px) { .watch-header { gap: 10px; padding: 0 10px; } .watch-header .brand { font-size: 17px; } .watch-header .watch-search { left: calc(50% + 29px); width: 88px; } .watch-search:hover, .watch-search:focus-within { width: min(100%, calc(100vw - 110px)); } .watch-search-toggle { gap: 4px; padding-inline: 5px; font-size: 9px; } .watch-search-switch { width: 24px; } .watch-search-toggle[aria-checked="true"] .watch-search-switch::after { transform: translateX(8px); } .search-dropdown { width: min(620px, calc(100vw - 86px)); } .search-dropdown-status { padding-inline: 12px; } .search-dropdown-results { padding: 12px; } .search-result { grid-template-columns: 120px minmax(0,1fr); gap: 10px; } .search-result-title { font-size: 13px; } .search-result-channel, .search-result-meta { font-size: 11px; } }
+      @media (max-width: 560px) { .player-controls { padding: 25px 8px 6px; } .control-row { gap: 4px; } .volume { width: 48px; } .time-display { font-size: 11px; } .control-button { min-width: 30px; } }
+      @media (max-width: 560px) { .downloads-panel { padding: 16px 12px; } .active-download { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; } .active-download-title { font-size: 13px; white-space: normal; } }
+      @media (prefers-reduced-motion: reduce) { .header-value-line.is-animating { animation: none; opacity: 1; transform: none; } }
+      h1 { margin: 18px 0 2px; font-size: 21px; }
+      .channel, .muted { color: #aaa; }
+      .watch-channel-link { color: #aaa; text-decoration: none; }
+      .watch-channel-link:hover { color: #f1f1f1; text-decoration: underline; }
+      .view-count { margin-top: 4px; color: #aaa; font-size: 13px; }
+      .error { max-width: 620px; padding: 0 20px; text-align: center; }
+      .error h2 { color: #ff9b9b; }
+      .retry { margin-top: 12px; padding: 9px 14px; border: 0; border-radius: 18px; background: #303030; color: white; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <header class="watch-header">
+      <a class="brand" id="brand-link" href="/" aria-label="YourTube home"><span class="logo-cycle" id="brand-cycle" aria-hidden="true"><span class="mark">▶</span><span class="brand-download-count" id="brand-download-count">0</span></span> YourTube</a>
+      <div id="header-value-ticker" class="header-value-ticker" aria-live="off"><span class="header-value-line"></span></div>
+      <form id="watch-search" class="watch-search" role="search">
+        <input id="watch-search-input" type="search" maxlength="200" placeholder="Search YouTube" aria-label="Search videos" tabindex="0" autocomplete="off" />
+        <button id="watch-search-toggle" class="watch-search-toggle" type="button" role="switch" aria-checked="true" aria-label="Search YouTube"><span class="mode-label">Local</span><span class="watch-search-switch" aria-hidden="true"></span><span class="mode-label active">YouTube</span></button>
+        <div id="search-dropdown" class="search-dropdown" hidden><div id="search-dropdown-status" class="search-dropdown-status" aria-live="polite"></div><div id="search-dropdown-results" class="search-dropdown-results"></div></div>
+      </form>
+      <div class="header-mode-controls">
+        <button id="auto-delete-toggle" class="auto-delete-toggle" type="button" role="switch" aria-checked="false" aria-label="Automatically delete media after 24 hours"><span>Auto-delete</span><span class="network-mode-switch" aria-hidden="true"></span></button>
+        <button id="network-mode-toggle" class="network-mode-toggle" type="button" role="switch" aria-checked="true"><span id="network-mode-label">Online</span><span class="network-mode-switch" aria-hidden="true"></span></button>
+      </div>
+      <p id="network-mode-feedback" class="network-mode-feedback" role="status" hidden></p>
+    </header>
+    <div id="watch-app" class="watch-app">
+    <aside class="watch-navigation" aria-label="Main navigation">
+      <a class="watch-nav-link selected" href="/"><span class="watch-nav-icon">⌂</span><span class="watch-nav-label">Home</span></a>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">▣</span><span class="watch-nav-label">Shorts</span></a>
+      <a class="watch-nav-link" href="/?view=downloaded"><span class="watch-nav-icon">⇩</span><span class="watch-nav-label">Downloaded</span></a>
+      <hr class="watch-nav-divider" />
+      <div class="watch-nav-heading">Subscriptions</div>
+      <div id="watch-subscriptions" class="watch-subscriptions"></div>
+      <button id="watch-sub-more" class="watch-nav-link watch-sub-more" type="button">⌄ <span>Show more</span></button>
+      <hr class="watch-nav-divider" />
+      <div class="watch-nav-heading">You ›</div>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">◉</span><span class="watch-nav-label">Your channel</span></a>
+      <a class="watch-nav-link" href="/?view=history"><span class="watch-nav-icon">◷</span><span class="watch-nav-label">History</span></a>
+      <a class="watch-nav-link" href="/?view=playlists"><span class="watch-nav-icon">☷</span><span class="watch-nav-label">Playlists</span></a>
+      <a class="watch-nav-link" href="/?view=playlists&amp;playlist=watch-later"><span class="watch-nav-icon">◷</span><span class="watch-nav-label">Watch later</span></a>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">♡</span><span class="watch-nav-label">Liked videos</span></a>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">▣</span><span class="watch-nav-label">Your videos</span></a>
+      <button id="watch-nav-more" class="watch-nav-link watch-nav-more" type="button">⌄ <span class="watch-nav-label">Show more</span></button>
+      <a id="watch-nav-clips" class="watch-nav-link" href="/" hidden><span class="watch-nav-icon">▣</span><span class="watch-nav-label">Clips</span></a>
+      <hr class="watch-nav-divider" />
+      <div class="watch-nav-heading">Explore ›</div>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">♫</span><span class="watch-nav-label">Music</span></a>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">▣</span><span class="watch-nav-label">Movies &amp; TV</span></a>
+      <a class="watch-nav-link" href="/"><span class="watch-nav-icon">◉</span><span class="watch-nav-label">Live</span></a>
+      <footer class="watch-sidebar-stats" aria-label="YourTube statistics">
+        <div class="watch-sidebar-stats-title">YourTube stats</div>
+        <div class="watch-sidebar-stat" title="Local media files"><span>Local files</span><strong id="stat-local-files">—</strong></div>
+        <div class="watch-sidebar-stat" title="Media space used on disk"><span>Media on disk</span><strong id="stat-media-bytes">—</strong></div>
+        <div class="watch-sidebar-stat" title="Historical local views"><span>Views</span><strong id="stat-historical-views">—</strong></div>
+        <div class="watch-sidebar-stat" title="Unique video stubs received from the browser extension"><span>Extension stubs</span><strong id="stat-extension-videos">—</strong></div>
+        <div class="watch-sidebar-stat" id="stat-duration-baseline-row" title="Waiting for extension 0.4.0 captures"><span>Extension duration baseline</span><strong id="stat-duration-baseline">—</strong></div>
+      </footer>
+    </aside>
+    <div class="watch-content">
+    <main class="watch-layout">
+      <section class="watch-main">
+        <div id="watch-stage" class="watch-only"><div id="stage" class="stage"><div class="loading"><div class="spinner"></div><div>Preparing your local video…</div></div></div>
+        <h1 id="title"></h1>
+        <div id="channel" class="channel"></div>
+        <div id="view-count" class="view-count"></div></div>
+        <section id="downloads-panel" class="downloads-panel" hidden aria-labelledby="downloads-heading">
+          <h1 id="downloads-heading" class="downloads-heading">Downloads in progress</h1>
+          <p id="downloads-subtitle" class="downloads-subtitle">Live progress for videos being added to your local library.</p>
+          <div id="active-downloads" class="active-downloads" aria-live="polite"></div>
+          <div class="queued-downloads-heading-row" id="queued-downloads-heading-row" hidden>
+            <h2 id="queued-downloads-heading" class="queued-downloads-heading"></h2>
+            <p id="queued-downloads-subtitle" class="queued-downloads-subtitle">These videos will start after the active download finishes.</p>
+            <div id="queued-downloads" class="active-downloads" aria-live="polite"></div>
+          </div>
+          <div class="paused-downloads-heading-row" id="paused-downloads-heading-row" hidden>
+            <h2 id="paused-downloads-heading" class="paused-downloads-heading"></h2>
+            <button id="delete-paused-downloads" class="delete-paused-downloads" type="button">Delete all paused</button>
+          </div>
+          <p id="paused-downloads-subtitle" class="paused-downloads-subtitle" hidden></p>
+          <div id="paused-downloads" class="active-downloads" aria-live="polite"></div>
+        </section>
+      </section>
+      <aside class="watch-side" aria-labelledby="up-next-heading">
+        <section id="watch-playlist" class="watch-playlist" hidden aria-labelledby="watch-playlist-heading">
+          <div class="side-heading-row"><h2 class="side-heading" id="watch-playlist-heading">Playlist</h2><button id="playlist-shuffle-toggle" class="autoplay-toggle" type="button" aria-pressed="false" aria-label="Shuffle off"><span>Shuffle</span><span class="autoplay-switch" aria-hidden="true"></span></button></div>
+          <div id="watch-playlist-items" class="recommendations playlist-recommendations"></div>
+        </section>
+        <div class="side-heading-row">
+          <h2 class="side-heading" id="up-next-heading">Up next</h2>
+          <button id="autoplay-toggle" class="autoplay-toggle" type="button" aria-pressed="true" aria-label="Autoplay on"><span>Autoplay</span><span class="autoplay-switch" aria-hidden="true"></span></button>
+        </div>
+        <div id="recommendations" class="recommendations"><div class="recommendations-state">Loading saved videos…</div></div>
+      </aside>
+      <section id="watch-comments" class="comments" aria-labelledby="comments-heading">
+        <h2 class="comments-heading" id="comments-heading">Comments <span id="comments-count" class="comments-count"></span></h2>
+        <div id="comments-state" class="comments-state"><div class="comments-loading"><span class="small-spinner" aria-hidden="true"></span><span>Comments will load with the video…</span></div></div>
+        <div id="comments-list" class="comments-list"></div>
+      </section>
+    </main>
+    </div>
+    </div>
+    <script>
+      const isDownloadsView = location.pathname === '/downloads';
+      const videoId = isDownloadsView ? '' : location.pathname.split('/').pop();
+      const recommendationSearchId = new URLSearchParams(location.search).get('yourtubeSearchId') || '';
+      const queueItemId = new URLSearchParams(location.search).get('yourtubeQueueItem') || '';
+      const playlistId = new URLSearchParams(location.search).get('yourtubePlaylist') || '';
+      const requestedPlaylistPosition = Math.max(0, Number.parseInt(new URLSearchParams(location.search).get('yourtubePlaylistPosition') || '0', 10) || 0);
+      const watchApp = document.querySelector('#watch-app');
+      const stage = document.querySelector('#stage');
+      const title = document.querySelector('#title');
+      const channel = document.querySelector('#channel');
+      const viewCount = document.querySelector('#view-count');
+      const autoplayToggle = document.querySelector('#autoplay-toggle');
+      const recommendationsList = document.querySelector('#recommendations');
+      const watchSide = document.querySelector('.watch-side');
+      const watchPlaylist = document.querySelector('#watch-playlist');
+      const watchPlaylistHeading = document.querySelector('#watch-playlist-heading');
+      const watchPlaylistItems = document.querySelector('#watch-playlist-items');
+      const playlistShuffleToggle = document.querySelector('#playlist-shuffle-toggle');
+      const subscriptionList = document.querySelector('#watch-subscriptions');
+      const subscriptionMore = document.querySelector('#watch-sub-more');
+      const navigationMore = document.querySelector('#watch-nav-more');
+      const navigationClips = document.querySelector('#watch-nav-clips');
+      navigationMore.addEventListener('click', () => {
+        navigationClips.hidden = !navigationClips.hidden;
+        navigationMore.innerHTML = `${navigationClips.hidden ? '⌄' : '⌃'} <span class="watch-nav-label">${navigationClips.hidden ? 'Show more' : 'Show less'}</span>`;
+      });
+      const sidebarStats = {
+        localFiles: document.querySelector('#stat-local-files'),
+        mediaBytes: document.querySelector('#stat-media-bytes'),
+        historicalViews: document.querySelector('#stat-historical-views'),
+        extensionVideos: document.querySelector('#stat-extension-videos'),
+        durationBaseline: document.querySelector('#stat-duration-baseline'),
+        durationBaselineRow: document.querySelector('#stat-duration-baseline-row')
+      };
+      const brandCycle = document.querySelector('#brand-cycle');
+      const brandDownloadCount = document.querySelector('#brand-download-count');
+      const brandLink = document.querySelector('#brand-link');
+      const downloadsPanel = document.querySelector('#downloads-panel');
+      const activeDownloadsList = document.querySelector('#active-downloads');
+      const queuedDownloadsList = document.querySelector('#queued-downloads');
+      const queuedDownloadsHeadingRow = document.querySelector('#queued-downloads-heading-row');
+      const queuedDownloadsHeading = document.querySelector('#queued-downloads-heading');
+      const pausedDownloadsList = document.querySelector('#paused-downloads');
+      const pausedDownloadsHeadingRow = document.querySelector('#paused-downloads-heading-row');
+      const deletePausedDownloadsButton = document.querySelector('#delete-paused-downloads');
+      let activeDownloadsTimer = null;
+      let recommendationSearchTimer = null;
+      const searchForm = document.querySelector('#watch-search');
+      const searchInput = document.querySelector('#watch-search-input');
+      const searchToggle = document.querySelector('#watch-search-toggle');
+      const searchDropdown = document.querySelector('#search-dropdown');
+      const searchDropdownStatus = document.querySelector('#search-dropdown-status');
+      const searchDropdownResults = document.querySelector('#search-dropdown-results');
+      const networkModeToggle = document.querySelector('#network-mode-toggle');
+      const networkModeLabel = document.querySelector('#network-mode-label');
+      const networkModeFeedback = document.querySelector('#network-mode-feedback');
+      const autoDeleteToggle = document.querySelector('#auto-delete-toggle');
+      let networkMode = 'online';
+      let autoDeleteEnabled = false;
+      let activeVideoChannelKey = '';
+      let autoDeleteUpdatedAt = '';
+      let offlinePreparation = { phase: 'comments', completed: 0, total: 0 };
+      function attachThumbnailFallback(image, video) {
+        image.addEventListener('error', () => {
+          const standard = video?.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : '';
+          if (!image.dataset.fallbackTried && networkMode === 'online' && standard && image.src !== standard) {
+            image.dataset.fallbackTried = 'true';
+            image.src = standard;
+          } else if (image.dataset.placeholderTried) image.remove();
+          else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; }
+        });
+      }
+      async function refreshAutoDelete() {
+        try {
+          const response = await fetch(`/api/auto-delete?refresh=${Date.now()}`, { cache: 'no-store' });
+          if (!response.ok) return;
+          const state = await response.json();
+          const previous = autoDeleteEnabled;
+          autoDeleteEnabled = Boolean(state.enabled);
+          autoDeleteUpdatedAt = state.updatedAt || '';
+          autoDeleteToggle.setAttribute('aria-checked', String(autoDeleteEnabled));
+          if (previous !== autoDeleteEnabled) loadRecommendations();
+        } catch {}
+      }
+      async function refreshNetworkMode() {
+        try {
+          const response = await fetch(`/api/mode?refresh=${Date.now()}`, { cache: 'no-store' });
+          if (!response.ok) return;
+          const state = await response.json();
+          const previousMode = networkMode;
+          networkMode = state.mode;
+          offlinePreparation = state.preparation || offlinePreparation;
+          networkModeFeedback.textContent = state.connectivityNotice || '';
+          networkModeFeedback.hidden = !state.connectivityNotice;
+          networkModeLabel.textContent = networkMode === 'preparing' ? `Preparing ${offlinePreparation.phase} ${offlinePreparation.completed}/${offlinePreparation.total}` : networkMode === 'offline' ? 'Offline' : 'Online';
+          networkModeToggle.setAttribute('aria-checked', String(networkMode === 'online'));
+          networkModeToggle.disabled = networkMode === 'preparing';
+          if (['online', 'offline'].includes(networkMode) && previousMode !== networkMode) window.postMessage({ type: 'yourtube:mode-change', mode: networkMode }, location.origin);
+          if (networkMode === 'offline' && previousMode !== 'offline') {
+            searchSource = 'local';
+            updateSearchMode();
+            if (searchInput.value.trim().length >= 2) beginTypedSearch(searchInput.value.trim());
+            loadRecommendations();
+          }
+        } catch {}
+      }
+      networkModeToggle.addEventListener('click', async () => {
+        const mode = networkMode === 'online' ? 'offline' : 'online';
+        networkModeToggle.disabled = true;
+        try {
+          const response = await fetch('/api/mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode }) });
+          const state = await response.json();
+          if (!response.ok && response.status !== 202) throw new Error(state.error || 'Could not change mode.');
+          networkMode = state.mode;
+          offlinePreparation = state.preparation || offlinePreparation;
+          window.postMessage({ type: 'yourtube:mode-change', mode }, location.origin);
+          refreshNetworkMode();
+        } catch (error) {
+          networkModeFeedback.textContent = error.message;
+          networkModeFeedback.hidden = false;
+          networkModeToggle.disabled = false;
+        }
+      });
+      autoDeleteToggle.addEventListener('click', async () => {
+        autoDeleteToggle.disabled = true;
+        try {
+          const response = await fetch('/api/auto-delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: !autoDeleteEnabled, expectedUpdatedAt: autoDeleteUpdatedAt }) });
+          const state = await response.json();
+          if (typeof state.enabled === 'boolean') {
+            autoDeleteEnabled = state.enabled;
+            autoDeleteUpdatedAt = state.updatedAt || autoDeleteUpdatedAt;
+            autoDeleteToggle.setAttribute('aria-checked', String(autoDeleteEnabled));
+          }
+          if (!response.ok) throw new Error(state.error || 'Could not change auto-delete setting.');
+          autoDeleteEnabled = Boolean(state.enabled);
+          autoDeleteUpdatedAt = state.updatedAt || '';
+          autoDeleteToggle.setAttribute('aria-checked', String(autoDeleteEnabled));
+          loadRecommendations();
+        } catch (error) {
+          autoDeleteToggle.title = error.message;
+        } finally { autoDeleteToggle.disabled = false; }
+      });
+      refreshNetworkMode();
+      setInterval(refreshNetworkMode, 1500);
+      refreshAutoDelete();
+      setInterval(refreshAutoDelete, 3000);
+      let searchSource = 'youtube';
+      let searchRequestToken = 0;
+      let searchPollTimer = null;
+      let searchDebounceTimer = null;
+      let searchCollectionTimer = null;
+      let searchSessionComplete = false;
+      let searchSessionAcknowledged = false;
+      let searchSessionVideos = [];
+      let searchOffset = 0;
+      let searchTotal = 0;
+      let searchHasMore = false;
+      let searchResultsReady = false;
+      let searchLoading = false;
+      let searchStableCount = 0;
+      let searchLastSignature = '';
+      let cachedSearchVideos = [];
+      let searchVisibleCount = 4;
+      let activeSearchId = '';
+      let searchSelectionRecorded = false;
+      try { searchSource = localStorage.getItem('yourtube-search-source') === 'local' ? 'local' : 'youtube'; } catch {}
+
+      function updateSearchMode() {
+        const isLocal = searchSource === 'local';
+        const youtubeSelected = !isLocal && networkMode === 'online';
+        searchToggle.disabled = networkMode !== 'online';
+        searchToggle.setAttribute('aria-checked', String(youtubeSelected));
+        searchToggle.setAttribute('aria-label', `Search ${isLocal ? 'local downloads' : 'YouTube stubs'}`);
+        searchToggle.querySelectorAll('.mode-label').forEach((label, index) => label.classList.toggle('active', index === (isLocal ? 0 : 1)));
+        searchInput.placeholder = isLocal ? 'Search downloaded videos' : 'Search YouTube stubs';
+      }
+      searchToggle.addEventListener('click', () => {
+        if (networkMode !== 'online') return;
+        searchSource = searchSource === 'youtube' ? 'local' : 'youtube';
+        try { localStorage.setItem('yourtube-search-source', searchSource); } catch {}
+        updateSearchMode();
+        clearTimeout(searchDebounceTimer);
+        const query = searchInput.value.trim();
+        if (query.length >= 2) beginTypedSearch(query);
+        searchInput.focus();
+      });
+      updateSearchMode();
+
+      function showSearchDropdown(query) {
+        searchDropdown.hidden = false;
+        searchDropdownStatus.textContent = `${searchSource === 'local' ? 'Local' : 'Collected YouTube stubs'} · “${query}”`;
+      }
+      function renderSearchResults(videos) {
+        const previousScrollTop = searchDropdownResults.scrollTop;
+        const seen = new Set();
+        cachedSearchVideos = (Array.isArray(videos) ? videos : []).filter(video => video?.id && !seen.has(video.id) && seen.add(video.id));
+        searchDropdownResults.replaceChildren();
+        if (!cachedSearchVideos.length) {
+          const empty = document.createElement('div');
+          empty.className = 'search-dropdown-empty';
+          empty.textContent = 'No matching videos.';
+          searchDropdownResults.append(empty);
+          return;
+        }
+        for (const video of cachedSearchVideos.slice(0, searchVisibleCount)) {
+          const link = document.createElement('a');
+          link.className = 'search-result';
+          link.href = `/watch/${encodeURIComponent(video.id)}`;
+          const thumb = document.createElement('div');
+          thumb.className = 'search-result-thumb';
+          const image = document.createElement('img');
+          image.loading = 'lazy';
+          image.alt = '';
+          image.src = video.thumbnail || '/image-placeholder.svg';
+          attachThumbnailFallback(image, video);
+          thumb.append(image);
+          if (video.duration) {
+            const duration = document.createElement('span');
+            duration.className = 'search-result-duration';
+            duration.textContent = video.duration;
+            thumb.append(duration);
+          }
+          const details = document.createElement('div');
+          const titleText = document.createElement('div');
+          titleText.className = 'search-result-title';
+          titleText.textContent = video.title || 'Untitled video';
+          const channelText = document.createElement('div');
+          channelText.className = 'search-result-channel';
+          channelText.textContent = video.channel || 'Channel unavailable';
+          details.append(titleText, channelText);
+          if (video.meta) {
+            const meta = document.createElement('div');
+            meta.className = 'search-result-meta';
+            meta.textContent = video.meta;
+            details.append(meta);
+          }
+          if (video.searchFallback) {
+            const source = document.createElement('div');
+            source.className = 'search-result-meta';
+            source.textContent = 'More from your collected feed';
+            details.append(source);
+          }
+          link.append(thumb, details);
+          searchDropdownResults.append(link);
+        }
+        searchDropdownResults.scrollTop = previousScrollTop;
+      }
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !searchDropdown.hidden) {
+          searchDropdown.hidden = true;
+          searchInput.blur();
+        }
+      });
+      document.addEventListener('pointerdown', event => {
+        if (!searchForm.contains(event.target)) searchDropdown.hidden = true;
+      });
+      function setSearchStatus(message, spinning = false) {
+        searchDropdownStatus.replaceChildren();
+        if (spinning) {
+          const spinner = document.createElement('span');
+          spinner.className = 'small-spinner';
+          spinner.setAttribute('aria-hidden', 'true');
+          searchDropdownStatus.append(spinner);
+        }
+        const label = document.createElement('span');
+        label.textContent = message;
+        searchDropdownStatus.append(label);
+      }
+      async function requestSearchBatch(offset, token) {
+        const params = new URLSearchParams({ q: activeSearchQuery, source: searchSource, offset: String(offset), limit: '4', refresh: String(Date.now()) });
+        const response = await fetch(`/api/search?${params}`, { cache: 'no-store' });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Search is temporarily unavailable.');
+        if (token !== searchRequestToken) return null;
+        return result;
+      }
+      async function pollFirstSearchBatch(token) {
+        if (token !== searchRequestToken || searchResultsReady) return;
+        try {
+          const result = await requestSearchBatch(0, token);
+          if (!result || token !== searchRequestToken) return;
+          const batch = Array.isArray(result.videos) ? result.videos : [];
+          searchTotal = Number(result.total) || 0;
+          if (searchSource === 'local') {
+            renderSearchResults(batch);
+            searchOffset = batch.length;
+            searchHasMore = Boolean(result.hasMore);
+            searchResultsReady = true;
+            searchLoading = false;
+            setSearchStatus(`${searchTotal} downloaded ${searchTotal === 1 ? 'video' : 'videos'}`);
+            return;
+          }
+          const signature = batch.map(video => video.id).join('|');
+          if (batch.length >= 4) {
+            renderSearchResults(batch);
+            searchOffset = batch.length;
+            searchHasMore = Boolean(result.hasMore);
+            searchResultsReady = true;
+            searchLoading = false;
+            setSearchStatus(`${searchTotal} collected YouTube stubs match`);
+            return;
+          }
+          if (batch.length && signature === searchLastSignature) searchStableCount += 1;
+          else searchStableCount = 0;
+          searchLastSignature = signature;
+          if (batch.length && searchStableCount >= 2 && !result.hasMore && searchSessionComplete) {
+            renderSearchResults(batch);
+            searchOffset = batch.length;
+            searchHasMore = Boolean(result.hasMore);
+            searchResultsReady = true;
+            searchLoading = false;
+            setSearchStatus(`${searchTotal} matching stubs · showing the stable batch`);
+            return;
+          }
+          setSearchStatus('Waiting for matching stubs in the collected YouTube feed…', true);
+          searchPollTimer = setTimeout(() => pollFirstSearchBatch(token), 1400);
+        } catch (error) {
+          if (token !== searchRequestToken) return;
+          setSearchStatus(`${error.message} Retrying…`, true);
+          searchPollTimer = setTimeout(() => pollFirstSearchBatch(token), 2500);
+        }
+      }
+      function beginTypedSearch(query) {
+        clearTimeout(searchDebounceTimer);
+        clearTimeout(searchPollTimer);
+        clearTimeout(searchCollectionTimer);
+        searchRequestToken += 1;
+        const token = searchRequestToken;
+        activeSearchQuery = query;
+        activeSearchId = crypto.randomUUID();
+        searchSelectionRecorded = false;
+        searchSessionComplete = searchSource !== 'youtube';
+        searchSessionAcknowledged = false;
+        searchSessionVideos = [];
+        searchVisibleCount = 4;
+        searchOffset = 0;
+        searchTotal = 0;
+        searchHasMore = false;
+        searchResultsReady = false;
+        searchLoading = true;
+        searchStableCount = 0;
+        searchLastSignature = '';
+        renderSearchResults([]);
+        showSearchDropdown(query);
+        setSearchStatus(searchSource === 'youtube' ? 'Gathering matching YouTube stubs…' : 'Searching downloaded videos…', true);
+        searchDebounceTimer = setTimeout(() => pollFirstSearchBatch(token), 250);
+        if (searchSource === 'youtube') searchCollectionTimer = setTimeout(() => startTypedSearchCollection(token), 1000);
+      }
+      async function startTypedSearchCollection(token) {
+        if (token !== searchRequestToken || searchSource !== 'youtube') return;
+        try {
+          const response = await fetch('/api/search-sessions', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ searchId: activeSearchId, query: activeSearchQuery })
+          });
+          if (!response.ok) throw new Error('Could not start background YouTube search.');
+          if (token !== searchRequestToken) return;
+          window.postMessage({ type: 'yourtube:collect-search', searchId: activeSearchId, query: activeSearchQuery }, location.origin);
+          pollTypedSearchSession(token);
+        } catch (error) {
+          if (token === searchRequestToken) setSearchStatus(`${error.message} Showing saved local matches.`);
+        }
+      }
+      async function pollTypedSearchSession(token) {
+        if (token !== searchRequestToken || !activeSearchId) return;
+        try {
+          const sessionResponse = await fetch(`/api/search-sessions/${encodeURIComponent(activeSearchId)}?refresh=${Date.now()}`, { cache: 'no-store' });
+          const session = sessionResponse.ok ? await sessionResponse.json() : null;
+          const params = new URLSearchParams({ q: activeSearchQuery, source: 'youtube', offset: '0', limit: '20', refresh: String(Date.now()) });
+          const localResponse = await fetch(`/api/search?${params}`, { cache: 'no-store' });
+          const local = localResponse.ok ? await localResponse.json() : { videos: [], total: 0, hasMore: false };
+          if (token !== searchRequestToken) return;
+          searchSessionVideos = Array.isArray(session?.videos) ? session.videos.filter(video => video && !video.downloaded) : searchSessionVideos;
+          searchSessionComplete = session?.status === 'ready' || session?.status === 'displayed';
+          searchOffset = Math.max(searchOffset, Array.isArray(local.videos) ? local.videos.length : 0);
+          const existing = new Set(cachedSearchVideos.map(video => video.id));
+          const fresh = [...(Array.isArray(local.videos) ? local.videos : []), ...searchSessionVideos]
+            .filter(video => video?.id && !existing.has(video.id) && existing.add(video.id));
+          if (fresh.length) renderSearchResults([...cachedSearchVideos, ...fresh]);
+          const totalVisible = cachedSearchVideos.length;
+          searchTotal = Math.max(Number(local.total) || 0, Number(session?.videos?.length) || 0, totalVisible);
+          searchHasMore = Boolean(local.hasMore) || searchVisibleCount < cachedSearchVideos.length || !searchSessionComplete;
+          if (totalVisible >= 4 || searchSessionComplete) {
+            searchResultsReady = true;
+            searchLoading = false;
+            setSearchStatus(totalVisible ? `${searchTotal} collected YouTube results · scroll for more` : 'No matching YouTube results were collected.');
+          }
+          if (searchSessionComplete && !searchSessionAcknowledged) {
+            searchSessionAcknowledged = true;
+            fetch(`/api/search-sessions/${encodeURIComponent(activeSearchId)}`, { method: 'POST' }).catch(() => {});
+          }
+        } catch {}
+        if (token === searchRequestToken) searchPollTimer = setTimeout(() => pollTypedSearchSession(token), 1200);
+      }
+      async function loadMoreSearchResults() {
+        if (!searchResultsReady || !searchHasMore || searchLoading) return;
+        const token = searchRequestToken;
+        searchLoading = true;
+        try {
+          if (searchVisibleCount < cachedSearchVideos.length) {
+            searchVisibleCount += 4;
+            renderSearchResults(cachedSearchVideos);
+            searchLoading = false;
+            setSearchStatus(`Showing ${Math.min(searchVisibleCount, cachedSearchVideos.length)} of ${Math.max(searchTotal, cachedSearchVideos.length)} results · scroll for 4 more`);
+            return;
+          }
+          const result = await requestSearchBatch(searchOffset, token);
+          if (!result || token !== searchRequestToken) return;
+          const existingIds = new Set(cachedSearchVideos.map(video => video.id));
+          const batch = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !existingIds.has(video.id) && existingIds.add(video.id));
+          searchVisibleCount += 4;
+          renderSearchResults([...cachedSearchVideos, ...batch]);
+          searchOffset += Array.isArray(result.videos) ? result.videos.length : 0;
+          searchTotal = Number(result.total) || searchTotal;
+          searchHasMore = Boolean(result.hasMore) || searchSessionVideos.length > cachedSearchVideos.length || !searchSessionComplete;
+          searchLoading = false;
+          setSearchStatus(batch.length ? `Showing ${Math.min(searchVisibleCount, cachedSearchVideos.length)} of ${Math.max(searchTotal, cachedSearchVideos.length)} results · scroll for 4 more` : searchSessionComplete ? 'No more matching results.' : 'Waiting for the next YouTube results…', !batch.length && !searchSessionComplete);
+        } catch (error) {
+          if (token === searchRequestToken) {
+            searchLoading = false;
+            setSearchStatus(`${error.message} Scroll to retry.`, false);
+          }
+        }
+      }
+      searchDropdownResults.addEventListener('scroll', () => {
+        if (searchDropdownResults.scrollTop + searchDropdownResults.clientHeight >= searchDropdownResults.scrollHeight - 60) loadMoreSearchResults();
+      }, { passive: true });
+      searchDropdownResults.addEventListener('wheel', event => {
+        if (event.deltaY <= 0 || searchLoading || !searchHasMore) return;
+        const atBottom = searchDropdownResults.scrollHeight <= searchDropdownResults.clientHeight ||
+          searchDropdownResults.scrollTop + searchDropdownResults.clientHeight >= searchDropdownResults.scrollHeight - 60;
+        if (atBottom) {
+          event.preventDefault();
+          loadMoreSearchResults();
+        }
+      }, { passive: false });
+      searchDropdownResults.addEventListener('click', async event => {
+        const link = event.target.closest('a.search-result');
+        if (!link || searchSource !== 'youtube' || searchSelectionRecorded || !activeSearchId) return;
+        event.preventDefault();
+        searchSelectionRecorded = true;
+        const selectedVideoId = decodeURIComponent(link.pathname.split('/').pop() || '');
+        const targetUrl = new URL(link.href, location.origin);
+        targetUrl.searchParams.set('yourtubeSearchId', activeSearchId);
+        try {
+          await fetch('/api/search-history', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ searchId: activeSearchId, query: activeSearchQuery, source: 'youtube', selectedVideoId }),
+            keepalive: true
+          });
+        } catch {}
+        location.assign(targetUrl.href);
+      });
+      searchInput.addEventListener('input', () => {
+        const query = searchInput.value.trim().slice(0, 200);
+        if (query.length < 2) {
+          searchRequestToken += 1;
+          clearTimeout(searchDebounceTimer);
+          clearTimeout(searchPollTimer);
+          searchDropdown.hidden = true;
+          searchLoading = false;
+          searchResultsReady = false;
+          renderSearchResults([]);
+          return;
+        }
+        beginTypedSearch(query);
+      });
+      searchForm.addEventListener('submit', event => event.preventDefault());
+      let watchSubscriptions = [];
+      let subscriptionsExpanded = false;
+      const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+      let startedAt = 0;
+      let autoplayEnabled = true;
+      let playlistContext = null;
+      let playlistCurrentItemId = '';
+      let playlistShuffleEnabled = false;
+      try { autoplayEnabled = localStorage.getItem('yourtube-autoplay') !== 'false'; } catch {}
+      try { playlistShuffleEnabled = localStorage.getItem('yourtube-playlist-shuffle') === 'true'; } catch {}
+
+      const upNextStorageKey = 'yourtube-up-next-sections';
+      const upNextSectionDefaults = { downloaded: true, deleting: true, searched: true, homepage: true };
+      let upNextSectionsEnabled = { ...upNextSectionDefaults };
+      let homepageVisibleCount = 6;
+      let homepageRecommendationOrder = [];
+      let homepageAutoMoreTimer = null;
+      try {
+        const storedSections = JSON.parse(localStorage.getItem(upNextStorageKey) || '{}');
+        for (const key of Object.keys(upNextSectionDefaults)) {
+          if (typeof storedSections[key] === 'boolean') upNextSectionsEnabled[key] = storedSections[key];
+        }
+      } catch {}
+
+      function setUpNextSectionEnabled(key, enabled) {
+        if (!(key in upNextSectionDefaults)) return;
+        upNextSectionsEnabled[key] = Boolean(enabled);
+        try { localStorage.setItem(upNextStorageKey, JSON.stringify(upNextSectionsEnabled)); } catch {}
+        loadRecommendations();
+      }
+
+      function updateAutoplayToggle() {
+        autoplayToggle.setAttribute('aria-pressed', String(autoplayEnabled));
+        autoplayToggle.setAttribute('aria-label', `Autoplay ${autoplayEnabled ? 'on' : 'off'}`);
+      }
+      autoplayToggle.addEventListener('click', () => {
+        autoplayEnabled = !autoplayEnabled;
+        try { localStorage.setItem('yourtube-autoplay', String(autoplayEnabled)); } catch {}
+        updateAutoplayToggle();
+      });
+      updateAutoplayToggle();
+
+      function updatePlaylistShuffleToggle() {
+        playlistShuffleToggle.setAttribute('aria-pressed', String(playlistShuffleEnabled));
+        playlistShuffleToggle.setAttribute('aria-label', `Shuffle ${playlistShuffleEnabled ? 'on' : 'off'}`);
+      }
+      playlistShuffleToggle.addEventListener('click', () => {
+        playlistShuffleEnabled = !playlistShuffleEnabled;
+        try { localStorage.setItem('yourtube-playlist-shuffle', String(playlistShuffleEnabled)); } catch {}
+        updatePlaylistShuffleToggle();
+        if (playlistContext) renderPlaylistPanel(playlistContext);
+      });
+      updatePlaylistShuffleToggle();
+
+      function renderSubscriptions() {
+        subscriptionList.replaceChildren();
+        const shown = subscriptionsExpanded ? watchSubscriptions : watchSubscriptions.slice(0, 7);
+        for (const subscription of shown) {
+          const link = document.createElement('a');
+          link.className = 'watch-nav-link watch-subscription';
+          link.href = localChannelUrl(subscription.key);
+          link.title = subscription.name;
+          const avatar = document.createElement('span');
+          avatar.className = 'watch-sub-avatar';
+          if (subscription.avatar) {
+            const image = document.createElement('img');
+            image.src = subscription.avatar;
+            image.alt = '';
+            image.loading = 'lazy';
+            avatar.append(image);
+          } else avatar.textContent = String(subscription.name || '•').trim().slice(0, 1).toUpperCase();
+          const name = document.createElement('span');
+          name.className = 'watch-nav-label watch-sub-name';
+          name.textContent = subscription.name;
+          link.append(avatar, name);
+          subscriptionList.append(link);
+        }
+        subscriptionMore.hidden = watchSubscriptions.length <= 7;
+        subscriptionMore.innerHTML = `${subscriptionsExpanded ? '⌃' : '⌄'} <span>${subscriptionsExpanded ? 'Show less' : 'Show more'}</span>`;
+      }
+      subscriptionMore.addEventListener('click', () => { subscriptionsExpanded = !subscriptionsExpanded; renderSubscriptions(); });
+      fetch('/api/subscriptions').then(response => response.ok ? response.json() : []).then(rows => { watchSubscriptions = rows; renderSubscriptions(); }).catch(() => {});
+
+      function formatStatCount(value) { return new Intl.NumberFormat().format(Number(value) || 0); }
+      function formatStatBytes(value) {
+        const bytes = Math.max(0, Number(value) || 0);
+        if (bytes < 1024) return `${bytes} B`;
+        const units = ['KB', 'MB', 'GB', 'TB'];
+        let size = bytes / 1024;
+        let unit = units[0];
+        for (let index = 1; size >= 1024 && index < units.length; index++) { size /= 1024; unit = units[index]; }
+        return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
+      }
+      async function refreshSidebarStats() {
+        try {
+          const response = await fetch(`/api/stats?refresh=${Date.now()}`, { cache: 'no-store' });
+          if (!response.ok) return;
+          const stats = await response.json();
+          sidebarStats.localFiles.textContent = formatStatCount(stats.localFiles);
+          sidebarStats.mediaBytes.textContent = formatStatBytes(stats.mediaBytes);
+          sidebarStats.historicalViews.textContent = formatStatCount(stats.historicalViews);
+          sidebarStats.extensionVideos.textContent = formatStatCount(stats.extensionVideos);
+          const baseline = stats.durationBaseline;
+          sidebarStats.durationBaseline.textContent = baseline ? `${baseline.firstWithDuration}/${baseline.sampled} · ${baseline.firstRatePercent}%` : '—';
+          sidebarStats.durationBaselineRow.title = baseline
+            ? `Extension ${baseline.version}: duration present on first capture for ${baseline.firstWithDuration} of ${baseline.sampled} unique stubs (${baseline.firstRatePercent}%). Latest capture coverage: ${baseline.latestWithDuration}/${baseline.sampled} (${baseline.latestRatePercent}%). ${baseline.filledLater} stubs gained duration in a later capture.`
+            : 'Waiting for extension 0.4.0 captures. Existing video rows are excluded from this baseline.';
+          const activeDownloads = Math.max(0, Number(stats.activeDownloads) || 0);
+          const pausedDownloads = Math.max(0, Number(stats.pausedDownloads) || 0);
+          brandDownloadCount.textContent = formatStatCount(activeDownloads || pausedDownloads);
+          brandCycle.classList.toggle('is-downloading', activeDownloads > 0);
+          brandLink.href = activeDownloads || pausedDownloads ? '/downloads' : '/';
+          brandLink.setAttribute('aria-label', activeDownloads ? `View ${activeDownloads} media downloads in progress` : pausedDownloads ? `View ${pausedDownloads} paused downloads` : 'YourTube home');
+        } catch {}
+      }
+      refreshSidebarStats();
+      setInterval(refreshSidebarStats, 3000);
+
+      function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+      }
+
+      function retryCountdown(retryAt) {
+        const seconds = retryAt ? Math.max(0, Math.ceil((Date.parse(retryAt) - Date.now()) / 1000)) : 0;
+        if (!seconds) return 'now';
+        if (seconds < 60) return `in ${seconds}s`;
+        return `in ${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+      }
+
+      function showProgress(result = {}) {
+        const percent = Math.max(0, Math.min(99, Number(result.progress) || 0));
+        const known = percent > 0;
+        const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+        const timeText = elapsed < 60 ? `${elapsed}s elapsed` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s elapsed`;
+        const retrying = ['pending', 'running'].includes(result.retryStatus);
+        const attempts = Math.max(0, Number(result.retryAttempts) || 0);
+        const feedback = retrying
+          ? [result.retryError || result.message, attempts ? `${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} failed; next retry ${retryCountdown(result.retryAt)}.` : 'Waiting for an available download slot.']
+              .filter(Boolean).join(' ')
+          : '';
+        stage.innerHTML = `
+          <div class="loading" role="status" aria-live="polite">
+            <div class="spinner" aria-hidden="true"></div>
+            <div class="progress-wrap">
+              <div id="progress-stage">${escapeHtml(result.stage || 'Starting local video…')}</div>
+              <div class="progress-track ${known ? '' : 'indeterminate'}" role="progressbar" aria-label="Download progress" ${known ? `aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.floor(percent)}"` : ''}>
+                <div class="progress-fill" style="width:${known ? percent : 0}%"></div>
+              </div>
+              <div class="progress-caption"><span>${known ? `${Math.floor(percent)}%` : 'Preparing download'}</span><span>${timeText}</span></div>
+              ${known ? '' : '<div class="muted">The percentage appears once yt-dlp starts transferring the video.</div>'}
+              ${feedback ? `<div class="muted download-retry-feedback">${escapeHtml(feedback)}</div>` : ''}
+            </div>
+          </div>`;
+      }
+
+      function showError(message) {
+        stage.innerHTML = '';
+        const box = document.createElement('div');
+        box.className = 'error';
+        const heading = document.createElement('h2');
+        heading.textContent = 'Local playback unavailable';
+        const detail = document.createElement('p');
+        detail.className = 'muted';
+        detail.textContent = message;
+        const retry = document.createElement('button');
+        retry.className = 'retry';
+        retry.textContent = 'Try again';
+        retry.addEventListener('click', () => start(true));
+        box.append(heading, detail, retry);
+        stage.append(box);
+      }
+
+      async function start(explicitRetry = false) {
+        startedAt = Date.now();
+        showProgress({ stage: 'Connecting to YouTube…' });
+        try {
+          const infoResponse = await fetch(`/api/videos/${videoId}`);
+          const info = await infoResponse.json();
+          if (!infoResponse.ok) throw new Error(info.error || 'This video is not in the local feed.');
+          title.textContent = info.title;
+          activeVideoChannelKey = info.channelKey || '';
+          setChannelContent(channel, info.channel, activeVideoChannelKey);
+          if (info.viewCount > 0) viewCount.textContent = viewedLabel(info.viewCount);
+          loadComments();
+          loadPlaylistContext();
+          loadRecommendations();
+
+          let response = await fetch(`/api/downloads/${videoId}${explicitRetry ? '?retry=1' : ''}`, { method: 'POST' });
+          let result = await response.json();
+          if (!response.ok && response.status !== 202) throw new Error(result.error || 'Could not start the local acquisition.');
+          showProgress(result);
+          while (result.status === 'downloading') {
+            await wait(1000);
+            response = await fetch(`/api/downloads/${videoId}`);
+            result = await response.json();
+            showProgress(result);
+          }
+          while (result.status !== 'ready' && ['pending', 'running'].includes(result.retryStatus)) {
+            const secondsLeft = result.retryAt ? Math.max(0, Math.ceil((Date.parse(result.retryAt) - Date.now()) / 1000)) : 0;
+            showProgress({
+              ...result,
+              stage: result.status === 'downloading'
+                ? result.stage
+                : Number(result.retryAttempts) > 0
+                  ? `Retry scheduled · attempt ${Number(result.retryAttempts) + 1} of 10`
+                  : result.stage || 'Waiting in the download queue…'
+            });
+            await wait(1000);
+            response = await fetch(`/api/downloads/${videoId}`);
+            result = await response.json();
+            if (result.status === 'downloading') showProgress(result);
+          }
+          if (result.status !== 'ready') throw new Error(result.message || 'The local video could not be prepared.');
+
+          if (queueItemId) {
+            try { await fetch(`/api/queue/${encodeURIComponent(queueItemId)}`, { method: 'DELETE' }); } catch {}
+          }
+          let resumeAt = 0;
+          try {
+            const progressResponse = await fetch(`/api/progress/${videoId}?refresh=${Date.now()}`, { cache: 'no-store' });
+            if (progressResponse.ok) resumeAt = Number((await progressResponse.json()).currentTime) || 0;
+          } catch {}
+          buildPlayer(`/media/${videoId}.webm`, info.title, resumeAt);
+        } catch (error) {
+          showError(error.message);
+        }
+      }
+
+      function renderActiveDownloads(rows) {
+        const activeRows = rows.filter(item => !['paused', 'pending', 'waiting-live'].includes(item.retryStatus));
+        const queuedRows = rows.filter(item => ['pending', 'waiting-live'].includes(item.retryStatus));
+        const pausedRows = rows.filter(item => ['paused', 'paused-offline'].includes(item.retryStatus));
+        const orderRows = items => [...items].sort((a, b) => (Number(b.progress) || 0) - (Number(a.progress) || 0) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+        const orderedRows = orderRows(activeRows);
+        const orderedQueuedRows = orderRows(queuedRows);
+        const orderedPausedRows = orderRows(pausedRows);
+        document.querySelector('#downloads-subtitle').textContent = orderedRows.length
+          ? `${orderedRows.length} ${orderedRows.length === 1 ? 'video is' : 'videos are'} being added to your local library, ordered by progress.`
+          : 'No videos are downloading right now.';
+        const pausedHeading = document.querySelector('#paused-downloads-heading');
+        const pausedSubtitle = document.querySelector('#paused-downloads-subtitle');
+        queuedDownloadsHeadingRow.hidden = !orderedQueuedRows.length;
+        queuedDownloadsHeading.textContent = `Queued for download · ${orderedQueuedRows.length}`;
+        pausedDownloadsHeadingRow.hidden = !orderedPausedRows.length;
+        pausedSubtitle.hidden = !orderedPausedRows.length;
+        pausedHeading.textContent = `Paused downloads · ${orderedPausedRows.length}`;
+        pausedSubtitle.textContent = 'Each paused item shows why it stopped. Retry after fixing the issue; Online mode is required.';
+        activeDownloadsList.replaceChildren();
+        queuedDownloadsList.replaceChildren();
+        pausedDownloadsList.replaceChildren();
+        if (!orderedRows.length && !orderedQueuedRows.length && !orderedPausedRows.length) {
+          const empty = document.createElement('div');
+          empty.className = 'downloads-empty';
+          empty.textContent = 'New downloads will appear here as soon as they start.';
+          activeDownloadsList.append(empty);
+          return;
+        }
+        const renderRows = (items, list, paused = false, queued = false) => items.forEach(item => {
+          const row = document.createElement('article');
+          row.className = `active-download${paused ? ' is-paused' : ''}`;
+          const thumb = document.createElement('div');
+          thumb.className = 'active-download-thumb';
+          const image = document.createElement('img');
+          const fallbackThumbnail = item.thumbnail || '/image-placeholder.svg';
+          image.src = item.thumbnail || fallbackThumbnail;
+          image.alt = '';
+          image.loading = 'lazy';
+          image.referrerPolicy = 'no-referrer';
+          attachThumbnailFallback(image, item);
+          thumb.append(image);
+          if (item.duration) {
+            const duration = document.createElement('span');
+            duration.className = 'active-download-duration';
+            duration.textContent = item.duration;
+            thumb.append(duration);
+          }
+          if (paused) {
+            const overlay = document.createElement('div');
+            overlay.className = 'active-download-paused-overlay';
+            overlay.textContent = 'PAUSED';
+            thumb.append(overlay);
+          } else if (!queued) {
+            const actions = document.createElement('div');
+            actions.className = 'active-download-thumb-actions';
+            const pauseButton = document.createElement('button');
+            pauseButton.className = 'active-download-thumb-action';
+            pauseButton.type = 'button';
+            pauseButton.title = item.pauseRequested ? 'Pausing download…' : 'Pause download';
+            pauseButton.setAttribute('aria-label', pauseButton.title);
+            pauseButton.disabled = item.pauseRequested || item.finishRequested || item.endRequested || item.discardRequested;
+            pauseButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>';
+            pauseButton.addEventListener('click', () => pauseDownload(item.id, pauseButton));
+            actions.append(pauseButton);
+            if (item.finishAvailable) {
+              const finishButton = document.createElement('button');
+              finishButton.className = 'active-download-thumb-action finish';
+              finishButton.type = 'button';
+              finishButton.title = item.finishRequested || item.endRequested
+                ? (item.stage || 'Finishing and saving…')
+                : item.isLive ? 'End live stream and save the available audio and video' : 'Finish downloading audio, merge it with video, and save';
+              finishButton.setAttribute('aria-label', finishButton.title);
+              finishButton.disabled = item.finishRequested || item.endRequested || item.discardRequested || item.pauseRequested;
+              finishButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v13m0 0 5-5m-5 5-5-5M5 21h14"/></svg>';
+              finishButton.addEventListener('click', () => finishDownload(item.id, finishButton));
+              actions.append(finishButton);
+            }
+            thumb.append(actions);
+          }
+          const info = document.createElement('div');
+          const heading = document.createElement('h2');
+          heading.className = 'active-download-title';
+          heading.textContent = item.title || 'Untitled video';
+          const detail = document.createElement('div');
+          detail.className = 'active-download-detail';
+          detail.textContent = item.channel || 'Channel unavailable';
+          const fileSize = document.createElement('div');
+          fileSize.className = 'active-download-size';
+          fileSize.textContent = `Current file size · ${formatBytes(item.fileBytes)}`;
+          const progress = Math.max(0, Math.min(100, Number(item.progress) || 0));
+          const track = document.createElement('div');
+          track.className = `active-download-progress${!paused && !queued && progress === 0 ? ' indeterminate' : ''}`;
+          track.setAttribute('role', 'progressbar');
+          track.setAttribute('aria-label', `Download progress for ${item.title || 'video'}`);
+          track.setAttribute('aria-valuemin', '0');
+          track.setAttribute('aria-valuemax', '100');
+          track.setAttribute('aria-valuenow', String(Math.round(progress)));
+          const fill = document.createElement('div');
+          fill.className = 'active-download-progress-fill';
+          fill.style.width = `${progress}%`;
+          track.append(fill);
+          const status = document.createElement('div');
+          status.className = 'active-download-status';
+          const stageText = document.createElement('span');
+          const attempts = Math.max(0, Number(item.retryAttempts) || 0);
+          stageText.textContent = paused ? item.stage || 'Paused' : queued
+            ? attempts ? `Retry scheduled · attempt ${attempts + 1} of 10` : item.stage || 'Queued for download'
+            : item.stage || 'Preparing download…';
+          const percentage = document.createElement('span');
+          percentage.textContent = paused ? 'Paused' : queued
+            ? attempts ? `Next ${retryCountdown(item.retryAt)}` : 'Queued'
+            : item.isLive ? 'LIVE' : progress > 0 ? `${Math.round(progress)}%` : 'Working…';
+          status.append(stageText, percentage);
+          info.append(heading, detail, fileSize, track, status);
+          if (paused && item.message) {
+            const pauseMessage = document.createElement('div');
+            pauseMessage.className = 'active-download-paused-message';
+            pauseMessage.textContent = item.message;
+            info.append(pauseMessage);
+          }
+          const failureDetail = queued && attempts > 0
+            ? item.retryError || item.message
+            : paused && item.retryError && item.retryError !== item.message && attempts > 0
+              ? `Last download issue: ${item.retryError}`
+              : queued && item.message ? item.message : '';
+          if (failureDetail && !(paused && failureDetail === item.message)) {
+            const feedback = document.createElement('div');
+            feedback.className = 'active-download-feedback';
+            feedback.textContent = failureDetail;
+            if (queued && attempts > 0) {
+              const timing = document.createElement('span');
+              timing.className = 'retry-timing';
+              timing.textContent = `${attempts} ${attempts === 1 ? 'attempt' : 'attempts'} failed · next retry ${retryCountdown(item.retryAt)}.`;
+              feedback.append(timing);
+            }
+            info.append(feedback);
+          }
+          if (item.isLive && !paused) {
+            const actions = document.createElement('div');
+            actions.className = 'active-download-live-actions';
+            const discardButton = document.createElement('button');
+            discardButton.className = 'discard-live-button';
+            discardButton.type = 'button';
+            discardButton.textContent = item.discardRequested ? 'Discarding…' : 'Discard';
+            discardButton.disabled = item.endRequested || item.finishRequested || item.discardRequested || item.pauseRequested;
+            discardButton.addEventListener('click', () => controlLiveCapture(item.id, 'discard', discardButton));
+            actions.append(discardButton);
+            info.append(actions);
+          }
+          if (paused) {
+            const retryButton = document.createElement('button');
+            retryButton.className = 'active-download-retry';
+            retryButton.type = 'button';
+            retryButton.textContent = 'Retry';
+            retryButton.disabled = networkMode !== 'online';
+            if (retryButton.disabled) retryButton.title = 'Available when Online.';
+            retryButton.addEventListener('click', async () => {
+              retryButton.disabled = true;
+              retryButton.textContent = 'Retrying…';
+              try {
+                const response = await fetch(`/api/downloads/${item.id}?retry=1`, { method: 'POST' });
+                if (!response.ok) {
+                  const result = await response.json();
+                  throw new Error(result.error || 'Could not retry this download.');
+                }
+                await refreshActiveDownloads();
+              } catch (error) {
+                pausedSubtitle.textContent = error.message;
+              } finally {
+                retryButton.disabled = false;
+                retryButton.textContent = 'Retry';
+              }
+            });
+            info.append(retryButton);
+          }
+          row.append(thumb, info);
+          list.append(row);
+        });
+        renderRows(orderedRows, activeDownloadsList);
+        renderRows(orderedQueuedRows, queuedDownloadsList, false, true);
+        renderRows(orderedPausedRows, pausedDownloadsList, true);
+      }
+
+      deletePausedDownloadsButton.addEventListener('click', async () => {
+        const count = pausedDownloadsList.querySelectorAll('.active-download').length;
+        if (!count || !window.confirm(`Delete ${count} paused download${count === 1 ? '' : 's'} and their partial files? Completed local videos will be kept.`)) return;
+        deletePausedDownloadsButton.disabled = true;
+        try {
+          const response = await fetch('/api/downloads/paused', { method: 'DELETE' });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Could not delete paused downloads.');
+          await refreshActiveDownloads();
+        } catch (error) {
+          document.querySelector('#paused-downloads-subtitle').textContent = error.message;
+        } finally {
+          deletePausedDownloadsButton.disabled = false;
+        }
+      });
+
+      function formatBytes(bytes) {
+        const value = Math.max(0, Number(bytes) || 0);
+        if (value < 1024) return `${value} B`;
+        const units = ['KB', 'MB', 'GB', 'TB'];
+        let size = value / 1024;
+        let unit = units[0];
+        for (let index = 1; size >= 1024 && index < units.length; index++) { size /= 1024; unit = units[index]; }
+        return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
+      }
+
+      async function pauseDownload(id, button) {
+        button.disabled = true;
+        button.title = 'Pausing download…';
+        button.setAttribute('aria-label', button.title);
+        try {
+          const response = await fetch(`/api/downloads/${id}/pause`, { method: 'POST' });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Could not pause the download.');
+          await refreshActiveDownloads();
+        } catch (error) {
+          button.disabled = false;
+          button.title = error.message;
+          button.setAttribute('aria-label', error.message);
+        }
+      }
+
+      async function finishDownload(id, button) {
+        button.disabled = true;
+        button.title = 'Stopping the current transfer…';
+        button.setAttribute('aria-label', button.title);
+        try {
+          const response = await fetch(`/api/downloads/${id}/finish`, { method: 'POST' });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Could not finish and save this download.');
+          button.title = result.stage || 'Stopping the current transfer…';
+          button.setAttribute('aria-label', button.title);
+          await refreshActiveDownloads();
+        } catch (error) {
+          button.disabled = false;
+          button.title = error.message;
+          button.setAttribute('aria-label', error.message);
+        }
+      }
+
+      async function controlLiveCapture(id, action, button) {
+        button.disabled = true;
+        if (action === 'end') {
+          button.title = 'Saving live capture…';
+          button.setAttribute('aria-label', button.title);
+        } else button.textContent = 'Discarding…';
+        try {
+          const response = await fetch(`/api/downloads/${id}/${action}`, { method: 'POST' });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Could not control the live capture.');
+          await refreshActiveDownloads();
+        } catch (error) {
+          button.disabled = false;
+          button.title = error.message;
+          if (action === 'discard') button.textContent = 'Discard';
+          button.setAttribute('aria-label', error.message);
+        }
+      }
+
+      async function refreshActiveDownloads() {
+        try {
+          const response = await fetch(`/api/downloads/active?refresh=${Date.now()}`, { cache: 'no-store' });
+          if (!response.ok) throw new Error('Could not load active downloads.');
+          renderActiveDownloads(await response.json());
+        } catch (error) {
+          activeDownloadsList.textContent = error.message || 'Active downloads could not be loaded.';
+        }
+      }
+
+      async function loadComments() {
+        const state = document.querySelector('#comments-state');
+        const list = document.querySelector('#comments-list');
+        const count = document.querySelector('#comments-count');
+        state.innerHTML = '<div class="comments-loading"><span class="small-spinner" aria-hidden="true"></span><span>Loading top comments…</span></div>';
+        list.replaceChildren();
+        try {
+          let response = await fetch(`/api/videos/${videoId}/comments`);
+          let data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Comments could not be loaded.');
+          updateChannel(data);
+          pollChannel(data);
+          while (data.status === 'loading') {
+            await wait(1500);
+            response = await fetch(`/api/videos/${videoId}/comments`);
+            data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Comments could not be loaded.');
+            updateChannel(data);
+          }
+          if (data.status === 'error') throw new Error(data.message || 'Comments could not be loaded.');
+          const comments = Array.isArray(data.comments) ? data.comments : [];
+          count.textContent = comments.length ? `${comments.length}${comments.length === 50 ? ' top comments' : ''}` : '';
+          state.textContent = comments.length ? '' : (data.message || 'No comments are available for this video.');
+          for (const comment of comments) {
+            const article = document.createElement('article');
+            article.className = 'comment';
+            const avatar = document.createElement('div');
+            avatar.className = 'comment-avatar';
+            if (comment.authorThumbnail) {
+              const image = document.createElement('img');
+              image.src = comment.authorThumbnail;
+              image.alt = '';
+              image.loading = 'lazy';
+              avatar.append(image);
+            } else {
+              avatar.textContent = (comment.author || '?').trim().charAt(0).toUpperCase() || '?';
+            }
+            const body = document.createElement('div');
+            const author = document.createElement('span');
+            author.className = 'comment-author';
+            author.textContent = comment.author || 'YouTube user';
+            body.append(author);
+            if (comment.published) {
+              const published = document.createElement('span');
+              published.className = 'comment-time';
+              published.textContent = comment.published;
+              body.append(published);
+            }
+            const text = document.createElement('div');
+            text.className = 'comment-text';
+            text.textContent = comment.text || '';
+            body.append(text);
+            if (comment.likes > 0) {
+              const likes = document.createElement('div');
+              likes.className = 'comment-likes';
+              likes.textContent = `♥ ${comment.likes.toLocaleString()}`;
+              body.append(likes);
+            }
+            article.append(avatar, body);
+            list.append(article);
+          }
+        } catch (error) {
+          state.textContent = error.message || 'Comments could not be loaded.';
+        }
+      }
+
+      function updateChannel(data) {
+        if (data.channel) setChannelContent(channel, data.channel, activeVideoChannelKey);
+        else if (data.channelStatus === 'loading') channel.textContent = 'Loading channel…';
+        else channel.textContent = 'Channel unavailable';
+      }
+
+      async function pollChannel(data) {
+        let status = data.channelStatus;
+        while (!data.channel && status === 'loading') {
+          await wait(1500);
+          try {
+            const response = await fetch(`/api/videos/${videoId}/comments`);
+            if (!response.ok) break;
+            data = await response.json();
+            updateChannel(data);
+            status = data.channelStatus;
+          } catch { break; }
+        }
+      }
+
+      function renderPlaylistPanel(playlist) {
+        playlistContext = playlist;
+        watchPlaylistItems.replaceChildren();
+        if (!playlist?.items?.length) {
+          watchPlaylist.hidden = true;
+          return;
+        }
+        watchPlaylist.hidden = false;
+        watchPlaylistHeading.textContent = playlist.title || 'Playlist';
+        const items = [...playlist.items];
+        let currentIndex = items.findIndex(item => Number(item.position) === requestedPlaylistPosition);
+        if (currentIndex < 0) currentIndex = items.findIndex(item => item.id === videoId);
+        if (currentIndex < 0) currentIndex = 0;
+        playlistCurrentItemId = String(items[currentIndex].itemId);
+
+        let ordered = items;
+        const storageKey = `yourtube-playlist-order:${playlist.id}`;
+        if (playlistShuffleEnabled) {
+          let savedOrder = [];
+          try { savedOrder = JSON.parse(sessionStorage.getItem(storageKey) || '[]'); } catch {}
+          const byId = new Map(items.map(item => [String(item.itemId), item]));
+          const validSavedOrder = Array.isArray(savedOrder) && savedOrder.length === items.length && savedOrder.every(id => byId.has(String(id)))
+            ? savedOrder.map(id => byId.get(String(id))) : null;
+          if (validSavedOrder) ordered = validSavedOrder;
+          else {
+            ordered = [...items];
+            for (let index = ordered.length - 1; index > 0; index--) {
+              const swap = Math.floor(Math.random() * (index + 1));
+              [ordered[index], ordered[swap]] = [ordered[swap], ordered[index]];
+            }
+            try { sessionStorage.setItem(storageKey, JSON.stringify(ordered.map(item => item.itemId))); } catch {}
+          }
+        } else {
+          try { sessionStorage.removeItem(storageKey); } catch {}
+        }
+        const orderedCurrentIndex = ordered.findIndex(item => String(item.itemId) === playlistCurrentItemId);
+        const queue = ordered.slice(Math.max(0, orderedCurrentIndex));
+        queue.forEach((item, offset) => {
+          const link = document.createElement('a');
+          link.className = 'recommendation';
+          link.href = `/watch/${encodeURIComponent(item.id)}?yourtubePlaylist=${encodeURIComponent(playlist.id)}&yourtubePlaylistPosition=${encodeURIComponent(item.position)}`;
+          link.dataset.playlistItemId = String(item.itemId);
+          if (offset === 0) {
+            link.setAttribute('aria-current', 'true');
+            link.setAttribute('aria-label', `Now playing: ${item.title || 'Untitled video'}`);
+          }
+          const thumbnail = document.createElement('div');
+          thumbnail.className = 'recommendation-thumb';
+          const image = document.createElement('img');
+          image.src = item.thumbnail || '/image-placeholder.svg';
+          image.alt = '';
+          image.loading = 'lazy';
+          image.referrerPolicy = 'no-referrer';
+          attachThumbnailFallback(image, item);
+          thumbnail.append(image);
+          if (item.duration) {
+            const duration = document.createElement('span');
+            duration.className = 'recommendation-duration';
+            duration.textContent = cleanRepeatedLabel(item.duration);
+            thumbnail.append(duration);
+          }
+          const text = document.createElement('div');
+          if (offset === 0) {
+            const nowPlaying = document.createElement('div');
+            nowPlaying.className = 'playlist-now-playing';
+            nowPlaying.textContent = 'Now playing';
+            text.append(nowPlaying);
+          }
+          const itemTitle = document.createElement('div');
+          itemTitle.className = 'recommendation-title';
+          itemTitle.textContent = item.title || 'Untitled video';
+          const itemChannel = document.createElement(item.channelKey ? 'span' : 'div');
+          itemChannel.className = `recommendation-channel${item.channelKey ? ' recommendation-channel-link' : ''}`;
+          if (item.channelKey) { itemChannel.setAttribute('role', 'link'); itemChannel.tabIndex = 0; itemChannel.dataset.channelKey = item.channelKey; }
+          itemChannel.textContent = cleanRepeatedLabel(item.channel) || 'Channel unavailable';
+          text.append(itemTitle, itemChannel);
+          link.append(thumbnail, text);
+          watchPlaylistItems.append(link);
+        });
+        if (queue.length <= 1) {
+          const end = document.createElement('div');
+          end.className = 'recommendations-state';
+          end.textContent = 'End of playlist';
+          watchPlaylistItems.append(end);
+        }
+      }
+
+      async function loadPlaylistContext() {
+        if (!playlistId) return;
+        try {
+          const response = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`);
+          if (response.ok) renderPlaylistPanel(await response.json());
+        } catch {}
+      }
+
+      async function loadRecommendations() {
+        const list = document.querySelector('#recommendations');
+        try {
+          let recommendationId = videoId;
+          if (isDownloadsView) {
+            const videosResponse = await fetch('/api/videos');
+            const videos = videosResponse.ok ? await videosResponse.json() : [];
+            recommendationId = videos[0]?.id || '';
+          }
+          if (!recommendationId) throw new Error('Save some videos from your homepage to populate Up next.');
+          const response = await fetch(`/api/videos/${recommendationId}/recommendations`);
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Saved videos could not be loaded.');
+          list.replaceChildren();
+          const queueResponse = await fetch(`/api/queue?refresh=${Date.now()}`, { cache: 'no-store' });
+          const queueRows = queueResponse.ok ? await queueResponse.json() : [];
+          const queuedVideos = (Array.isArray(queueRows) ? queueRows : [])
+            .filter(item => networkMode !== 'offline' || item.downloaded)
+            .map(item => ({ ...item, queueItemId: item.itemId }));
+          const queuedIds = new Set(queuedVideos.map(item => item.id));
+          const downloadedUnwatched = Array.isArray(data.downloadedUnwatched) ? data.downloadedUnwatched.filter(item => !queuedIds.has(item.id)).slice(0, 12) : [];
+          const deletingSoon = Array.isArray(data.deletingSoon) ? data.deletingSoon.filter(item => !queuedIds.has(item.id)).slice(0, 12) : [];
+          const searchRecommendations = Array.isArray(data.searchRecommendations) ? data.searchRecommendations.filter(item => !queuedIds.has(item.id)).slice(0, 12) : [];
+          const incomingHomepageStubs = (Array.isArray(data.homepageStubs) ? data.homepageStubs : []).filter(item => !queuedIds.has(item.id));
+          const homepageById = new Map(incomingHomepageStubs.map(video => [video.id, video]));
+          const availableHomepageIds = new Set(homepageById.keys());
+          homepageRecommendationOrder = homepageRecommendationOrder.filter(id => availableHomepageIds.has(id));
+          const knownHomepageIds = new Set(homepageRecommendationOrder);
+          const newHomepageStubs = incomingHomepageStubs.filter(video => !knownHomepageIds.has(video.id));
+          if (!homepageRecommendationOrder.length) {
+            for (let index = newHomepageStubs.length - 1; index > 0; index--) {
+              const swapIndex = Math.floor(Math.random() * (index + 1));
+              [newHomepageStubs[index], newHomepageStubs[swapIndex]] = [newHomepageStubs[swapIndex], newHomepageStubs[index]];
+            }
+          }
+          homepageRecommendationOrder.push(...newHomepageStubs.map(video => video.id));
+          const homepageStubs = homepageRecommendationOrder.map(id => homepageById.get(id)).filter(Boolean);
+          const appendRecommendation = (video, target) => {
+            const link = document.createElement('a');
+            link.className = 'recommendation';
+            link.href = `/watch/${encodeURIComponent(video.id)}`;
+            if (video.queueItemId) {
+              const target = new URL(link.href, location.origin);
+              target.searchParams.set('yourtubeQueueItem', String(video.queueItemId));
+              link.href = `${target.pathname}${target.search}`;
+            }
+            if (video.searchId) link.dataset.searchId = video.searchId;
+            if (video.queueItemId) link.dataset.queueItemId = String(video.queueItemId);
+            const thumbnail = document.createElement('div');
+            thumbnail.className = 'recommendation-thumb';
+            const fallbackThumbnail = video.thumbnail || '/image-placeholder.svg';
+            const image = document.createElement('img');
+            image.src = video.thumbnail || fallbackThumbnail;
+            image.alt = '';
+            image.loading = 'lazy';
+            image.referrerPolicy = 'no-referrer';
+            attachThumbnailFallback(image, video);
+            thumbnail.append(image);
+            const progressDuration = Number(video.progressDuration) || 0;
+            const currentTime = Number(video.currentTime) || 0;
+            if (progressDuration > 0 && currentTime > 0) {
+              const progressTrack = document.createElement('div');
+              progressTrack.className = 'recommendation-progress-track';
+              progressTrack.setAttribute('role', 'progressbar');
+              progressTrack.setAttribute('aria-label', `Playback progress ${Math.floor(currentTime / progressDuration * 100)}%`);
+              progressTrack.setAttribute('aria-valuemin', '0');
+              progressTrack.setAttribute('aria-valuemax', '100');
+              progressTrack.setAttribute('aria-valuenow', String(Math.floor(currentTime / progressDuration * 100)));
+              const progressFill = document.createElement('div');
+              progressFill.className = 'recommendation-progress-fill';
+              progressFill.style.width = `${Math.max(0, Math.min(100, currentTime / progressDuration * 100))}%`;
+              progressTrack.append(progressFill);
+              thumbnail.append(progressTrack);
+            }
+            if (video.duration) {
+              const duration = document.createElement('span');
+              duration.className = 'recommendation-duration';
+              duration.textContent = cleanRepeatedLabel(video.duration);
+              thumbnail.append(duration);
+            }
+            const text = document.createElement('div');
+            if (video.searchQuery) {
+              const reason = document.createElement('div');
+              reason.className = 'recommendation-reason';
+              reason.textContent = `Because you searched “${video.searchQuery}”`;
+              text.append(reason);
+            }
+            const videoTitle = document.createElement('div');
+            videoTitle.className = 'recommendation-title';
+            videoTitle.textContent = video.title || 'Untitled video';
+            const videoChannel = document.createElement(video.channelKey ? 'span' : 'div');
+            videoChannel.className = `recommendation-channel${video.channelKey ? ' recommendation-channel-link' : ''}`;
+            if (video.channelKey) { videoChannel.setAttribute('role', 'link'); videoChannel.tabIndex = 0; videoChannel.dataset.channelKey = video.channelKey; }
+            videoChannel.textContent = cleanRepeatedLabel(video.channel) || 'Channel unavailable';
+            text.append(videoTitle, videoChannel);
+            if (video.viewCount > 0) {
+              const views = document.createElement('div');
+              views.className = 'recommendation-channel';
+              views.textContent = viewedLabel(video.viewCount);
+              text.append(views);
+            }
+            link.append(thumbnail, text);
+            target.append(link);
+          };
+          if (queuedVideos.length) {
+            const queuedSection = document.createElement('section');
+            queuedSection.className = 'recommendation-section';
+            const queuedHeading = document.createElement('h3');
+            queuedHeading.className = 'recommendation-section-title';
+            queuedHeading.textContent = 'Queued';
+            queuedSection.append(queuedHeading);
+            const queuedBody = document.createElement('div');
+            queuedBody.className = 'recommendation-section-body';
+            queuedVideos.forEach(item => appendRecommendation(item, queuedBody));
+            queuedSection.append(queuedBody);
+            list.append(queuedSection);
+          }
+          const allSections = [
+            { key: 'downloaded', title: 'Downloaded & unwatched', videos: downloadedUnwatched, empty: 'No unfinished downloaded videos.' },
+            { key: 'deleting', title: 'Deleting soon', videos: deletingSoon, empty: data.autoDeleteEnabled ? 'No files are due to be deleted within the next hour.' : 'Auto-delete is off.' },
+            { key: 'searched', title: 'Because you searched', videos: searchRecommendations, empty: 'Search for a video and open a result to build this list.' },
+            { key: 'homepage', title: 'From your homepage', videos: homepageStubs, empty: 'No homepage suggestions have been collected yet.' }
+          ];
+          const sections = networkMode === 'offline' ? allSections.filter(section => ['downloaded', 'deleting'].includes(section.key)) : allSections;
+          const sectionEnabled = key => networkMode === 'offline' ? ['downloaded', 'deleting'].includes(key) : upNextSectionsEnabled[key];
+          const enabledSections = sections.filter(section => sectionEnabled(section.key));
+          const allocations = new Map(sections.map(section => [section.key, 0]));
+          let remainingSlots = 12;
+          for (const section of enabledSections) {
+            const baseCount = Math.min(3, section.videos.length);
+            allocations.set(section.key, baseCount);
+            remainingSlots -= baseCount;
+          }
+          for (const section of enabledSections) {
+            if (remainingSlots <= 0) break;
+            const currentCount = allocations.get(section.key) || 0;
+            const extraCount = Math.min(remainingSlots, Math.max(0, section.videos.length - currentCount));
+            allocations.set(section.key, currentCount + extraCount);
+            remainingSlots -= extraCount;
+          }
+          sections.forEach((section, index) => {
+            if (index > 0) {
+              const separator = document.createElement('div');
+              separator.className = 'recommendation-separator';
+              separator.setAttribute('role', 'separator');
+              list.append(separator);
+            }
+            const sectionRoot = document.createElement('section');
+            sectionRoot.className = 'recommendation-section';
+            const headingRow = document.createElement('div');
+            headingRow.className = 'recommendation-section-heading';
+            const heading = document.createElement('h3');
+            heading.className = 'recommendation-section-title';
+            heading.textContent = section.title;
+            const actions = document.createElement('div');
+            actions.className = 'recommendation-section-actions';
+            const toggle = document.createElement('button');
+            toggle.className = 'recommendation-section-toggle';
+            toggle.type = 'button';
+            toggle.setAttribute('role', 'switch');
+            toggle.setAttribute('aria-pressed', String(sectionEnabled(section.key)));
+            toggle.setAttribute('aria-label', `${sectionEnabled(section.key) ? 'Disable' : 'Enable'} ${section.title}`);
+            toggle.disabled = networkMode === 'offline';
+            toggle.addEventListener('click', () => setUpNextSectionEnabled(section.key, !upNextSectionsEnabled[section.key]));
+            actions.append(toggle);
+            const expand = document.createElement('button');
+            expand.className = 'recommendation-section-expand';
+            expand.type = 'button';
+            expand.textContent = '›';
+            expand.hidden = sectionEnabled(section.key);
+            expand.setAttribute('aria-label', `Expand ${section.title}`);
+            expand.addEventListener('click', () => setUpNextSectionEnabled(section.key, true));
+            actions.append(expand);
+            headingRow.append(heading, actions);
+            sectionRoot.append(headingRow);
+            const sectionBody = document.createElement('div');
+            sectionBody.className = 'recommendation-section-body';
+            sectionBody.hidden = !sectionEnabled(section.key);
+            const allocation = allocations.get(section.key) || 0;
+            const videos = section.key === 'homepage' ? section.videos : section.videos.slice(0, allocation);
+            if (sectionEnabled(section.key)) {
+              if (videos.length) {
+                let shownCount = section.key === 'homepage' ? Math.min(homepageVisibleCount, videos.length) : videos.length;
+                videos.slice(0, shownCount).forEach(video => appendRecommendation(video, sectionBody));
+                if (section.key === 'homepage' && shownCount < videos.length) {
+                  const showMore = document.createElement('button');
+                  showMore.className = 'recommendation-show-more';
+                  showMore.type = 'button';
+                  showMore.textContent = 'Show more';
+                  showMore.addEventListener('click', () => {
+                    const previousCount = shownCount;
+                    shownCount = Math.min(shownCount + 6, videos.length);
+                    homepageVisibleCount = shownCount;
+                    showMore.remove();
+                    videos.slice(previousCount, shownCount).forEach(video => appendRecommendation(video, sectionBody));
+                    if (shownCount < videos.length) sectionBody.append(showMore);
+                  });
+                  showMore.id = 'homepage-show-more';
+                  sectionBody.append(showMore);
+                }
+              }
+              else {
+                const empty = document.createElement('div');
+                empty.className = 'recommendations-state';
+                empty.textContent = section.empty;
+                sectionBody.append(empty);
+              }
+            }
+            sectionRoot.append(sectionBody);
+            list.append(sectionRoot);
+          });
+        } catch (error) {
+          list.innerHTML = '';
+          const message = document.createElement('div');
+          message.className = 'recommendations-state';
+          message.textContent = error.message || 'Saved videos could not be loaded.';
+          list.append(message);
+        }
+      }
+
+      watchSide.addEventListener('scroll', () => {
+        const showMore = document.querySelector('#homepage-show-more');
+        if (!showMore || watchSide.scrollTop + watchSide.clientHeight < watchSide.scrollHeight - 90) return;
+        clearTimeout(homepageAutoMoreTimer);
+        homepageAutoMoreTimer = setTimeout(() => {
+          if (showMore.isConnected && watchSide.scrollTop + watchSide.clientHeight >= watchSide.scrollHeight - 90) showMore.click();
+        }, 180);
+      }, { passive: true });
+
+      async function refreshSearchRecommendations(deadline = Date.now() + 30000, knownCount = -1) {
+        if (!recommendationSearchId || Date.now() >= deadline || isDownloadsView) return;
+        try {
+          const response = await fetch(`/api/search-sessions/${encodeURIComponent(recommendationSearchId)}?refresh=${Date.now()}`, { cache: 'no-store' });
+          if (response.ok) {
+            const session = await response.json();
+            const count = Array.isArray(session.videos) ? session.videos.length : 0;
+            if (count !== knownCount && count > 0) {
+              await loadRecommendations();
+              knownCount = count;
+            }
+            if (session.status === 'ready' || session.status === 'displayed') return;
+          }
+        } catch {}
+        recommendationSearchTimer = setTimeout(() => refreshSearchRecommendations(deadline, knownCount), 1300);
+      }
+
+      async function recordSearchRecommendationClick(link) {
+        const searchId = link?.dataset.searchId;
+        if (!searchId) return;
+        const videoId = decodeURIComponent(new URL(link.href, location.origin).pathname.split('/').pop() || '');
+        if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;
+        try {
+          await fetch('/api/search-history-click', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ searchId, videoId }),
+            keepalive: true
+          });
+        } catch {}
+      }
+
+      async function navigateToRecommendation(link) {
+        await recordSearchRecommendationClick(link);
+        location.assign(link.href);
+      }
+
+      recommendationsList.addEventListener('click', async event => {
+        if (event.target.closest('[data-channel-key]')) return;
+        const link = event.target.closest('a.recommendation');
+        if (!link || event.defaultPrevented || event.button !== 0) return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+          recordSearchRecommendationClick(link);
+          return;
+        }
+        event.preventDefault();
+        await navigateToRecommendation(link);
+      });
+      recommendationsList.addEventListener('auxclick', event => {
+        if (event.target.closest('[data-channel-key]')) return;
+        if (event.button !== 1) return;
+        const link = event.target.closest('a.recommendation');
+        if (link) recordSearchRecommendationClick(link);
+      });
+      watchApp.addEventListener('click', event => {
+        const target = event.target.closest('[data-channel-key]');
+        if (!target) return;
+        event.preventDefault();
+        event.stopPropagation();
+        location.assign(localChannelUrl(target.dataset.channelKey));
+      });
+      watchApp.addEventListener('keydown', event => {
+        const target = event.target.closest('[data-channel-key]');
+        if (!target || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        location.assign(localChannelUrl(target.dataset.channelKey));
+      });
+
+      function formatTime(seconds) {
+        if (!Number.isFinite(seconds)) return '0:00';
+        const value = Math.max(0, Math.floor(seconds));
+        const hours = Math.floor(value / 3600);
+        const minutes = Math.floor(value % 3600 / 60);
+        const secs = value % 60;
+        return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
+      }
+
+      function viewedLabel(count) {
+        const value = Number(count) || 0;
+        return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`;
+      }
+
+      function setChannelContent(element, name, channelKey = '') {
+        const label = cleanRepeatedLabel(name) || 'Channel unavailable';
+        const localUrl = localChannelUrl(channelKey);
+        if (localUrl !== '/') {
+          const link = document.createElement('a');
+          link.className = 'watch-channel-link';
+          link.href = localUrl;
+          link.textContent = label;
+          element.replaceChildren(link);
+        } else element.textContent = label;
+      }
+
+      function localChannelUrl(input) {
+        let key = String(input || '').trim().replace(/^\/+|\/+$/g, '');
+        const parts = key.split('/').filter(Boolean);
+        key = parts[0]?.startsWith('@') ? parts[0] : parts.length > 1 && ['channel', 'user', 'c'].includes(parts[0]) ? `${parts[0]}/${parts[1]}` : key;
+        if (!/^(?:@[\p{L}\p{N}._-]{3,100}|channel\/UC[A-Za-z0-9_-]{20,32}|(?:user|c)\/[\p{L}\p{N}._-]{1,100})$/u.test(key)) return '/';
+        const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/');
+        return `/channel/${path}/videos`;
+      }
+
+      function cleanRepeatedLabel(value) {
+        const words = String(value || '').replace(/\s+/g, ' ').trim().split(' ');
+        if (words.length > 1 && words.length % 2 === 0) {
+          const middle = words.length / 2;
+          if (words.slice(0, middle).join(' ').toLowerCase() === words.slice(middle).join(' ').toLowerCase()) return words.slice(0, middle).join(' ');
+        }
+        return words.join(' ');
+      }
+
+      function buildPlayer(source, videoTitle, resumeAt = 0) {
+        const shell = document.createElement('div');
+        shell.className = 'player-shell';
+        shell.tabIndex = 0;
+        shell.setAttribute('aria-label', `${videoTitle} local video player`);
+        shell.innerHTML = `
+          <video playsinline preload="metadata"></video>
+          <div class="player-title"></div>
+          <button class="center-play" type="button" aria-label="Play video">▶</button>
+          <div class="player-controls">
+            <div class="seek-row"><input class="seek" type="range" min="0" max="1000" value="0" aria-label="Seek video" /></div>
+            <div class="control-row">
+              <button class="control-button play-toggle" type="button" aria-label="Play">▶</button>
+              <div class="volume-control">
+                <button class="control-button mute-toggle" type="button" aria-label="Mute">🔊</button>
+                <input class="volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+              </div>
+              <span class="time-display"><span class="current-time">0:00</span> / <span class="duration">0:00</span></span>
+              <span class="control-spacer"></span>
+              <select class="speed-select" aria-label="Playback speed" title="Playback speed">
+                <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option>
+              </select>
+              <a class="control-button download-link" aria-label="Download local video" title="Download video">⇩</a>
+              <button class="control-button expand-toggle" type="button" aria-label="Expand video layout" aria-pressed="false" title="Expand video layout">▭</button>
+              <button class="control-button fullscreen-toggle" type="button" aria-label="Full screen" title="Full screen">⛶</button>
+            </div>
+          </div>`;
+        const video = shell.querySelector('video');
+        const playButtons = [shell.querySelector('.center-play'), shell.querySelector('.play-toggle')];
+        const seek = shell.querySelector('.seek');
+        const volume = shell.querySelector('.volume');
+        const time = shell.querySelector('.current-time');
+        const duration = shell.querySelector('.duration');
+        const mute = shell.querySelector('.mute-toggle');
+        const controls = shell.querySelector('.player-controls');
+        let hideTimer;
+        let wasPlayingBeforeSeek = false;
+        let viewRecorded = false;
+        let progressSavedAt = 0;
+        let finished = false;
+        const downloadLink = shell.querySelector('.download-link');
+        downloadLink.href = source;
+        const filename = videoTitle.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || videoId;
+        downloadLink.download = `${filename}.webm`;
+        // The autoplay switch controls whether Up Next advances after a video ends.
+        // Opening a video from any view should always start its local playback.
+        video.autoplay = true;
+        video.src = source;
+        shell.querySelector('.player-title').textContent = videoTitle;
+        stage.classList.add('playing');
+        stage.replaceChildren(shell);
+
+        const updatePlayState = () => {
+          shell.classList.toggle('is-playing', !video.paused);
+          shell.querySelector('.play-toggle').textContent = video.paused ? '▶' : '❚❚';
+          shell.querySelector('.play-toggle').setAttribute('aria-label', video.paused ? 'Play' : 'Pause');
+          shell.querySelector('.center-play').textContent = video.paused ? '▶' : '❚❚';
+          shell.querySelector('.center-play').setAttribute('aria-label', video.paused ? 'Play video' : 'Pause video');
+        };
+        const togglePlayback = () => video.paused ? video.play().catch(() => {}) : video.pause();
+        const showControls = () => {
+          shell.classList.remove('controls-hidden');
+          clearTimeout(hideTimer);
+          if (!video.paused) hideTimer = setTimeout(() => shell.classList.add('controls-hidden'), 2600);
+        };
+        const updateSeek = () => {
+          const ratio = video.duration ? video.currentTime / video.duration : 0;
+          seek.value = String(Math.round(ratio * 1000));
+          seek.style.setProperty('--played', `${ratio * 100}%`);
+          time.textContent = formatTime(video.currentTime);
+        };
+        const recordView = async () => {
+          if (viewRecorded) return;
+          viewRecorded = true;
+          try {
+            const response = await fetch(`/api/views/${videoId}`, { method: 'POST' });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Could not record local view.');
+            viewCount.textContent = viewedLabel(result.viewCount);
+          } catch {
+            viewRecorded = false;
+          }
+        };
+        const saveProgress = (position = video.currentTime, keepalive = false, completed = false) => {
+          const durationValue = Number.isFinite(video.duration) ? video.duration : 0;
+          const currentTime = Math.max(0, Number(position) || 0);
+          if (!durationValue) return;
+          progressSavedAt = Date.now();
+          fetch(`/api/progress/${videoId}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ currentTime: Math.min(currentTime, durationValue), duration: durationValue, completed, playing: !video.paused && !video.ended }),
+            keepalive
+          }).catch(() => {});
+        };
+        playButtons.forEach(button => button.addEventListener('click', event => { event.stopPropagation(); togglePlayback(); }));
+        video.addEventListener('click', togglePlayback);
+        video.addEventListener('play', () => { updatePlayState(); showControls(); recordView(); });
+        video.addEventListener('pause', () => { updatePlayState(); showControls(); if (!finished) saveProgress(); });
+        video.addEventListener('ended', () => {
+          finished = true;
+          saveProgress(0, true, true);
+          updatePlayState();
+          showControls();
+          if (!autoplayEnabled) return;
+          if (playlistId && playlistContext) {
+            const nextPlaylistItem = watchPlaylistItems.querySelector('.recommendation:not([aria-current="true"])');
+            if (nextPlaylistItem) {
+              navigateToRecommendation(nextPlaylistItem);
+              return;
+            }
+          }
+          const nextVideo = document.querySelector('#recommendations .recommendation');
+          if (nextVideo) navigateToRecommendation(nextVideo);
+        });
+        video.addEventListener('timeupdate', () => {
+          updateSeek();
+          if (Date.now() - progressSavedAt >= 5000) saveProgress();
+        });
+        video.addEventListener('loadedmetadata', () => {
+          duration.textContent = formatTime(video.duration);
+          const startAt = resumeAt > 5 && resumeAt < video.duration - 5 ? resumeAt : 0;
+          if (startAt) video.currentTime = startAt;
+          updateSeek();
+          video.play().catch(error => {
+            if (error?.name === 'NotAllowedError') {
+              shell.querySelector('.center-play').title = 'Your browser blocked autoplay. Click to play.';
+            }
+          });
+        });
+        window.addEventListener('pagehide', () => { if (!finished) saveProgress(video.currentTime, true); }, { once: true });
+        shell.addEventListener('mousemove', showControls);
+        shell.addEventListener('touchstart', showControls, { passive: true });
+        controls.addEventListener('mousemove', event => event.stopPropagation());
+        seek.addEventListener('pointerdown', () => { wasPlayingBeforeSeek = !video.paused; video.pause(); });
+        seek.addEventListener('input', () => {
+          const ratio = Number(seek.value) / 1000;
+          if (Number.isFinite(video.duration)) video.currentTime = ratio * video.duration;
+          seek.style.setProperty('--played', `${ratio * 100}%`);
+          time.textContent = formatTime(ratio * (video.duration || 0));
+        });
+        seek.addEventListener('change', () => { if (wasPlayingBeforeSeek) video.play().catch(() => {}); });
+        volume.addEventListener('input', () => {
+          video.volume = Number(volume.value);
+          video.muted = video.volume === 0;
+          mute.textContent = video.muted ? '🔇' : video.volume < 0.5 ? '🔉' : '🔊';
+          mute.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute');
+        });
+        mute.addEventListener('click', () => {
+          video.muted = !video.muted;
+          mute.textContent = video.muted ? '🔇' : '🔊';
+          mute.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute');
+        });
+        shell.querySelector('.speed-select').addEventListener('change', event => { video.playbackRate = Number(event.target.value); });
+        shell.querySelector('.expand-toggle').addEventListener('click', () => {
+          const animated = [shell, document.querySelector('.watch-navigation'), document.querySelector('.comments'), document.querySelector('.watch-side')].filter(element => element?.isConnected);
+          const before = new Map(animated.map(element => [element, element.getBoundingClientRect()]));
+          const expanded = watchApp.classList.toggle('expanded');
+          const button = shell.querySelector('.expand-toggle');
+          button.textContent = expanded ? '▱' : '▭';
+          button.setAttribute('aria-pressed', String(expanded));
+          button.setAttribute('aria-label', expanded ? 'Exit expanded video layout' : 'Expand video layout');
+          button.title = expanded ? 'Exit expanded video layout' : 'Expand video layout';
+          requestAnimationFrame(() => {
+            for (const element of animated) {
+              const from = before.get(element);
+              const to = element.getBoundingClientRect();
+              if (!from.width || !from.height || !to.width || !to.height) continue;
+              const dx = from.left - to.left;
+              const dy = from.top - to.top;
+              const sx = from.width / to.width;
+              const sy = from.height / to.height;
+              element.animate([
+                { transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`, transformOrigin: 'top left' },
+                { transform: 'translate(0, 0) scale(1, 1)', transformOrigin: 'top left' }
+              ], { duration: 520, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+            }
+          });
+        });
+        shell.querySelector('.fullscreen-toggle').addEventListener('click', async () => {
+          try {
+            if (document.fullscreenElement) await document.exitFullscreen();
+            else await shell.requestFullscreen();
+          } catch {}
+        });
+        document.addEventListener('fullscreenchange', () => {
+          const button = shell.querySelector('.fullscreen-toggle');
+          const isFullscreen = document.fullscreenElement === shell;
+          button.textContent = isFullscreen ? '⤢' : '⛶';
+          button.setAttribute('aria-label', isFullscreen ? 'Exit full screen' : 'Full screen');
+        });
+        document.addEventListener('keydown', event => {
+          if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+          if (event.target instanceof Element && event.target.closest('input, select, textarea, [contenteditable="true"]')) return;
+          const key = event.key.toLowerCase();
+          if (/^[0-9]$/.test(key) && Number.isFinite(video.duration)) {
+            event.preventDefault();
+            video.currentTime = video.duration * Number(key) / 10;
+          } else if (key === 'j') {
+            event.preventDefault();
+            video.currentTime = Math.max(0, video.currentTime - 10);
+          } else if (key === 'k' || key === ' ') {
+            event.preventDefault();
+            togglePlayback();
+          } else if (key === 'l') {
+            event.preventDefault();
+            video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          } else if (event.target === shell && event.key === 'ArrowRight') {
+            video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5);
+          } else if (event.target === shell && event.key === 'ArrowLeft') {
+            video.currentTime = Math.max(0, video.currentTime - 5);
+          } else if (event.target === shell && key === 'm') {
+            mute.click();
+          } else if (key === 'f') {
+            shell.querySelector('.fullscreen-toggle').click();
+          } else if (event.target === shell && key === 't') {
+            shell.querySelector('.expand-toggle').click();
+          } else {
+            return;
+          }
+          showControls();
+        });
+        updatePlayState();
+      }
+
+      if (isDownloadsView) {
+        document.title = 'Downloads in progress · YourTube';
+        document.querySelector('#watch-stage').hidden = true;
+        downloadsPanel.hidden = false;
+        document.querySelector('#watch-comments').hidden = true;
+        autoplayToggle.hidden = true;
+        document.querySelector('#up-next-heading').textContent = 'Up next';
+        refreshActiveDownloads();
+        activeDownloadsTimer = setInterval(refreshActiveDownloads, 1200);
+        loadRecommendations();
+      } else {
+        start();
+        if (/^[a-f0-9-]{36}$/i.test(recommendationSearchId)) refreshSearchRecommendations();
+      }
+    </script>
+    <script src="/header-value-ticker.js"></script>
+  </body>
+</html>

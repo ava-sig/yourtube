@@ -1,0 +1,17 @@
+# Personal library and runtime state
+data/
+outputs/
+work/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.webm
+*.webm.part
+*.log
+
+# Local tooling and machine files
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example

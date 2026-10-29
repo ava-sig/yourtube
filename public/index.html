@@ -1,0 +1,1666 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <title>YourTube</title>
+    <script src="/vendor/vue.global.prod.js"></script>
+    <style>
+      :root { color-scheme: dark; font: 14px/1.45 Roboto, Arial, sans-serif; background: #0f0f0f; color: #f1f1f1; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      button, a { color: inherit; font: inherit; }
+      button { border: 0; cursor: pointer; }
+      .topbar { height: 56px; position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 26px; padding: 0 24px; background: #0f0f0f; }
+      .header-value-ticker { position: absolute; top: 50%; z-index: 1; height: 36px; display: flex; align-items: center; overflow: hidden; transform: translateY(-50%); pointer-events: none; }
+      .header-value-line { overflow: hidden; color: #ddd; font-size: 13px; font-weight: 550; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+      .header-value-line.is-animating { animation: header-value-cycle 5s ease both; }
+      @keyframes header-value-cycle { 0%, 8% { opacity: 0; transform: translateY(8px); } 16%, 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-7px); } }
+      .network-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 9px; padding: 6px 4px 6px 10px; border-radius: 18px; background: transparent; color: #ddd; font-size: 13px; white-space: nowrap; }
+      .auto-delete-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 9px; padding: 6px 4px 6px 10px; border-radius: 18px; background: transparent; color: #ddd; font-size: 13px; white-space: nowrap; }
+      .background-status { display: flex; flex: 0 1 270px; min-width: 90px; align-items: center; gap: 8px; overflow: hidden; border: 0; padding: 0; background: transparent; color: #aaa; font-size: 11px; line-height: 1.25; text-align: left; cursor: pointer; }
+      .background-status-copy { overflow: hidden; text-overflow: ellipsis; }
+      .background-status:hover .background-status-copy { color: #eee; }
+      .background-status:focus-visible { outline: 1px solid #e7ae58; outline-offset: 4px; border-radius: 4px; }
+      .background-status-open { flex: 0 0 auto; color: #e7ae58; opacity: .72; font-size: 12px; }
+      .background-status-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: #666; }
+      .background-status-dot.active { background: #68c98a; box-shadow: 0 0 8px #68c98a80; }
+      .background-status-dot.switching { background: #e7ae58; animation: background-status-pulse 1s ease-in-out infinite; }
+      @keyframes background-status-pulse { 50% { opacity: .3; } }
+      .network-switch { position: relative; width: 34px; height: 18px; border-radius: 12px; background: #555; transition: background .18s ease; }
+      .network-switch::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #ddd; content: ''; transition: transform .18s ease; }
+      .network-toggle[aria-checked="true"] .network-switch { background: #3ea6ff; }
+      .network-toggle[aria-checked="true"] .network-switch::after { transform: translateX(16px); background: #07131d; }
+      .network-toggle.is-transitioning .network-switch { background: #887e65; }
+      .network-toggle.is-transitioning-to-offline .network-switch::after { top: 3px; left: 19px; width: 12px; height: 12px; transform: none; border-radius: 50%; background: #ead6a0; animation: offline-switch-loading 3.2s cubic-bezier(.32,.02,.26,1) infinite; }
+      .network-toggle.is-transitioning-to-online .network-switch::after { top: 3px; left: 3px; width: 12px; height: 12px; transform: none; border-radius: 50%; background: #ead6a0; animation: online-switch-loading 3.2s cubic-bezier(.32,.02,.26,1) infinite; }
+      @keyframes offline-switch-loading { 0%, 100% { top: 3px; left: 19px; width: 12px; height: 12px; border-radius: 50%; } 24%, 46% { top: 0; left: 0; width: 34px; height: 18px; border-radius: 12px; } 64%, 95% { top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; }}
+      @keyframes online-switch-loading { 0%, 100% { top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; } 24%, 46% { top: 0; left: 0; width: 34px; height: 18px; border-radius: 12px; } 64%, 95% { top: 3px; left: 19px; width: 12px; height: 12px; border-radius: 50%; }}
+      .auto-delete-toggle[aria-checked="true"] .network-switch { background: #c23b47; }
+      .auto-delete-toggle[aria-checked="true"] .network-switch::after { transform: translateX(16px); background: #fff; }
+      .network-toggle:disabled { opacity: .65; cursor: progress; }
+      .network-notice { padding: 9px 24px; background: #302218; color: #ffd9a0; font-size: 13px; }
+      .brand { display: inline-flex; align-items: center; color: inherit; text-decoration: none; font-size: 20px; font-weight: 700; letter-spacing: -.8px; white-space: nowrap; }
+      .logo-cycle { position: relative; display: inline-grid; width: 22px; height: 24px; place-items: center; margin-right: 5px; color: #ff0033; }
+      .logo-cycle > span { grid-area: 1 / 1; }
+      .brand-mark { font-size: 22px; line-height: 1; }
+      .brand-download-count { display: inline-grid; min-width: 19px; height: 19px; place-items: center; border-radius: 50%; background: #ff0033; color: #fff; font-size: 11px; font-weight: 800; letter-spacing: 0; opacity: 0; transform: scale(.45); }
+      .logo-cycle.is-downloading .brand-mark { animation: logo-mark-cycle 3.2s ease-in-out infinite; }
+      .logo-cycle.is-downloading .brand-download-count { animation: logo-count-cycle 3.2s ease-in-out infinite; }
+      @keyframes logo-mark-cycle { 0%, 54% { opacity: 1; transform: scale(1) rotate(0); } 64%, 92% { opacity: 0; transform: scale(.55) rotate(-35deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
+      @keyframes logo-count-cycle { 0%, 58% { opacity: 0; transform: scale(.45); } 68%, 90% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.45); } }
+      @media (prefers-reduced-motion: reduce) { .logo-cycle.is-downloading .brand-mark, .logo-cycle.is-downloading .brand-download-count { animation: none; } .logo-cycle.is-downloading .brand-download-count { opacity: 1; transform: none; } .logo-cycle.is-downloading .brand-mark { opacity: 0; } }
+      .search { position: relative; z-index: 3; flex: 1; max-width: 620px; height: 40px; margin: auto; display: flex; align-items: center; overflow: hidden; border: 1px solid #303030; border-radius: 22px; background: #121212; }
+      .search:focus-within { border-color: #555; }
+      .search input { flex: 1; min-width: 0; height: 100%; padding: 0 16px; border: 0; outline: 0; background: transparent; color: white; }
+      .search-mode-toggle { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; margin-right: 8px; padding: 5px 8px; border: 0; border-radius: 18px; background: #202020; color: #999; font-size: 11px; white-space: nowrap; }
+      .search-mode-toggle:disabled { opacity: .75; cursor: default; }
+      .search-mode-toggle .mode-label.active { color: #fff; font-weight: 700; }
+      .search-mode-switch { position: relative; width: 32px; height: 18px; border-radius: 12px; background: #555; transition: background .18s ease; }
+      .search-mode-switch::after { position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: #eee; content: ''; transition: transform .18s ease; }
+      .search-mode-toggle[aria-checked="true"] .search-mode-switch { background: #3ea6ff; }
+      .search-mode-toggle[aria-checked="true"] .search-mode-switch::after { transform: translateX(14px); background: #07131d; }
+      .layout { display: flex; }
+      aside { width: 240px; flex: 0 0 240px; height: calc(100vh - 56px); position: sticky; top: 56px; overflow-y: auto; padding: 12px; }
+      .nav-link { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 22px; padding: 0 12px; border-radius: 10px; background: transparent; text-align: left; }
+      .nav-link:hover, .nav-link.selected { background: #272727; }
+      .nav-icon { width: 20px; text-align: center; font-size: 18px; }
+      .divider { border: 0; border-top: 1px solid #303030; margin: 12px 0; }
+      .nav-heading { padding: 8px 12px 4px; font-weight: 700; }
+      .sub-link { min-height: 40px; gap: 12px; padding: 0 12px; white-space: nowrap; }
+      .sub-link .avatar, .sub-avatar { flex: 0 0 24px; width: 24px; height: 24px; }
+      .sub-avatar { display: grid; place-items: center; border-radius: 50%; background: #303030; color: #ddd; font-size: 11px; font-weight: 700; }
+      .sub-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .sub-link.show-more-nav { padding-left: 48px; }
+      .show-more-nav { color: #aaa; }
+      .sidebar-stats { display: grid; gap: 8px; margin-top: 18px; padding: 14px 12px 6px; border-top: 1px solid #303030; color: #aaa; font-size: 12px; }
+      .sidebar-stats-title { margin-bottom: 2px; color: #ddd; font-size: 13px; font-weight: 700; }
+      .sidebar-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .sidebar-stat strong { color: #f1f1f1; font-variant-numeric: tabular-nums; }
+      main { width: min(100%, 1740px); min-width: 0; margin: 0 auto; padding: 24px 34px 80px; }
+      .chips { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 20px; scrollbar-width: none; }
+      .chip { flex: 0 0 auto; padding: 8px 13px; border-radius: 8px; background: #272727; font-weight: 600; }
+      .chip.active { color: #0f0f0f; background: #f1f1f1; }
+      .feed-section { margin: 10px 0 30px; }
+      .playlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+      .playlist-tile { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid #303030; border-radius: 12px; background: #181818; text-align: left; }
+      .playlist-tile:hover { background: #242424; }
+      .playlist-tile img { flex: 0 0 108px; width: 108px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: #272727; }
+      .playlist-tile-copy { min-width: 0; }
+      .playlist-tile-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 700; }
+      .playlist-items { display: grid; gap: 8px; max-width: 960px; }
+      .playlist-item { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; background: #181818; }
+      .playlist-item:hover { background: #222; }
+      .playlist-item-number { color: #aaa; text-align: center; font-variant-numeric: tabular-nums; }
+      .playlist-item-link { display: flex; min-width: 0; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+      .playlist-item-link img { flex: 0 0 144px; width: 144px; aspect-ratio: 16 / 9; border-radius: 7px; object-fit: cover; background: #272727; }
+      .playlist-item-copy { min-width: 0; }
+      .playlist-item-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 650; }
+      .playlist-item-actions { display: flex; gap: 5px; }
+      .playlist-create-panel { display: flex; gap: 8px; max-width: 540px; margin: 16px 0; }
+      .playlist-create-panel input, .playlist-dialog input, .playlist-dialog select { min-width: 0; flex: 1; padding: 10px 12px; border: 1px solid #383838; border-radius: 8px; background: #121212; color: #f1f1f1; font: inherit; }
+      .playlist-dialog-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: #000b; }
+      .playlist-dialog { width: min(100%, 440px); padding: 22px; border: 1px solid #383838; border-radius: 14px; background: #181818; box-shadow: 0 14px 50px #000a; }
+      .playlist-dialog h2 { margin-bottom: 16px; }
+      .playlist-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+      .section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 14px; }
+      h2 { margin: 0; font-size: 21px; font-weight: 700; }
+      .section-tools { display: flex; align-items: center; gap: 8px; }
+      .for-you-filter-chips { display: flex; align-items: center; gap: 6px; }
+      .for-you-filter-chip { padding: 6px 11px; border: 1px solid #383838; border-radius: 999px; background: #272727; color: #c6c6c6; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .16s ease, color .16s ease, border-color .16s ease; }
+      .for-you-filter-chip:hover { border-color: #666; color: #f1f1f1; }
+      .for-you-filter-chip.active { border-color: #f1f1f1; background: #f1f1f1; color: #111; }
+      .for-you-empty { padding: 18px 0; color: #888; font-size: 13px; }
+      .quiet-button { padding: 7px 12px; border-radius: 18px; background: #272727; color: #f1f1f1; }
+      .download-sort-select { max-width: 210px; padding: 7px 30px 7px 12px; border: 1px solid #383838; border-radius: 18px; background: #272727; color: #f1f1f1; font: inherit; cursor: pointer; }
+      .download-sort-select option { background: #222; }
+      .search-more-button { display: block; margin: 24px auto 8px; }
+      .video-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 34px 16px; }
+      .channel-page { min-width: 0; }
+      .channel-banner { width: 100%; aspect-ratio: 6 / 1; min-height: 120px; max-height: 260px; overflow: hidden; border-radius: 14px; background: #202020; }
+      .channel-banner img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .channel-profile { display: flex; align-items: center; gap: 24px; min-height: 180px; padding: 24px 0; }
+      .channel-avatar { flex: 0 0 128px; width: 128px; height: 128px; border-radius: 50%; object-fit: cover; background: #272727; }
+      .channel-profile-copy { min-width: 0; }
+      .channel-profile-copy h1 { margin: 0; font-size: 28px; line-height: 1.2; }
+      .channel-handle, .channel-counts, .channel-description { margin-top: 8px; color: #aaa; }
+      .channel-description { max-width: 900px; white-space: pre-wrap; }
+      .channel-tabs { display: flex; gap: 26px; overflow-x: auto; margin-bottom: 24px; border-bottom: 1px solid #303030; scrollbar-width: none; }
+      .channel-tab { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 12px 4px; border-bottom: 2px solid transparent; background: transparent; color: #aaa; font-weight: 700; }
+      .channel-tab.active { border-color: #f1f1f1; color: #f1f1f1; }
+      .channel-tab-state { color: #888; font-size: 10px; font-weight: 500; }
+      .channel-tab-state.complete { color: #75c98b; }
+      .channel-tab-state.collecting, .channel-tab-state.opening { color: #aaa; }
+      .channel-tab-state.error { color: #f28b82; }
+      .channel-capture-status { margin: 12px 0 22px; color: #aaa; font-size: 13px; }
+      .channel-skeleton { min-width: 0; animation: skeleton-enter .2s ease both; }
+      .skeleton-shimmer { position: relative; overflow: hidden; background: #242424; }
+      .skeleton-shimmer::after { position: absolute; inset: 0; transform: translateX(-110%); background: linear-gradient(100deg, transparent 12%, #ffffff10 34%, #ffffff48 50%, #ffffff10 66%, transparent 88%); content: ''; animation: skeleton-shimmer 1.05s linear infinite; will-change: transform; }
+      @keyframes skeleton-shimmer { to { transform: translateX(110%); } }
+      @keyframes skeleton-enter { from { opacity: .55; } to { opacity: 1; } }
+      .channel-skeleton-banner { width: 100%; aspect-ratio: 6 / 1; min-height: 120px; max-height: 260px; border-radius: 14px; }
+      .channel-skeleton-avatar { flex: 0 0 128px; width: 128px; height: 128px; border-radius: 50%; }
+      .channel-skeleton-line { height: 16px; margin: 9px 0; border-radius: 8px; }
+      .channel-skeleton-line.title { width: min(320px, 70vw); height: 28px; }
+      .channel-skeleton-line.short { width: 190px; }
+      .channel-skeleton-thumb { aspect-ratio: 16 / 9; border-radius: 12px; }
+      .channel-skeleton-title { width: 86%; height: 14px; margin-top: 14px; border-radius: 7px; }
+      .channel-skeleton-meta { width: 58%; height: 12px; margin-top: 10px; border-radius: 7px; }
+      .system-status-page { max-width: 1320px; margin: 0 auto; padding: 18px 0 64px; }
+      .system-hero { position: relative; overflow: hidden; padding: 26px 30px 22px; border: 1px solid #303842; border-radius: 18px; background: radial-gradient(ellipse at 92% 0%, #8f2b3633, transparent 42%), linear-gradient(135deg, #171b20, #111315 72%); box-shadow: 0 16px 48px #0005; }
+      .system-hero::after { position: absolute; top: 0; right: 0; width: 45%; height: 100%; pointer-events: none; background: linear-gradient(90deg, transparent, #ffffff03), repeating-linear-gradient(0deg, transparent 0 27px, #ffffff06 28px); content: ''; mask-image: linear-gradient(90deg, transparent, #000); }
+      .system-hero-topline, .system-kicker, .system-mode-pill, .system-panel-head, .system-stage-heading, .system-current-line, .system-terminal-row { display: flex; align-items: center; }
+      .system-hero-topline, .system-panel-head { justify-content: space-between; gap: 12px; }
+      .system-kicker, .system-mode-pill, .system-panel-kicker, .system-stage-state, .system-terminal-label { color: #9ca8b3; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+      .system-kicker { gap: 9px; }
+      .system-led { width: 7px; height: 7px; border-radius: 50%; background: #8bd7a4; box-shadow: 0 0 11px #8bd7a488; }
+      .system-led.is-busy { background: #e7ae58; box-shadow: 0 0 11px #e7ae5888; animation: system-led-pulse 1.4s ease-in-out infinite; }
+      @keyframes system-led-pulse { 50% { opacity: .38; } }
+      .system-mode-pill { padding: 6px 9px; border: 1px solid #414a54; border-radius: 999px; color: #e7c783; background: #171a1dba; letter-spacing: .08em; }
+      .system-hero-intro { position: relative; z-index: 1; display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; margin: 30px 0 24px; }
+      .system-eyebrow { margin: 0 0 8px; color: #da8b91; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; text-transform: uppercase; }
+      .system-hero h1 { margin: 0; color: #f4f5f6; font-size: clamp(25px, 3vw, 38px); font-weight: 620; letter-spacing: -.045em; line-height: 1.08; }
+      .system-hero-copy { max-width: 650px; margin: 11px 0 0; color: #aab3bb; font-size: 14px; }
+      .system-hero-counter { flex: 0 0 auto; min-width: 164px; padding: 12px 15px; border-left: 1px solid #59616a; color: #c2cbd2; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .system-hero-counter strong { display: block; color: #f5d594; font-size: 22px; font-weight: 550; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+      .system-meter { position: relative; z-index: 1; }
+      .system-meter-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: #d1d6da; font-size: 12px; }
+      .system-meter-label strong { color: #f4f5f6; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+      .system-meter-track { height: 6px; overflow: hidden; border-radius: 99px; background: #30353b; }
+      .system-meter-fill { height: 100%; min-width: 2px; border-radius: inherit; background: linear-gradient(90deg, #e7676d, #e9b95f 68%, #9bd8a9); box-shadow: 0 0 16px #e9b95f55; transition: width .5s ease; }
+      .system-current-line { position: relative; z-index: 1; gap: 9px; margin-top: 12px; color: #aeb8bf; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .system-current-line::before { color: #e9b95f; content: '›'; font-size: 15px; }
+      .system-immediate-offline { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 13px 15px; border: 1px solid #665438; border-radius: 11px; background: linear-gradient(110deg, #30291f, #1e2021 70%); }
+      .system-immediate-offline-copy { color: #d7c7a5; font-size: 11px; line-height: 1.5; }
+      .system-immediate-offline-copy strong { display: block; margin-bottom: 2px; color: #f0e4ca; font-size: 12px; }
+      .system-immediate-offline-button { flex: 0 0 auto; padding: 8px 12px; border: 1px solid #b08a4c; border-radius: 8px; background: #4a3d28; color: #fff0d0; font-size: 11px; font-weight: 650; cursor: pointer; }
+      .system-immediate-offline-button:hover:not(:disabled) { background: #5b492e; }
+      .system-immediate-offline-button:disabled { opacity: .6; cursor: progress; }
+      .system-stage.is-paused .system-stage-marker { border-color: #ae8a50; color: #f0cd8a; }
+      .system-status-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .8fr); gap: 16px; margin-top: 16px; }
+      .system-panel { min-width: 0; overflow: hidden; border: 1px solid #2b3036; border-radius: 16px; background: linear-gradient(145deg, #17191c, #121415); }
+      .system-panel-head { min-height: 52px; padding: 0 18px; border-bottom: 1px solid #282d32; }
+      .system-panel-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+      .system-panel-kicker { color: #7e8992; font-size: 9px; }
+      .system-stage-list { padding: 8px 18px 12px; }
+      .system-stage { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; padding: 12px 0; }
+      .system-stage:not(:last-child)::after { position: absolute; top: 39px; bottom: -10px; left: 14px; width: 1px; background: #343a40; content: ''; }
+      .system-stage-marker { position: relative; z-index: 1; display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid #41474d; border-radius: 50%; background: #191c1f; color: #818a91; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .system-stage.is-complete .system-stage-marker { border-color: #527a61; background: #1d3025; color: #9bd8a9; }
+      .system-stage.is-active .system-stage-marker { border-color: #d3a859; background: #392f1e; color: #f3ce82; box-shadow: 0 0 15px #e7ae582e; }
+      .system-stage-heading { min-height: 20px; justify-content: space-between; gap: 8px; }
+      .system-stage-heading h3 { margin: 0; color: #e8ebed; font-size: 13px; font-weight: 620; }
+      .system-stage-state { flex: 0 0 auto; color: #737e86; font-size: 9px; letter-spacing: .08em; }
+      .system-stage.is-complete .system-stage-state { color: #8bc69b; }
+      .system-stage.is-active .system-stage-state { color: #e8c276; }
+      .system-stage-copy p { margin: 3px 0 0; color: #909aa2; font-size: 11px; line-height: 1.5; }
+      .system-stage-progress { margin-top: 5px; color: #c4aa70; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+      .system-side-stack { display: grid; align-content: start; gap: 16px; }
+      .system-telemetry-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: #292e33; }
+      .system-telemetry-cell { min-height: 93px; padding: 15px 16px; background: #151719; }
+      .system-telemetry-cell span { display: block; color: #858f97; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
+      .system-telemetry-cell strong { display: block; margin-top: 8px; color: #f0f2f3; font-size: 21px; font-weight: 560; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+      .system-telemetry-cell small { display: block; margin-top: 3px; color: #818b92; font-size: 10px; }
+      .system-next-body { padding: 17px 18px 19px; }
+      .system-next-index { color: #dfb35f; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+      .system-next-body h3 { margin: 8px 0 5px; font-size: 17px; font-weight: 630; letter-spacing: -.025em; }
+      .system-next-body p { margin: 0; color: #99a2a9; font-size: 12px; line-height: 1.6; }
+      .system-terminal { padding: 13px 16px 15px; border: 1px solid #2b3036; border-radius: 14px; background: #0d0f10; box-shadow: inset 0 1px #ffffff08; }
+      .system-terminal-head { display: flex; align-items: center; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid #24292d; }
+      .system-terminal-dot { width: 6px; height: 6px; border-radius: 50%; background: #747b80; }
+      .system-terminal-dot:first-child { background: #cf6f72; }
+      .system-terminal-dot:nth-child(2) { background: #d7ad59; }
+      .system-terminal-dot:nth-child(3) { background: #74b98a; }
+      .system-terminal-label { margin-left: auto; font-size: 8px; }
+      .system-terminal-row { justify-content: space-between; gap: 12px; padding-top: 9px; color: #89949b; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .system-terminal-row strong { color: #c5d0d5; font-weight: 500; text-align: right; }
+      .system-return { margin-top: 18px; padding: 8px 12px; border: 1px solid #3c4146; border-radius: 8px; background: #191c1f; color: #d8dcdf; font-size: 11px; }
+      .system-return:hover { background: #25292d; }
+      .background-queue-panel { margin-top: 16px; }
+      .background-queue-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; background: transparent; color: #d8dcdf; text-align: left; }
+      .background-queue-toggle:hover { background: #ffffff06; }
+      .background-queue-toggle-copy strong { display: block; font-size: 12px; font-weight: 650; }
+      .background-queue-toggle-copy small { display: block; margin-top: 3px; color: #858f97; font-size: 10px; }
+      .background-queue-toggle-count { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; color: #aeb8bf; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .background-queue-chevron { color: #e7ae58; font-size: 15px; transition: transform .2s ease; }
+      .background-queue-chevron.is-open { transform: rotate(180deg); }
+      .background-queue-content { padding: 0 18px 18px; border-top: 1px solid #282d32; }
+      .background-queue-updated { padding-top: 12px; color: #768189; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .background-queue-error { margin-top: 12px; padding: 10px 12px; border: 1px solid #65383b; border-radius: 8px; background: #291b1d; color: #e9a6a9; font-size: 11px; }
+      .background-queue-groups { display: grid; gap: 12px; margin-top: 12px; }
+      .background-queue-group { overflow: hidden; border: 1px solid #2b3036; border-radius: 10px; background: #101213; }
+      .background-queue-group-head { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #252a2e; }
+      .background-queue-group-head h3 { margin: 0; color: #d8dcdf; font-size: 11px; font-weight: 620; }
+      .background-queue-group-head span { flex: 0 0 auto; color: #7d8990; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .background-queue-empty { padding: 11px 12px; color: #68737a; font-size: 10px; }
+      .background-queue-items { padding: 0 12px; }
+      .background-queue-item { padding: 11px 0; }
+      .background-queue-item + .background-queue-item { border-top: 1px solid #252a2e; }
+      .background-queue-item-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .background-queue-item-title { min-width: 0; color: #e3e7e9; font-size: 11px; font-weight: 560; overflow-wrap: anywhere; }
+      .background-queue-badge { flex: 0 0 auto; padding: 3px 6px; border: 1px solid #343b40; border-radius: 99px; color: #a9b2b7; font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+      .background-queue-badge.running, .background-queue-badge.downloading, .background-queue-badge.collecting { border-color: #665438; background: #30291f; color: #efcc85; }
+      .background-queue-badge.ready, .background-queue-badge.complete { border-color: #375844; background: #1c2a20; color: #9bd8a9; }
+      .background-queue-badge.retry, .background-queue-badge.error, .background-queue-badge.exhausted { border-color: #633b3d; background: #2a1c1e; color: #e4a2a5; }
+      .background-queue-item-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 5px; color: #78838a; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+      .background-queue-item-message { margin: 6px 0 0; color: #9aa4aa; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+      @media (prefers-reduced-motion: reduce) { .header-value-line.is-animating { animation: none; opacity: 1; transform: none; } }
+      .local-search-teaser { display: flex; min-width: 0; min-height: 118px; align-items: center; gap: 12px; padding: 10px; border: 1px solid #373737; border-radius: 12px; background: #181818; text-align: left; cursor: pointer; }
+      .local-search-teaser:hover { background: #242424; }
+      .local-search-stack { position: relative; flex: 0 0 96px; width: 96px; height: 76px; }
+      .local-search-thumb { position: absolute; width: 62px; height: 44px; overflow: hidden; border: 2px solid #181818; border-radius: 7px; box-shadow: 0 3px 8px #0009; }
+      .local-search-thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .local-search-thumb .duration { right: 2px; bottom: 2px; padding: 1px 2px; font-size: 8px; }
+      .local-search-teaser-label { color: #f1f1f1; font-size: 15px; font-weight: 650; line-height: 1.3; }
+      .video-card { position: relative; min-width: 0; }
+      .video-card-link { display: block; color: inherit; text-decoration: none; }
+      .delete-media { position: absolute; top: 8px; right: 8px; z-index: 2; padding: 6px 9px; border: 1px solid #ffffff30; border-radius: 7px; background: #111e; color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+      .delete-media:hover { background: #b3261e; }
+      .video-card.menu-open { z-index: 6; }
+      .card-details { position: relative; flex: 1; min-width: 0; }
+      .card-title-row { display: flex; align-items: flex-start; gap: 6px; }
+      .card-title-row .video-title { flex: 1; min-width: 0; }
+      .video-menu-trigger { flex: 0 0 30px; width: 30px; height: 30px; display: grid; place-items: center; margin: -5px -5px 0 0; border-radius: 50%; background: transparent; color: #ddd; font-size: 23px; line-height: 1; }
+      .video-menu-trigger:hover, .video-menu-trigger[aria-expanded="true"] { background: #303030; }
+      .video-card-menu { position: absolute; top: 28px; right: 0; z-index: 8; width: 232px; padding: 6px; border: 1px solid #383838; border-radius: 12px; background: #282828; box-shadow: 0 8px 24px #0009; }
+      .video-menu-item { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 7px; background: transparent; color: #f1f1f1; text-align: left; white-space: nowrap; }
+      .video-menu-item:hover:not(:disabled) { background: #3a3a3a; }
+      .video-menu-item:disabled { color: #888; cursor: default; }
+      .video-menu-separator { height: 1px; margin: 5px 3px; background: #454545; }
+      .thumb-wrap { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: #272727; }
+      .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .duration { position: absolute; right: 6px; bottom: 6px; padding: 2px 4px; border-radius: 4px; background: #000c; font-size: 12px; }
+      .duration.duration-upcoming { background: #a8242a; color: #fff; font-weight: 700; letter-spacing: .035em; }
+      .expiry-countdown { position: absolute; left: 6px; bottom: 6px; padding: 4px 7px; border-radius: 5px; background: #b3261ee8; color: #fff; font-size: 11px; font-weight: 750; line-height: 1.3; font-variant-numeric: tabular-nums; box-shadow: 0 1px 5px #0009; }
+      .expiry-postpone-overlay { position: absolute; z-index: 3; top: 0; left: 0; display: flex; width: 100%; aspect-ratio: 16 / 9; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; background: #000b; color: #fff; text-align: center; font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; }
+      .expiry-postpone-button { padding: 6px 13px; border: 0; border-radius: 18px; background: #fff; color: #222; font: inherit; font-weight: 750; cursor: pointer; }
+      .expiry-postpone-button:disabled { opacity: .65; cursor: progress; }
+      .card-info { display: flex; gap: 12px; padding-top: 12px; }
+      .channel-link { display: block; width: fit-content; max-width: 100%; color: #aaa; text-decoration: none; }
+      .channel-link:hover { color: #f1f1f1; text-decoration: underline; }
+      .avatar { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%; background: #303030; object-fit: cover; }
+      .avatar-fallback { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: #3a3a3a; color: #ddd; font-size: 14px; font-weight: 700; }
+      .action-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 18px; border-bottom: 1px solid #303030; background: #202020; color: #ddd; font-size: 13px; }
+      .action-notice.error { color: #ff9b9b; }
+      .action-notice button { border: 0; background: transparent; color: inherit; font-size: 18px; cursor: pointer; }
+      .video-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: inherit; text-decoration: none; font-size: 15px; line-height: 1.35; font-weight: 600; }
+      .channel, .meta, .empty { color: #aaa; }
+      .channel { margin-top: 5px; }
+      .meta { font-size: 12px; }
+      .home-feed-section { margin-bottom: 38px; }
+      .topic-row { min-width: 0; margin: 0 0 36px; }
+      .topic-label { margin: 0 0 14px; font-size: 20px; font-weight: 700; }
+      .home-section-divider { display: flex; align-items: center; gap: 14px; margin: 20px 0 0; }
+      .home-divider-rule { height: 1px; flex: 1; background: #383838; }
+      .home-section-more { min-width: 126px; padding: 7px 16px; border: 1px solid #3f3f3f; border-radius: 18px; background: #0f0f0f; color: #f1f1f1; font: inherit; font-size: 12px; cursor: pointer; }
+      .home-section-more:hover { background: #272727; }
+      .shorts-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
+      .shorts-grid .thumb-wrap { aspect-ratio: 9 / 16; }
+      .notice { padding: 52px 16px; color: #aaa; text-align: center; }
+      .spinner { width: 34px; height: 34px; border: 3px solid #444; border-top-color: #f33; border-radius: 50%; animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .notice strong { display: block; margin-bottom: 8px; color: #f1f1f1; font-size: 18px; }
+      .error { color: #ff9b9b; }
+      @media (max-width: 1200px) { aside { width: 210px; flex-basis: 210px; } main { padding-inline: 22px; } .shorts-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+      @media (max-width: 900px) { aside { width: 72px; flex-basis: 72px; padding: 10px 6px; } .nav-link { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 2px; font-size: 10px; } .nav-icon { font-size: 18px; } .nav-heading, .sub-link, .show-more-nav, .sidebar-stats, .divider:nth-of-type(n+2) { display: none; } .video-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (max-width: 620px) { .topbar { padding: 0 12px; gap: 12px; } .brand { font-size: 17px; } .search { max-width: none; } aside { width: 58px; flex-basis: 58px; } main { padding: 14px 12px 60px; } .channel-profile { gap: 14px; min-height: 128px; padding: 18px 0; } .channel-avatar, .channel-skeleton-avatar { flex-basis: 80px; width: 80px; height: 80px; } .channel-profile-copy h1 { font-size: 22px; } .channel-banner, .channel-skeleton-banner { min-height: 96px; } .video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 10px; } .shorts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .topic-label { margin-bottom: 14px; } h2 { font-size: 18px; } }
+      @media (max-width: 980px) { .topbar { gap: 14px; } .background-status { flex-basis: 170px; } }
+      @media (max-width: 1100px) { .system-status-grid { grid-template-columns: minmax(0, 1fr) minmax(270px, .8fr); } }
+      @media (max-width: 900px) { .system-status-grid { grid-template-columns: 1fr; } .system-side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); } .system-side-stack .system-terminal { grid-column: 1 / -1; } }
+      @media (max-width: 760px) { .header-value-ticker { display: none; } .background-status { flex: 0 1 120px; min-width: 36px; font-size: 10px; } .background-status-dot { flex-basis: 6px; width: 6px; height: 6px; } .auto-delete-toggle, .network-toggle { gap: 5px; padding-inline: 4px; font-size: 11px; } .system-hero { padding: 20px 18px; } .system-hero-intro { display: block; margin: 23px 0 19px; } .system-hero-counter { display: inline-block; min-width: 0; margin-top: 19px; padding: 8px 12px; } .system-immediate-offline { align-items: flex-start; flex-direction: column; } .system-side-stack { grid-template-columns: 1fr; } .system-side-stack .system-terminal { grid-column: auto; } .system-panel-head { padding-inline: 14px; } .system-stage-list { padding-inline: 14px; } }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="brand" :href="stats.activeDownloads || stats.pausedDownloads ? '/downloads' : '/'" :aria-label="stats.activeDownloads ? `View ${stats.activeDownloads} media downloads in progress` : stats.pausedDownloads ? `View ${stats.pausedDownloads} paused downloads` : 'YourTube home'"><span class="logo-cycle" :class="{ 'is-downloading': stats.activeDownloads > 0 }" aria-hidden="true"><span class="brand-mark">▶</span><span class="brand-download-count">{{ stats.activeDownloads || stats.pausedDownloads }}</span></span>YourTube</a>
+        <div id="header-value-ticker" class="header-value-ticker" aria-live="off"><span class="header-value-line"></span></div>
+        <form class="search" @submit.prevent><input v-model="query" @input="onSearchInput" maxlength="200" :placeholder="searchSource === 'local' ? 'Search downloaded videos' : 'Search YouTube stubs'" aria-label="Search videos" /><button class="search-mode-toggle" type="button" role="switch" :disabled="networkMode !== 'online'" :aria-checked="String(networkMode === 'online' && searchSource === 'youtube')" :aria-label="`Search ${searchSource === 'local' ? 'local downloads' : 'YouTube stubs'}`" @click="toggleSearchSource"><span class="mode-label" :class="{ active: searchSource === 'local' }">Local</span><span class="search-mode-switch" aria-hidden="true"></span><span class="mode-label" :class="{ active: networkMode === 'online' && searchSource === 'youtube' }">YouTube</span></button></form>
+        <button class="background-status" type="button" :title="`Open system status · ${backgroundStatus}`" :aria-label="`Open YourTube system status. ${backgroundStatus}`" @click="setCurrentView('status')"><span class="background-status-dot" :class="{ active: backgroundWorkActive, switching: modeTransitionActive }" aria-hidden="true"></span><span class="background-status-copy">{{ backgroundStatus }}</span><span class="background-status-open" aria-hidden="true">↗</span></button>
+        <button class="auto-delete-toggle" type="button" role="switch" :aria-checked="String(autoDeleteEnabled)" :disabled="autoDeleteUpdating" aria-label="Automatically delete media after 24 hours" @click="toggleAutoDelete"><span>Auto-delete</span><span class="network-switch" aria-hidden="true"></span></button>
+        <button class="network-toggle" :class="{ 'is-transitioning': modeTransitionActive, 'is-transitioning-to-online': modeTransitionTarget === 'online', 'is-transitioning-to-offline': offlineTransitionActive }" type="button" role="switch" :aria-checked="String(networkMode === 'online' && !modeTransitionActive)" :aria-busy="String(modeTransitionActive)" :disabled="networkModeUpdating" :aria-label="offlineTransitionActive && modeTransitionTarget !== 'online' ? 'Cancel switching to Offline mode' : modeTransitionActive ? `Switching ${modeTransitionTarget || 'Offline'} mode` : `Switch ${networkMode === 'offline' ? 'Online' : 'Offline'}`" @click="toggleNetworkMode"><span>{{ modeTransitionActive ? `Going ${modeTransitionTarget || 'offline'}` : networkMode === 'offline' ? 'Offline' : 'Online' }}</span><span class="network-switch" aria-hidden="true"></span></button>
+      </header>
+      <div v-if="networkNotice" class="network-notice" role="status">{{ networkNotice }}</div>
+      <div v-if="actionNotice" class="action-notice" :class="{ error: actionError }" role="status"><span>{{ actionNotice }}</span><button type="button" aria-label="Dismiss message" @click="actionNotice = ''">×</button></div>
+      <div class="layout">
+        <aside>
+          <button class="nav-link" :class="{ selected: currentView === 'home' }" @click="goHome"><span class="nav-icon">⌂</span>Home</button>
+          <button class="nav-link"><span class="nav-icon">▣</span>Shorts</button>
+          <button class="nav-link" :class="{ selected: currentView === 'downloaded' }" @click="setCurrentView('downloaded')"><span class="nav-icon">⇩</span>Downloaded</button>
+          <hr class="divider" />
+          <div class="nav-heading">Subscriptions</div>
+          <button v-for="sub in subscriptionsVisible" :key="sub.key" class="nav-link sub-link" :title="sub.name" @click="openChannel(sub.key)"><img v-if="sub.avatar && !sub.avatarFailed" class="avatar" :src="sub.avatar" loading="eager" @error="sub.avatarFailed = true" /><span v-else class="sub-avatar">{{ subscriptionInitials(sub.name) }}</span><span class="sub-name">{{ sub.name }}</span></button>
+          <button class="nav-link sub-link show-more-nav" @click="subscriptionsExpanded = !subscriptionsExpanded">{{ subscriptionsExpanded ? '⌃  Show less' : '⌄  Show more' }}</button>
+          <hr class="divider" />
+          <div class="nav-heading">You ›</div>
+          <button v-for="item in youLinks" :key="item" class="nav-link" :class="{ selected: (item === 'History' && currentView === 'history') || (item === 'Playlists' && currentView === 'playlists' && selectedPlaylistId !== 'watch-later') || (item === 'Watch later' && currentView === 'playlists' && selectedPlaylistId === 'watch-later') }" @click="openSidebarItem(item)"><span class="nav-icon">{{ iconFor(item) }}</span>{{ item }}</button>
+          <button class="nav-link show-more-nav" @click="clipsVisible = !clipsVisible">{{ clipsVisible ? '⌃  Show less' : '⌄  Show more' }}</button>
+          <button v-if="clipsVisible" class="nav-link"><span class="nav-icon">▣</span>Clips</button>
+          <hr class="divider" />
+          <div class="nav-heading">Explore ›</div>
+          <button v-for="item in exploreLinks" :key="item" class="nav-link"><span class="nav-icon">{{ iconFor(item) }}</span>{{ item }}</button>
+          <footer class="sidebar-stats" aria-label="YourTube statistics">
+            <div class="sidebar-stats-title">YourTube stats</div>
+            <div class="sidebar-stat"><span>Local files</span><strong>{{ formatCount(stats.localFiles) }}</strong></div>
+            <div class="sidebar-stat" :title="`${formatBytes(stats.mediaBytes)} on disk`"><span>Media on disk</span><strong>{{ formatBytes(stats.mediaBytes) }}</strong></div>
+            <div class="sidebar-stat"><span>Historical views</span><strong>{{ formatCount(stats.historicalViews) }}</strong></div>
+            <div class="sidebar-stat" title="Unique video stubs received from the browser extension"><span>Videostubs from Extension</span><strong>{{ formatCount(stats.extensionVideos) }}</strong></div>
+            <div class="sidebar-stat" :title="durationBaselineTitle(stats.durationBaseline)"><span>Extension video-length baseline</span><strong>{{ formatDurationBaseline(stats.durationBaseline) }}</strong></div>
+          </footer>
+        </aside>
+        <main>
+          <div v-if="currentView === 'home'" class="chips">
+            <button v-for="chip in chips" :key="chip" class="chip" :class="{ active: activeChip === chip }" @click="activeChip = chip">{{ chip }}</button>
+          </div>
+          <section v-if="currentView === 'search'" class="feed-section">
+            <div class="section-head"><h2>{{ activeSearchSource === 'youtube' ? 'Search results from YouTube' : 'Downloaded search results' }}</h2></div>
+            <p class="meta">{{ activeSearchSource === 'youtube' ? 'Collected YouTube video stubs' : 'Local downloads' }} · “{{ searchTerm }}”<span v-if="searchTotal"> · {{ searchTotal }} matches</span></p>
+            <div v-if="searchLoading && !searchResultsReady" class="notice"><div class="spinner" style="margin:0 auto 14px"></div><strong>Gathering the first results</strong>{{ activeSearchSource === 'youtube' ? 'Waiting for matching video stubs from your YouTube feed.' : 'Searching your downloaded videos.' }}</div>
+            <div v-if="searchError" class="notice error">{{ searchError }}</div>
+            <div v-if="visibleSearchVideos.length || (activeSearchSource === 'youtube' && localSearchTotal > 0)" class="video-grid">
+              <button v-if="activeSearchSource === 'youtube' && localSearchTotal > 0" class="local-search-teaser" type="button" @click="searchLocalFromTeaser">
+                <span class="local-search-stack"><span v-for="(video, index) in localSearchPreview" :key="video.id" class="local-search-thumb" :style="{ left: `${index * 11}px`, top: `${index * 6}px`, zIndex: localSearchPreview.length - index }"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" @error="thumbnailError($event, video)" /><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></span></span>
+                <span class="local-search-teaser-label">{{ localSearchTotal }} {{ localSearchTotal === 1 ? 'result' : 'results' }} locally</span>
+              </button>
+              <video-card v-for="video in visibleSearchVideos" :key="video.id" :video="video" :source="activeSearchSource === 'youtube' ? 'YouTube search' : 'Downloaded'" @click="recordSearchSelection(video.id, $event)" />
+            </div>
+            <div v-if="searchLoading && searchResultsReady" class="meta" style="padding:18px 0;text-align:center">Loading the next batch…</div>
+            <button v-else-if="searchHasMore && searchResultsReady" id="search-load-trigger" class="quiet-button search-more-button" type="button" @click="loadMoreSearch">Show 12 more results</button>
+            <div v-if="searchResultsReady && !visibleSearchVideos.length && !(activeSearchSource === 'youtube' && localSearchTotal > 0)" class="notice"><strong>No matching videos</strong>No collected videos match this term yet.</div>
+            <div v-else-if="!searchResultsReady && !searchLoading && !searchError && !(activeSearchSource === 'youtube' && localSearchTotal > 0)" class="notice"><strong>No matching videos</strong>{{ activeSearchSource === 'youtube' ? 'No collected YouTube stubs match this search.' : 'No downloaded videos match this search.' }}</div>
+          </section>
+          <section v-else-if="currentView === 'status'" class="system-status-page">
+            <div class="system-hero">
+              <div class="system-hero-topline">
+                <div class="system-kicker"><span class="system-led" :class="{ 'is-busy': statusPreparationBusy }" aria-hidden="true"></span> YourTube local / boot sequence</div>
+                <span class="system-mode-pill">{{ statusModeLabel }}</span>
+              </div>
+              <div class="system-hero-intro">
+                <div><p class="system-eyebrow">BACKGROUND SYSTEMS · LIVE</p><h1>{{ statusPageHeadline }}</h1><p class="system-hero-copy">{{ statusPageSummary }}</p></div>
+                <div class="system-hero-counter"><strong>{{ statusProgressLabel }}</strong>{{ statusCurrentStageTitle }}</div>
+              </div>
+              <div class="system-meter">
+                <div class="system-meter-label"><span>{{ statusCurrentStageTitle }}</span><strong>{{ statusProgressPercent }}%</strong></div>
+                <div class="system-meter-track" role="progressbar" :aria-valuenow="statusProgressPercent" aria-valuemin="0" aria-valuemax="100" :aria-valuetext="statusProgressLabel"><div class="system-meter-fill" :style="{ width: `${statusProgressPercent}%` }"></div></div>
+                <div class="system-current-line">{{ statusCurrentMessage }}</div>
+              </div>
+              <div v-if="offlineTransitionActive && ['queued', 'running'].includes(offlinePreparation.status)" class="system-immediate-offline">
+                <div class="system-immediate-offline-copy"><strong>Need offline mode now?</strong>Pause this preparation; it will resume in the background the next time you switch YourTube Online.</div>
+                <button class="system-immediate-offline-button" type="button" :disabled="networkModeUpdating" @click="goOfflineImmediately">{{ networkModeUpdating ? 'Switching…' : 'Go offline immediately' }}</button>
+              </div>
+            </div>
+            <div class="system-status-grid">
+              <section class="system-panel">
+                <div class="system-panel-head"><h2>Preparation sequence</h2><span class="system-panel-kicker">{{ statusCompletedStageCount }}/{{ offlineStageCards.length }} stages complete</span></div>
+                <div class="system-stage-list">
+                  <article v-for="stage in offlineStageCards" :key="stage.phase" class="system-stage" :class="{ 'is-complete': stage.state === 'complete', 'is-active': stage.state === 'active', 'is-paused': stage.state === 'paused' }">
+                    <div class="system-stage-marker">{{ stage.state === 'complete' ? '✓' : String(stage.index).padStart(2, '0') }}</div>
+                    <div class="system-stage-copy"><div class="system-stage-heading"><h3>{{ stage.title }}</h3><span class="system-stage-state">{{ stage.stateLabel }}</span></div><p>{{ stage.description }}</p><div v-if="stage.state === 'active' && statusProgressLabel !== '—'" class="system-stage-progress">{{ statusProgressLabel }} in this stage</div></div>
+                  </article>
+                </div>
+              </section>
+              <div class="system-side-stack">
+                <section class="system-panel">
+                  <div class="system-panel-head"><h2>Live telemetry</h2><span class="system-panel-kicker">Local library</span></div>
+                  <div class="system-telemetry-grid">
+                    <div class="system-telemetry-cell"><span>Local files</span><strong>{{ formatCount(stats.localFiles) }}</strong><small>Playable media on this server</small></div>
+                    <div class="system-telemetry-cell"><span>Library size</span><strong>{{ formatBytes(stats.mediaBytes) }}</strong><small>Disk space in use</small></div>
+                    <div class="system-telemetry-cell"><span>Video lengths</span><strong>{{ formatCount(stats.pendingDurations) }}</strong><small>Still missing a saved length</small></div>
+                    <div class="system-telemetry-cell"><span>Local metadata</span><strong>{{ formatCount(stats.downloadMetadata?.ready) }}/{{ formatCount(stats.downloadMetadata?.total) }}</strong><small>Videos with comments and referenced images cached</small></div>
+                    <div class="system-telemetry-cell"><span>Active transfers</span><strong>{{ formatCount(stats.activeDownloads) }}</strong><small>Allowed to finish before Offline</small></div>
+                  </div>
+                </section>
+                <section class="system-panel">
+                  <div class="system-panel-head"><h2>Coming next</h2><span class="system-panel-kicker">Queue forecast</span></div>
+                  <div v-if="statusNextStage" class="system-next-body"><span class="system-next-index">Stage {{ String(statusNextStage.index).padStart(2, '0') }} · queued</span><h3>{{ statusNextStage.title }}</h3><p>{{ statusNextStage.description }}</p></div>
+                  <div v-else class="system-next-body"><span class="system-next-index">Sequence complete</span><h3>Local library ready</h3><p>YourTube is running with the assets prepared for this mode.</p></div>
+                </section>
+                <section class="system-terminal" aria-label="System activity log">
+                  <div class="system-terminal-head"><span class="system-terminal-dot"></span><span class="system-terminal-dot"></span><span class="system-terminal-dot"></span><span class="system-terminal-label">yourtube / system.log</span></div>
+                  <div class="system-terminal-row"><span>NETWORK</span><strong>{{ statusModeLabel }}</strong></div>
+                  <div class="system-terminal-row"><span>DISCOVERY</span><strong>{{ statusDiscoveryLabel }}</strong></div>
+                  <div class="system-terminal-row"><span>CHANNEL CAPTURE</span><strong>{{ stats.activeChannelCaptures ? `${stats.activeChannelCaptures} active` : networkMode === 'online' ? 'available' : 'paused' }}</strong></div>
+                </section>
+              </div>
+            </div>
+            <section class="system-panel background-queue-panel">
+              <div class="system-panel-head"><h2>Background queue</h2><span class="system-panel-kicker">{{ backgroundQueue.totalItems ? `${formatCount(backgroundQueue.totalItems)} items` : 'Live inventory' }}</span></div>
+              <button class="background-queue-toggle" type="button" :aria-expanded="String(backgroundQueueExpanded)" @click="toggleBackgroundQueue">
+                <span class="background-queue-toggle-copy"><strong>{{ backgroundQueueExpanded ? 'Hide queue items' : 'Expand to inspect queue items' }}</strong><small>See the exact videos, captures, retries, and preparation jobs YourTube is tracking.</small></span>
+                <span class="background-queue-toggle-count"><span>{{ backgroundQueueLoading ? 'Updating…' : backgroundQueue.updatedAt ? `Updated ${queueTimestamp(backgroundQueue.updatedAt)}` : 'Expand' }}</span><span class="background-queue-chevron" :class="{ 'is-open': backgroundQueueExpanded }" aria-hidden="true">⌄</span></span>
+              </button>
+              <div v-if="backgroundQueueExpanded" class="background-queue-content">
+                <div v-if="backgroundQueueError" class="background-queue-error">{{ backgroundQueueError }}</div>
+                <div v-else-if="backgroundQueueLoading && !backgroundQueue.groups.length" class="background-queue-updated">Reading live background queues…</div>
+                <div v-else class="background-queue-updated">Mode {{ backgroundQueue.mode || networkMode }} · live refresh every 5 seconds · {{ backgroundQueue.totalItems || 0 }} tracked items</div>
+                <div class="background-queue-groups">
+                  <section v-for="group in backgroundQueue.groups" :key="group.key" class="background-queue-group">
+                    <div class="background-queue-group-head"><h3>{{ group.label }}</h3><span>{{ group.count }} {{ group.count === 1 ? 'item' : 'items' }}</span></div>
+                    <div v-if="!group.items.length" class="background-queue-empty">Nothing in this queue.</div>
+                    <div v-else class="background-queue-items">
+                      <article v-for="item in group.items" :key="item.videoId || item.id || group.key + '-' + item.title" class="background-queue-item">
+                        <div class="background-queue-item-top"><strong class="background-queue-item-title">{{ item.title || item.videoId || item.id || group.label }}</strong><span class="background-queue-badge" :class="item.status || 'queued'">{{ item.status || 'queued' }}</span></div>
+                        <div class="background-queue-item-meta">
+                          <span v-if="item.videoId || item.id">{{ item.videoId || item.id }}</span>
+                          <span v-if="item.channel">{{ item.channel }}</span>
+                          <span v-if="item.tab">Section {{ item.tab }}</span>
+                          <span v-if="item.phase">{{ item.phase }}</span>
+                          <span v-if="item.progress !== null && item.progress !== undefined">{{ Number(item.progress).toFixed(1) }}%</span>
+                          <span v-if="item.completed !== undefined && item.total !== undefined">{{ item.completed }}/{{ item.total }}</span>
+                          <span v-if="item.attempts">Attempt {{ item.attempts }}</span>
+                          <span v-if="item.resultCount !== undefined">{{ item.resultCount }} results</span>
+                          <span v-if="item.nextAttemptAt">Next retry {{ queueTimestamp(item.nextAttemptAt) }}</span>
+                          <span v-if="item.updatedAt">Updated {{ queueTimestamp(item.updatedAt) }}</span>
+                        </div>
+                        <p v-if="item.message" class="background-queue-item-message">{{ item.message }}</p>
+                      </article>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </section>
+            <button class="system-return" type="button" @click="goHome">← Return to library</button>
+          </section>
+          <div v-else-if="currentView === 'downloaded'">
+            <section class="feed-section"><div class="section-head"><h2>Downloaded</h2><div class="section-tools"><select v-model="downloadSortOrder" class="download-sort-select" aria-label="Sort downloaded videos" @change="saveDownloadSortOrder"><option value="newest">Time added · newest first</option><option value="oldest">Time added · oldest first</option><option value="mostPlayed">Most played</option><option v-if="autoDeleteEnabled" value="autodeletion">Autodeletion time · soonest first</option><option value="mostLiked" disabled>Most liked · coming later</option></select><button class="quiet-button" :aria-expanded="String(!isCollapsed('downloaded-page'))" @click="toggleSection('downloaded-page')">{{ isCollapsed('downloaded-page') ? '⌄ Expand' : '⌃ Collapse' }}</button></div></div>
+              <div v-show="!isCollapsed('downloaded-page')">
+              <div v-if="error" class="notice error">{{ error }}</div>
+              <div v-if="downloadedVideos.length === 0" class="notice"><strong>No local videos yet</strong>Videos appear here after a local download finishes.</div>
+              <div class="video-grid"><video-card v-for="video in downloadedVideosSorted" :key="video.id" :video="video" source="Downloaded" :can-delete="true" :show-expiry="true" :auto-delete-enabled="autoDeleteEnabled" @delete="deleteDownloadedVideo" @postpone="postponeDownloadedVideo" /></div>
+              </div>
+            </section>
+          </div>
+          <div v-else-if="currentView === 'history'">
+            <section class="feed-section">
+              <div class="section-head"><h2>History</h2></div>
+              <div v-if="historyVideos.length === 0" class="notice"><strong>No watched videos yet</strong>Videos you play here will appear in this list, most recently watched first.</div>
+              <div v-else class="video-grid"><video-card v-for="video in historyVideos" :key="video.id" :video="video" source="Downloaded" /></div>
+            </section>
+          </div>
+          <div v-else-if="currentView === 'playlists'">
+            <section class="feed-section">
+              <div class="section-head"><h2>{{ selectedPlaylist ? selectedPlaylist.title : 'Playlists' }}</h2><div class="section-tools"><button v-if="selectedPlaylist" class="quiet-button" @click="closePlaylist">All playlists</button><button v-else class="quiet-button" @click="showPlaylistCreate = !showPlaylistCreate">{{ showPlaylistCreate ? 'Cancel' : 'New playlist' }}</button></div></div>
+              <div v-if="error" class="notice error">{{ error }}</div>
+              <div v-if="showPlaylistCreate && !selectedPlaylist" class="playlist-create-panel"><input v-model="newPlaylistTitle" maxlength="120" placeholder="Playlist name" aria-label="Playlist name" @keyup.enter="createPlaylist" /><button class="quiet-button" :disabled="!newPlaylistTitle.trim()" @click="createPlaylist">Create</button></div>
+              <div v-if="playlistLoading" class="notice"><div class="spinner" style="margin:0 auto 14px"></div><strong>Loading playlists</strong></div>
+              <template v-else-if="selectedPlaylist">
+                <p class="meta">{{ selectedPlaylist.source === 'youtube' ? 'Captured from YouTube' : 'Your playlist' }} · {{ selectedPlaylist.items.length }} {{ selectedPlaylist.items.length === 1 ? 'video' : 'videos' }}<span v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.declaredItemCount > selectedPlaylist.items.length"> of {{ selectedPlaylist.declaredItemCount }} detected so far</span><span v-if="selectedPlaylist.channel"> · {{ selectedPlaylist.channel }}</span></p>
+                <div class="section-tools" style="justify-content:flex-start;margin:16px 0"><button v-if="selectedPlaylist.items.length" class="quiet-button" @click="playPlaylist(0)">Play all</button><button v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'watch-later'" class="quiet-button" @click="renamePlaylist">Rename</button><button v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'watch-later'" class="quiet-button" @click="deletePlaylist">Delete playlist</button><a v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.sourceUrl" class="quiet-button" :href="selectedPlaylist.sourceUrl" target="_blank" rel="noreferrer">Open on YouTube</a></div>
+                <div v-if="!selectedPlaylist.items.length" class="notice"><strong>No videos captured yet</strong>Open this playlist on YouTube and scroll through its videos with the YourTube extension enabled.</div>
+                <div class="playlist-items">
+                  <div v-for="(video, index) in selectedPlaylist.items" :key="video.itemId" class="playlist-item">
+                    <span class="playlist-item-number">{{ index + 1 }}</span>
+                    <a class="playlist-item-link" :href="playlistWatchUrl(video.id, index)"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="thumbnailError($event, video)" /><span class="playlist-item-copy"><span class="playlist-item-title">{{ video.title }}</span><span class="meta">{{ video.channel || 'Channel unavailable' }}<span v-if="video.duration"> · {{ video.duration }}</span><span v-if="video.downloaded"> · Local copy</span></span></span></a>
+                    <div v-if="selectedPlaylist.source === 'local'" class="playlist-item-actions"><button class="quiet-button" type="button" :disabled="index === 0" :aria-label="`Move ${video.title} up`" @click="movePlaylistItem(index, -1)">↑</button><button class="quiet-button" type="button" :disabled="index === selectedPlaylist.items.length - 1" :aria-label="`Move ${video.title} down`" @click="movePlaylistItem(index, 1)">↓</button><button class="quiet-button" type="button" :aria-label="`Remove ${video.title} from playlist`" @click="removePlaylistItem(video)">×</button></div>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="localPlaylists.length || youtubePlaylists.length">
+                <h3>Your playlists</h3><div class="playlist-grid"><button v-for="playlist in localPlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="meta">{{ playlist.capturedCount }} {{ playlist.capturedCount === 1 ? 'video' : 'videos' }}</span></span></button></div>
+                <h3 v-if="youtubePlaylists.length" style="margin-top:30px">Captured from YouTube</h3><div v-if="youtubePlaylists.length" class="playlist-grid"><button v-for="playlist in youtubePlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="meta">{{ playlist.kind === 'mix' ? 'Mix' : 'YouTube playlist' }} · {{ playlist.capturedCount }} captured<span v-if="playlist.declaredItemCount > playlist.capturedCount"> · {{ playlist.declaredItemCount }} total</span><span v-if="playlist.channel"> · {{ playlist.channel }}</span></span></span></button></div>
+              </template>
+              <div v-else-if="!playlistLoading" class="notice"><strong>No playlists yet</strong>Create a playlist from your local videos, or browse YouTube with the extension enabled to capture playlists.</div>
+            </section>
+          </div>
+          <section v-else-if="currentView === 'channel'" class="channel-page">
+            <div v-if="channelIsLoading && !channelData" class="channel-banner channel-skeleton-banner skeleton-shimmer" aria-hidden="true"></div>
+            <div v-else-if="channelData?.banner" class="channel-banner"><img :src="channelData.banner" alt="" /></div>
+            <div class="channel-profile">
+              <div v-if="channelIsLoading && !channelData" class="channel-avatar channel-skeleton-avatar skeleton-shimmer" aria-hidden="true"></div>
+              <img v-else-if="channelData?.avatar" class="channel-avatar" :src="channelData.avatar" alt="" />
+              <div v-else class="channel-avatar" aria-hidden="true"></div>
+              <div class="channel-profile-copy">
+                <template v-if="channelData"><h1>{{ channelData.name || channelKey }}</h1><div class="channel-handle">{{ channelHandle }}</div><div class="channel-counts"><span v-if="channelData.subscriberCount">{{ channelData.subscriberCount }}</span><span v-if="channelData.videoCount">{{ channelData.subscriberCount ? ' · ' : '' }}{{ channelData.videoCount }}</span></div><div v-if="channelData.description" class="channel-description">{{ channelData.description }}</div></template>
+                <template v-else><div class="channel-skeleton-line title skeleton-shimmer"></div><div class="channel-skeleton-line short skeleton-shimmer"></div></template>
+              </div>
+            </div>
+            <nav class="channel-tabs" aria-label="Channel sections"><button v-for="tab in channelTabs" :key="tab.key" class="channel-tab" :class="{ active: channelTab === tab.key }" type="button" @click="openChannelTab(tab.key)"><span>{{ tab.label }}</span><small v-if="channelCaptureLabel(tab.key)" class="channel-tab-state" :class="channelCaptureFor(tab.key)?.status" :title="channelCaptureFor(tab.key)?.message || channelCaptureLabel(tab.key)">{{ channelCaptureLabel(tab.key) }}</small></button></nav>
+            <p v-if="channelCaptureMessage" class="channel-capture-status" role="status">{{ channelCaptureMessage }}</p>
+            <div v-if="channelVideos.length || channelIsLoading" class="video-grid">
+              <video-card v-for="video in channelVideos" :key="video.id" :video="video" source="Channel" />
+              <article v-for="n in channelSkeletonCount" :key="`channel-skeleton-${n}`" class="channel-skeleton" aria-hidden="true"><div class="channel-skeleton-thumb skeleton-shimmer"></div><div class="channel-skeleton-title skeleton-shimmer"></div><div class="channel-skeleton-meta skeleton-shimmer"></div></article>
+            </div>
+            <div v-else-if="!channelIsLoading" class="notice"><strong>No videos captured for this section yet</strong>Keep YourTube online and the extension will collect channel cards in the background.</div>
+          </section>
+          <template v-else>
+          <div v-if="error" class="notice error">{{ error }}</div>
+          <div v-if="videos.length === 0" class="notice">
+            <strong>Your YouTube feed will appear here</strong>
+            Open your signed-in YouTube homepage with the extension enabled. YourTube collects the video cards YouTube renders there.
+          </div>
+          <template v-else>
+            <section class="feed-section home-feed-section">
+              <div class="section-head"><h2>For you</h2><div class="for-you-filter-chips" role="group" aria-label="Filter For you by when videos were grabbed"><button type="button" class="for-you-filter-chip" :class="{ active: forYouAgeFilter === 'recent' }" :aria-pressed="String(forYouAgeFilter === 'recent')" @click="toggleForYouAgeFilter('recent')">Most recent</button><button type="button" class="for-you-filter-chip" :class="{ active: forYouAgeFilter === 'older' }" :aria-pressed="String(forYouAgeFilter === 'older')" @click="toggleForYouAgeFilter('older')">Older</button></div></div>
+              <div v-if="forYouVideos.length" class="video-grid"><video-card v-for="video in forYouVideos.slice(0, homeVisibleCount('for-you', Math.min(12, forYouVideos.length), 'video'))" :key="video.id" :video="video" source="homepage" /></div>
+              <div v-else-if="forYouAgeFilter" class="for-you-empty">No stubs in this time range.</div>
+              <div v-if="homeHasMore('for-you', Math.min(12, forYouVideos.length), 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('for-you', Math.min(12, forYouVideos.length), 'video')">{{ homeToggleLabel('for-you', Math.min(12, forYouVideos.length), 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              </div>
+            </section>
+            <section v-if="downloadedFeedVideos.length" class="feed-section home-feed-section">
+              <div class="section-head"><h2>Downloaded</h2></div>
+              <div class="video-grid"><video-card v-for="video in downloadedFeedVideos.slice(0, homeVisibleCount('downloaded-feed', downloadedFeedVideos.length, 'video'))" :key="video.id" :video="video" source="Downloaded" /></div>
+              <div v-if="homeHasMore('downloaded-feed', downloadedFeedVideos.length, 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('downloaded-feed', downloadedFeedVideos.length, 'video')">{{ homeToggleLabel('downloaded-feed', downloadedFeedVideos.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              </div>
+            </section>
+            <section class="feed-section home-feed-section">
+              <div class="section-head"><h2>Top News</h2></div>
+              <div class="video-grid"><video-card v-for="video in newsVideos.slice(0, homeVisibleCount('top-news', Math.min(12, newsVideos.length), 'video'))" :key="video.id" :video="video" source="Top News" /></div>
+              <div v-if="homeHasMore('top-news', Math.min(12, newsVideos.length), 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('top-news', Math.min(12, newsVideos.length), 'video')">{{ homeToggleLabel('top-news', Math.min(12, newsVideos.length), 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              </div>
+            </section>
+            <section class="feed-section home-feed-section">
+              <div class="section-head"><h2>Explore more topics</h2></div>
+              <div v-for="(topic, index) in topics" :key="topic" class="topic-row">
+                <div class="topic-label">{{ topic }}</div>
+                <div class="video-grid"><video-card v-for="video in topicVideos(index).slice(0, homeVisibleCount(`topic-${index}`, topicVideos(index).length, 'video'))" :key="video.id" :video="video" :source="topicSource(video, topic)" /></div>
+                <div v-if="homeHasMore(`topic-${index}`, topicVideos(index).length, 'video')" class="home-section-divider">
+                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`topic-${index}`, topicVideos(index).length, 'video')">{{ homeToggleLabel(`topic-${index}`, topicVideos(index).length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                </div>
+              </div>
+            </section>
+            <template v-for="(section, index) in lowerSections" :key="index">
+              <section v-if="lowerSectionVideos(section).length" class="feed-section home-feed-section">
+                <div class="section-head"><h2>{{ section.title }}</h2></div>
+                <div v-if="section.kind === 'shorts'" class="shorts-grid"><video-card v-for="video in lowerSectionVideos(section).slice(0, homeVisibleCount(`lower-${index}`, lowerSectionVideos(section).length, 'shorts'))" :key="video.id" :video="video" source="Shorts" /></div>
+                <div v-else class="video-grid"><video-card v-for="video in lowerSectionVideos(section).slice(0, homeVisibleCount(`lower-${index}`, lowerSectionVideos(section).length, 'video'))" :key="video.id" :video="video" source="homepage" /></div>
+                <div v-if="homeHasMore(`lower-${index}`, lowerSectionVideos(section).length, section.kind)" class="home-section-divider">
+                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`lower-${index}`, lowerSectionVideos(section).length, section.kind)">{{ homeToggleLabel(`lower-${index}`, lowerSectionVideos(section).length, section.kind) === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                </div>
+              </section>
+            </template>
+            <section v-if="moreVideos.length" class="feed-section home-feed-section">
+              <div class="section-head"><h2>More from your homepage</h2></div>
+              <div class="video-grid"><video-card v-for="video in moreVideos.slice(0, homeVisibleCount('more-homepage', moreVideos.length, 'video'))" :key="video.id" :video="video" source="homepage" /></div>
+              <div v-if="homeHasMore('more-homepage', moreVideos.length, 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('more-homepage', moreVideos.length, 'video')">{{ homeToggleLabel('more-homepage', moreVideos.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              </div>
+            </section>
+          </template>
+          </template>
+        </main>
+      </div>
+      <div v-if="playlistVideoToAdd" class="playlist-dialog-backdrop" role="presentation" @click.self="closeAddToPlaylist">
+        <section class="playlist-dialog" role="dialog" aria-modal="true" aria-labelledby="playlist-dialog-title">
+          <h2 id="playlist-dialog-title">Save to playlist</h2><p class="meta">{{ playlistVideoToAdd.title }}</p>
+          <label class="meta" for="playlist-select">Choose a playlist</label><select id="playlist-select" v-model="playlistDialogSelectedId"><option value="">Select playlist…</option><option v-for="playlist in localPlaylists" :key="playlist.id" :value="playlist.id">{{ playlist.title }}</option></select>
+          <div class="playlist-dialog-actions"><button class="quiet-button" @click="closeAddToPlaylist">Cancel</button><button class="quiet-button" :disabled="!playlistDialogSelectedId || playlistSaving" @click="addToSelectedPlaylist">{{ playlistSaving ? 'Saving…' : 'Add video' }}</button></div>
+          <hr class="divider" /><label class="meta" for="new-playlist-from-video">Or create a new playlist</label><div class="playlist-create-panel" style="margin-bottom:0"><input id="new-playlist-from-video" v-model="playlistDialogNewTitle" maxlength="120" placeholder="Playlist name" @keyup.enter="createPlaylistAndAdd" /><button class="quiet-button" :disabled="!playlistDialogNewTitle.trim() || playlistSaving" @click="createPlaylistAndAdd">Create</button></div>
+        </section>
+      </div>
+    </div>
+    <template id="video-card-template">
+      <article class="video-card" :class="{ 'menu-open': menuOpen }">
+        <a class="video-card-link" :href="`/watch/${video.id}`">
+          <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
+        </a>
+        <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="`/watch/${video.id}`">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu">⋮</button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop>{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
+            <div v-if="menuOpen" class="video-card-menu" role="menu" @click.stop>
+              <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('queue')">＋ <span>Add to queue</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('watch-later')">◷ <span>Save to Watch later</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('playlist')">▤ <span>Save to playlist</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" :disabled="video.downloaded || $root.networkMode !== 'online'" :title="$root.networkMode !== 'online' ? 'New downloads are unavailable in Offline mode' : ''" @click.stop.prevent="runAction('download')">⇩ <span>{{ video.downloaded ? 'Already downloaded' : $root.networkMode !== 'online' ? 'Unavailable offline' : 'Download' }}</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" disabled aria-disabled="true">↗ <span>Share</span></button>
+              <div class="video-menu-separator"></div>
+              <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('not-interested')">⊘ <span>Not interested</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" :disabled="!video.channel || video.channel.trim().toLowerCase() === 'channel unavailable'" @click.stop.prevent="runAction('dont-recommend-channel')">◉ <span>Don’t recommend channel</span></button>
+              <button class="video-menu-item" type="button" role="menuitem" disabled aria-disabled="true">⚑ <span>Report</span></button>
+            </div>
+          </div></div>
+        <div v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0 && expirySeconds <= 300" class="expiry-postpone-overlay"><span>Deleting in {{ formatExpiry(expirySeconds) }}</span><button class="expiry-postpone-button" type="button" :disabled="postponing" @click="postpone(video)">{{ postponing ? 'Postponing…' : 'Postpone' }}</button></div>
+        <button v-if="canDelete" class="delete-media" type="button" :aria-label="`Delete ${video.title || 'downloaded video'}`" title="Delete local media" @click.stop.prevent="$emit('delete', video)">Delete</button>
+      </article>
+    </template>
+    <script>
+      const { createApp } = Vue;
+      const cardTemplate = document.querySelector('#video-card-template').innerHTML;
+      createApp({
+        components: { VideoCard: { props: { video: Object, source: String, canDelete: { type: Boolean, default: false }, showExpiry: { type: Boolean, default: false }, autoDeleteEnabled: { type: Boolean, default: false } }, emits: ['delete', 'postpone'], template: cardTemplate, data: () => ({ now: Date.now(), expiryTimer: null, postponing: false, menuOpen: false, avatarFailed: false }), computed: { sourceLabel() { if (/downloaded/i.test(this.source || '')) return ''; if (this.video.sourceLabel) return this.video.sourceLabel; return `From ${this.source || 'homepage'}`; }, expirySeconds() { return this.video.expiresAt ? Math.ceil((Date.parse(this.video.expiresAt) - this.now) / 1000) : 0; }, pulledAgo() { const timestamp = Date.parse(this.video.sourceSeenAt || this.video.seenAt || this.video.acquiredAt || ''); if (!Number.isFinite(timestamp)) return ''; const elapsed = Math.max(0, this.now - timestamp); if (elapsed > (23 * 60 + 59) * 60_000) return `${Math.max(1, Math.round(elapsed / 86_400_000))}D ago`; const minutes = Math.max(1, Math.floor(elapsed / 60_000)); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return remainder ? `${hours}h${remainder}m ago` : `${hours}h ago`; } }, mounted() { if (this.showExpiry || (this.sourceLabel && (this.video.sourceSeenAt || this.video.seenAt))) this.expiryTimer = setInterval(() => { this.now = Date.now(); }, this.showExpiry ? 1000 : 30_000); document.addEventListener('click', this.closeMenuOnOutsideClick); }, beforeUnmount() { clearInterval(this.expiryTimer); document.removeEventListener('click', this.closeMenuOnOutsideClick); }, methods: { toggleMenu() { this.menuOpen = !this.menuOpen; }, closeMenuOnOutsideClick(event) { if (this.menuOpen && !this.$el.contains(event.target)) this.menuOpen = false; }, runAction(action) { this.menuOpen = false; this.$root.performVideoAction(action, this.video); }, channelHref(video) { if (!video?.channelKey) return ''; const key = String(video.channelKey); const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/'); return `/channel/${path}/videos`; }, avatarInitials(channel) { return String(channel || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() || '?'; }, thumbnailSrc(video) { return video.thumbnail || '/image-placeholder.svg'; }, thumbnailError(event, video) { const image = event.currentTarget; const standard = video.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : ''; if (!image.dataset.fallbackTried && this.$root.networkMode === 'online' && standard && image.src !== standard) { image.dataset.fallbackTried = 'true'; image.src = standard; } else if (image.dataset.placeholderTried) image.remove(); else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; } }, viewedLabel(count) { const value = Number(count) || 0; return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`; }, formatExpiry(seconds) { const value = Math.max(0, Number(seconds) || 0); const hours = Math.floor(value / 3600); const minutes = Math.floor(value % 3600 / 60); const secs = value % 60; return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`; }, postpone(video) { if (this.postponing) return; this.postponing = true; this.$emit('postpone', video); setTimeout(() => { this.postponing = false; }, 3000); } } } },
+        data: () => ({ videos: [], downloadedVideos: [], historyVideos: [], playlists: [], selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, playlistSaving: false, playlistStatus: '', showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, mediaBytes: 0, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchOffset: 0, searchVisibleCount: 12, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'All', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, chips: ['All', 'Music', 'Live', 'Gaming', 'Mixes', 'News', 'Podcasts', 'Recently uploaded', 'Watched'], topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
+        computed: {
+          offlineTransitionActive() { return this.modeTransitionTarget === 'offline' || this.networkMode === 'preparing'; },
+          backgroundPreparationActive() { return this.networkMode === 'online' && ['queued', 'running'].includes(this.offlinePreparation.status); },
+          modeTransitionActive() { return this.modeTransitionTarget === 'online' || this.offlineTransitionActive; },
+          backgroundWorkActive() { return this.modeTransitionActive || this.backgroundPreparationActive || this.stats.activeDownloads > 0 || this.stats.queuedDownloads > 0 || (this.networkMode === 'online' && this.stats.activeChannelCaptures > 0) || this.stats.durationLookupActive || (this.networkMode === 'online' && this.stats.pendingDurations > 0) || (this.networkMode === 'online' && this.stats.downloadMetadata?.pending > 0); },
+          backgroundStatus() {
+            if (this.modeTransitionTarget === 'online') return 'Checking internet connection before switching Online…';
+            if (this.offlineTransitionActive) {
+              const message = this.offlinePreparation.message || 'Waiting for media downloads to settle before Offline mode…';
+              const { completed, total } = this.offlinePreparation;
+              return total > 0 && !/\b\d+\s*\/\s*\d+\b/.test(message) ? `${message} · ${completed}/${total}` : message;
+            }
+            if (this.offlinePreparation.status === 'paused') return 'Preparation paused · resumes in the background next time you switch Online';
+            if (this.backgroundPreparationActive) {
+              const message = this.offlinePreparation.message || `Preparing ${this.offlinePreparation.phase || 'your local library'} in the background`;
+              const { completed, total, current } = this.offlinePreparation;
+              const count = Math.max(Number(completed) || 0, Number(current) || 0);
+              return total > 0 && !/\b\d+\s*\/\s*\d+\b/.test(message) ? `${message} · ${count}/${total}` : message;
+            }
+            if (this.networkMode === 'offline') {
+              if (this.offlinePreparation.status === 'paused') return 'Preparation paused · resumes in the background next time you switch Online';
+              if (this.stats.activeChannelCaptures > 0) return `${this.stats.activeChannelCaptures} channel ${this.stats.activeChannelCaptures === 1 ? 'section is' : 'sections are'} paused until Online`;
+              if (this.stats.queuedDownloads > 0) return `${this.stats.queuedDownloads} download ${this.stats.queuedDownloads === 1 ? 'retry is' : 'retries are'} paused until Online`;
+              if (this.stats.downloadMetadata?.pending > 0) return `${this.stats.downloadMetadata.pending} downloaded video metadata ${this.stats.downloadMetadata.pending === 1 ? 'item is' : 'items are'} waiting for Online`;
+              return this.autoDeleteEnabled ? 'Offline · local library ready · 24-hour cleanup active' : 'Offline · local library ready';
+            }
+            if (this.stats.activeDownloads > 0) return `${this.stats.activeDownloads} media ${this.stats.activeDownloads === 1 ? 'download is' : 'downloads are'} active`;
+            if (this.stats.activeChannelCaptures > 0) return `Collecting ${this.stats.activeChannelCaptures} channel ${this.stats.activeChannelCaptures === 1 ? 'section' : 'sections'}`;
+            if (this.stats.durationLookupActive) return 'Preparing video lengths · one lookup in progress';
+            if (this.stats.downloadMetadata?.active) return this.stats.downloadMetadata.message || `Preparing local media metadata · ${this.stats.downloadMetadata.ready}/${this.stats.downloadMetadata.total}`;
+            if (this.stats.downloadMetadata?.pending > 0) return `Preparing local media metadata · ${this.stats.downloadMetadata.ready}/${this.stats.downloadMetadata.total}`;
+            if (this.stats.queuedDownloads > 0) return `${this.stats.queuedDownloads} media ${this.stats.queuedDownloads === 1 ? 'download is' : 'downloads are'} queued for retry`;
+            if (this.stats.pendingDurations > 0) return `Preparing video lengths · ${this.stats.pendingDurations} waiting, one lookup every 5 minutes`;
+            if (this.autoDeleteEnabled) return 'Monitoring local media · 24-hour cleanup active';
+            return 'Background queue idle · local library ready';
+          },
+          statusPreparationBusy() { return ['queued', 'running'].includes(this.offlinePreparation.status) || this.modeTransitionTarget === 'offline'; },
+          statusModeLabel() { return this.modeTransitionTarget === 'online' ? 'GOING ONLINE' : this.offlineTransitionActive ? 'GOING OFFLINE' : this.backgroundPreparationActive ? 'ONLINE · BACKGROUND PREP' : this.networkMode.toUpperCase(); },
+          statusDiscoveryLabel() { return this.offlineTransitionActive || this.networkMode !== 'online' ? 'paused · local only' : 'online · capture enabled'; },
+          statusPageHeadline() {
+            if (this.modeTransitionTarget === 'online') return 'Checking the online connection';
+            if (this.offlineTransitionActive) {
+              if (this.offlinePreparation.phase === 'downloads') return 'Settling active media';
+              if (this.offlinePreparation.phase === 'video lengths') return 'Preparing video lengths';
+              if (this.offlinePreparation.phase) return `Preparing ${this.offlinePreparation.phase}`;
+              return 'Preparing your local library';
+            }
+            if (this.offlinePreparation.status === 'paused') return 'Offline mode active · preparation paused';
+            if (this.backgroundPreparationActive) return `Preparing ${this.offlinePreparation.phase || 'your library'} in the background`;
+            if (this.networkMode === 'offline') return 'Your local library is ready';
+            if (this.stats.activeDownloads > 0) return 'Media transfers are in progress';
+            if (this.stats.activeChannelCaptures > 0) return 'Collecting channel sections';
+            if (this.stats.durationLookupActive || this.stats.pendingDurations > 0) return 'Preparing video lengths';
+            return 'Background systems are standing by';
+          },
+          statusPageSummary() {
+            if (this.offlineTransitionActive) return 'The local library is being staged in order. New YouTube discovery is paused as soon as Going offline begins; transfers already underway are allowed to finish.';
+            if (this.offlinePreparation.status === 'paused') return 'Offline mode is active. The remaining preparation is paused and will resume in the background the next time you switch YourTube Online.';
+            if (this.backgroundPreparationActive) return 'YourTube remains Online while the paused library preparation continues in the background. New discovery and normal app use stay available.';
+            if (this.networkMode === 'offline') return 'YourTube is serving the local library. New discovery and acquisition stay paused until Online mode returns.';
+            return 'YourTube keeps local media, metadata, and capture queues coordinated here. Select a stage below to see what offline preparation will collect.';
+          },
+          offlineStageCards() {
+            const stages = [
+              { phase: 'downloads', title: 'Settle active media', description: 'Let media transfers already in progress finish, then hold queued download retries.' },
+              { phase: 'video lengths', title: 'Video lengths', description: 'Fill missing lengths from playback or local files, then use paced metadata lookups where needed.' },
+              { phase: 'comments', title: 'Comments', description: 'Fetch and store comments for videos with playable local media.' },
+              { phase: 'thumbnails', title: 'Thumbnails', description: 'Cache thumbnails used by the local library and recommendations.' },
+              { phase: 'avatars', title: 'Channel avatars', description: 'Cache channel and subscription images referenced by local pages.' },
+              { phase: 'comment avatars', title: 'Comment avatars', description: 'Cache commenter images attached to stored comments.' }
+            ];
+            const active = ['queued', 'running'].includes(this.offlinePreparation.status);
+            const paused = this.offlinePreparation.status === 'paused';
+            const ready = this.offlinePreparation.status === 'complete' || (this.networkMode === 'offline' && !active && !paused);
+            const currentIndex = stages.findIndex(stage => stage.phase === this.offlinePreparation.phase);
+            return stages.map((stage, index) => {
+              const state = ready || ((active || paused) && currentIndex >= 0 && index < currentIndex) ? 'complete' : active && index === currentIndex ? 'active' : paused && index === currentIndex ? 'paused' : 'waiting';
+              const count = Math.max(Number(this.offlinePreparation.completed) || 0, Number(this.offlinePreparation.current) || 0);
+              const total = Number(this.offlinePreparation.total) || 0;
+              return { ...stage, index: index + 1, state, stateLabel: state === 'complete' ? 'Complete' : state === 'active' ? 'In progress' : state === 'paused' ? 'Paused' : active ? 'Queued' : 'Standby', progressLabel: state === 'active' || state === 'paused' ? (total ? `${count}/${total} items in this stage` : 'No items in this stage') : '' };
+            });
+          },
+          statusCurrentStageTitle() { return this.offlineStageCards.find(stage => stage.state === 'active' || stage.state === 'paused')?.title || (this.networkMode === 'offline' ? 'Local library' : 'Background queue'); },
+          statusProgressLabel() {
+            if (this.offlinePreparation.status === 'complete' || this.networkMode === 'offline' && !['queued', 'running', 'paused'].includes(this.offlinePreparation.status)) return 'READY';
+            const total = Number(this.offlinePreparation.total) || 0;
+            const count = Math.min(total, Math.max(Number(this.offlinePreparation.completed) || 0, Number(this.offlinePreparation.current) || 0));
+            if (this.offlinePreparation.status === 'paused') return `PAUSED · ${count}/${total}`;
+            if (!['queued', 'running'].includes(this.offlinePreparation.status)) return '—';
+            return `${count}/${total}`;
+          },
+          statusProgressPercent() {
+            if (this.statusProgressLabel === 'READY') return 100;
+            const total = Number(this.offlinePreparation.total) || 0;
+            if (!total) return 0;
+            const count = Math.min(total, Math.max(Number(this.offlinePreparation.completed) || 0, Number(this.offlinePreparation.current) || 0));
+            return Math.round(count / total * 100);
+          },
+          statusCompletedStageCount() { return this.offlineStageCards.filter(stage => stage.state === 'complete').length; },
+          statusNextStage() {
+            const activeIndex = this.offlineStageCards.findIndex(stage => stage.state === 'active');
+            if (activeIndex >= 0) return this.offlineStageCards.slice(activeIndex + 1).find(stage => stage.state === 'waiting') || null;
+            const pausedIndex = this.offlineStageCards.findIndex(stage => stage.state === 'paused');
+            if (pausedIndex >= 0) return this.offlineStageCards.slice(pausedIndex + 1).find(stage => stage.state === 'waiting') || null;
+            return this.offlineStageCards.find(stage => stage.state === 'waiting') || null;
+          },
+          statusCurrentMessage() { return this.offlineTransitionActive || this.offlinePreparation.status === 'paused' || this.backgroundPreparationActive ? this.offlinePreparation.message || this.backgroundStatus : this.backgroundStatus; },
+          visibleSearchVideos() { return this.searchVideos.slice(0, this.searchVisibleCount); },
+          channelHandle() { return this.channelKey.startsWith('@') ? this.channelKey : `youtube.com/${this.channelKey}`; },
+          channelIsLoading() { return this.channelLoading || ['opening', 'queued', 'collecting'].includes(this.channelCaptureStatus); },
+          channelSkeletonCount() { return this.channelIsLoading ? Math.max(4, Math.min(12, 12 - this.channelVideos.length)) : 0; },
+          channelCaptureMessage() {
+            if (this.channelCaptureError) return this.channelCaptureError;
+            const selectedCapture = this.channelCaptureFor(this.channelTab);
+            if (selectedCapture?.phase === 'retrying') return selectedCapture.message || 'Retrying channel data delivery automatically…';
+            if (selectedCapture?.status === 'paused' && selectedCapture.message) return selectedCapture.message;
+            if (this.channelCaptureStatus === 'offline') return 'Offline · showing channel details and videos already saved locally.';
+            if (this.channelCaptureStatus === 'opening') return 'Opening this channel in a background YouTube tab…';
+            if (this.channelCaptureStatus === 'queued') return 'This section is queued for background capture.';
+            if (this.channelCaptureStatus === 'collecting') {
+              const remaining = this.channelCaptures.filter(item => ['opening', 'queued', 'collecting'].includes(item.status)).length;
+              return `Captured ${this.channelVideos.length} videos · collecting this section and ${Math.max(0, remaining - 1)} more in the background.`;
+            }
+            if (this.channelCaptureStatus === 'complete') {
+              const remaining = this.channelCaptures.filter(item => ['opening', 'queued', 'collecting'].includes(item.status)).length;
+              return remaining ? `This section is ready · YourTube is preloading ${remaining} more channel sections.` : `Channel ready · ${this.channelVideos.length} videos available.`;
+            }
+            if (this.channelCaptureStatus === 'paused') return 'Channel prefetch is paused. Select a section to resume it.';
+            if (this.channelCaptureStatus === 'error') return 'This section could not be captured. Other sections will continue in the background.';
+            return this.channelLoading ? 'Loading saved channel data…' : '';
+          },
+          downloadedVideosSorted() {
+            const time = video => Date.parse(video.acquiredAt || video.seenAt || '') || 0;
+            return [...this.downloadedVideos].sort((a, b) => {
+              if (this.downloadSortOrder === 'oldest') return time(a) - time(b) || a.id.localeCompare(b.id);
+              if (this.downloadSortOrder === 'mostPlayed') return (Number(b.viewCount) || 0) - (Number(a.viewCount) || 0) || time(b) - time(a);
+              if (this.downloadSortOrder === 'autodeletion' && this.autoDeleteEnabled) {
+                const expiry = video => { const value = Date.parse(video.expiresAt || ''); return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER; };
+                return expiry(a) - expiry(b) || time(b) - time(a);
+              }
+              return time(b) - time(a) || a.id.localeCompare(b.id);
+            });
+          },
+          subscriptionsVisible() { return this.subscriptionsExpanded ? this.subscriptions : this.subscriptions.slice(0, 7); },
+          localPlaylists() { return this.playlists.filter(playlist => playlist.source === 'local' && playlist.kind !== 'watch-later'); },
+          youtubePlaylists() { return this.playlists.filter(playlist => playlist.source === 'youtube'); },
+          downloadedFeedVideos() { return this.matching(this.downloadedVideos); },
+          normalVideos() { return this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && video.kind !== 'short' && video.section === 'home')); },
+          forYouVideos() {
+            const videos = this.normalVideos;
+            if (!this.forYouAgeFilter) return videos;
+            const cutoff = Date.now() - 2 * 86_400_000;
+            return videos.map((video, index) => ({ video, index, grabbedAt: Date.parse(video.sourceSeenAt || video.seenAt || video.acquiredAt || '') }))
+              .filter(item => Number.isFinite(item.grabbedAt) && (this.forYouAgeFilter === 'older' ? item.grabbedAt < cutoff : item.grabbedAt >= cutoff))
+              .sort((a, b) => b.grabbedAt - a.grabbedAt || a.index - b.index)
+              .map(item => item.video);
+          },
+          newsVideos() { return this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && video.section === 'news')); },
+          shortsVideos() { return this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && video.kind === 'short')); },
+          moreVideos() { return this.normalVideos.slice(28); },
+          lowerSections() { return [ { title: 'Shorts', kind: 'shorts', start: 0, count: 6 }, { title: 'Videos', kind: 'normal', start: 12, count: 4 }, { title: 'Shorts', kind: 'shorts', start: 6, count: 6 }, { title: 'Videos', kind: 'normal', start: 16, count: 12 } ]; }
+        },
+          async mounted() {
+            const requestedView = new URLSearchParams(location.search).get('view');
+            if (['downloaded', 'history', 'playlists', 'status'].includes(requestedView)) this.currentView = requestedView;
+            const channelRoute = location.pathname.match(/^\/channel\/([^/]+)(?:\/(home|videos|shorts|streams|playlists|community))?\/?$/);
+            if (channelRoute) {
+              try { this.channelKey = decodeURIComponent(channelRoute[1]); } catch { this.channelKey = ''; }
+              if (this.channelKey && /^(?:@[\p{L}\p{N}._-]{3,100}|channel\/UC[A-Za-z0-9_-]{20,32}|(?:user|c)\/[\p{L}\p{N}._-]{1,100})$/u.test(this.channelKey)) {
+                this.currentView = 'channel';
+                this.channelTab = channelRoute[2] || 'videos';
+              } else this.channelKey = '';
+            }
+            const requestedPlaylist = new URLSearchParams(location.search).get('playlist') || '';
+            if (requestedView === 'playlists' && requestedPlaylist) this.selectedPlaylistId = requestedPlaylist;
+            try {
+              const savedSort = localStorage.getItem('yourtube-downloaded-sort');
+              if (['newest', 'oldest', 'mostPlayed', 'autodeletion'].includes(savedSort)) this.downloadSortOrder = savedSort;
+            } catch {}
+            await this.refreshMode();
+            window.addEventListener('message', this.onChannelExtensionMessage);
+            window.addEventListener('resize', this.onHomeResize, { passive: true });
+            this.modePollTimer = setInterval(this.refreshMode, 1500);
+            await this.refresh(true);
+            if (this.currentView === 'channel') await this.startChannelCapture(this.channelKey, this.channelTab);
+            if (this.currentView === 'playlists') await this.loadPlaylists(this.selectedPlaylistId);
+            this.refreshTimer = setInterval(() => this.refresh(), 3000);
+            window.addEventListener('pageshow', this.refresh);
+            window.addEventListener('focus', this.refresh);
+            window.addEventListener('popstate', this.onAppPopState);
+            window.addEventListener('scroll', this.onSearchScroll, { passive: true });
+            document.addEventListener('visibilitychange', this.onVisibilityChange);
+          },
+          beforeUnmount() {
+            clearInterval(this.refreshTimer);
+            clearInterval(this.modePollTimer);
+            clearInterval(this.backgroundQueueTimer);
+            clearInterval(this.searchPollTimer);
+            clearTimeout(this.searchDebounceTimer);
+            clearTimeout(this.searchCollectionTimer);
+            clearTimeout(this.searchLivePollTimer);
+            clearInterval(this.channelPollTimer);
+            clearTimeout(this.channelOpenTimeout);
+            window.removeEventListener('message', this.onChannelExtensionMessage);
+            window.removeEventListener('resize', this.onHomeResize);
+            window.removeEventListener('pageshow', this.refresh);
+            window.removeEventListener('focus', this.refresh);
+            window.removeEventListener('popstate', this.onAppPopState);
+            window.removeEventListener('scroll', this.onSearchScroll);
+            document.removeEventListener('visibilitychange', this.onVisibilityChange);
+          },
+        methods: {
+          thumbnailError(event, video) {
+            const image = event.currentTarget;
+            const standard = video.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : '';
+            if (!image.dataset.fallbackTried && this.networkMode === 'online' && standard && image.src !== standard) {
+              image.dataset.fallbackTried = 'true';
+              image.src = standard;
+            } else if (image.dataset.placeholderTried) image.remove();
+            else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; }
+          },
+          async loadPlaylists(selectedId = '') {
+            this.playlistLoading = true;
+            try {
+              const response = await fetch(`/api/playlists?refresh=${Date.now()}`, { cache: 'no-store' });
+              const rows = await response.json();
+              if (!response.ok) throw new Error(rows.error || 'Playlists could not be loaded.');
+              this.playlists = Array.isArray(rows) ? rows : [];
+              this.selectedPlaylistId = selectedId || '';
+              if (selectedId) {
+                const detailResponse = await fetch(`/api/playlists/${encodeURIComponent(selectedId)}?refresh=${Date.now()}`, { cache: 'no-store' });
+                const detail = await detailResponse.json();
+                if (!detailResponse.ok) throw new Error(detail.error || 'Playlist could not be opened.');
+                this.selectedPlaylist = detail;
+              } else this.selectedPlaylist = null;
+              this.error = '';
+            } catch (error) { this.error = error.message || 'Playlists could not be loaded.'; }
+            finally { this.playlistLoading = false; }
+          },
+          async openPlaylist(id) {
+            this.currentView = 'playlists';
+            this.selectedPlaylistId = id;
+            const target = new URL('/', location.origin);
+            target.searchParams.set('view', 'playlists');
+            target.searchParams.set('playlist', id);
+            history.replaceState({}, '', target);
+            await this.loadPlaylists(id);
+          },
+          async closePlaylist() {
+            this.selectedPlaylistId = '';
+            this.selectedPlaylist = null;
+            const target = new URL('/', location.origin);
+            target.searchParams.set('view', 'playlists');
+            history.replaceState({}, '', target);
+            await this.loadPlaylists();
+          },
+          async createPlaylist() {
+            const title = this.newPlaylistTitle.trim();
+            if (!title) return;
+            try {
+              const response = await fetch('/api/playlists', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Playlist could not be created.');
+              this.newPlaylistTitle = '';
+              this.showPlaylistCreate = false;
+              await this.openPlaylist(result.id);
+            } catch (error) { this.error = error.message; }
+          },
+          async renamePlaylist() {
+            if (!this.selectedPlaylist || this.selectedPlaylist.source !== 'local') return;
+            const title = window.prompt('Playlist name', this.selectedPlaylist.title)?.trim();
+            if (!title || title === this.selectedPlaylist.title) return;
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(this.selectedPlaylist.id)}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Playlist could not be renamed.');
+              await this.loadPlaylists(this.selectedPlaylist.id);
+            } catch (error) { this.error = error.message; }
+          },
+          async deletePlaylist() {
+            if (!this.selectedPlaylist || this.selectedPlaylist.source !== 'local') return;
+            if (!window.confirm(`Delete “${this.selectedPlaylist.title}”? The videos in your library will stay.`)) return;
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(this.selectedPlaylist.id)}`, { method: 'DELETE' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Playlist could not be deleted.');
+              await this.closePlaylist();
+            } catch (error) { this.error = error.message; }
+          },
+          async removePlaylistItem(video) {
+            if (!this.selectedPlaylist || this.selectedPlaylist.source !== 'local') return;
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(this.selectedPlaylist.id)}/items/${encodeURIComponent(video.itemId)}`, { method: 'DELETE' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Video could not be removed.');
+              await this.loadPlaylists(this.selectedPlaylist.id);
+            } catch (error) { this.error = error.message; }
+          },
+          async movePlaylistItem(index, delta) {
+            if (!this.selectedPlaylist || this.selectedPlaylist.source !== 'local') return;
+            const items = [...this.selectedPlaylist.items];
+            const next = index + delta;
+            if (next < 0 || next >= items.length) return;
+            [items[index], items[next]] = [items[next], items[index]];
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(this.selectedPlaylist.id)}/reorder`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemIds: items.map(video => video.itemId) }) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Playlist order could not be saved.');
+              await this.loadPlaylists(this.selectedPlaylist.id);
+            } catch (error) { this.error = error.message; }
+          },
+          playlistWatchUrl(videoId, index) {
+            const target = new URL(`/watch/${encodeURIComponent(videoId)}`, location.origin);
+            if (this.selectedPlaylist) {
+              target.searchParams.set('yourtubePlaylist', this.selectedPlaylist.id);
+              target.searchParams.set('yourtubePlaylistPosition', String(this.selectedPlaylist.items[index]?.position ?? index));
+            }
+            return `${target.pathname}${target.search}`;
+          },
+          playPlaylist(index = 0) {
+            const video = this.selectedPlaylist?.items?.[index];
+            if (video) location.assign(this.playlistWatchUrl(video.id, index));
+          },
+          async openAddToPlaylist(video) {
+            this.playlistVideoToAdd = video;
+            this.playlistDialogNewTitle = '';
+            try {
+              const response = await fetch(`/api/playlists?refresh=${Date.now()}`, { cache: 'no-store' });
+              const rows = await response.json();
+              if (response.ok) this.playlists = Array.isArray(rows) ? rows : [];
+              this.playlistDialogSelectedId = this.localPlaylists[0]?.id || '';
+            } catch { this.playlistDialogSelectedId = this.localPlaylists[0]?.id || ''; }
+          },
+          closeAddToPlaylist() {
+            this.playlistVideoToAdd = null;
+            this.playlistDialogNewTitle = '';
+          },
+          async performVideoAction(action, video) {
+            if (!video?.id || ['share', 'report'].includes(action)) return;
+            this.actionNotice = '';
+            this.actionError = false;
+            try {
+              if (action === 'playlist') { await this.openAddToPlaylist(video); return; }
+              let response;
+              if (action === 'queue') response = await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id }) });
+              else if (action === 'watch-later') response = await fetch('/api/playlists/watch-later/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id }) });
+              else if (action === 'download') response = await fetch(`/api/downloads/${encodeURIComponent(video.id)}`, { method: 'POST' });
+              else if (action === 'not-interested' || action === 'dont-recommend-channel') response = await fetch('/api/video-feedback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id, action }) });
+              else return;
+              const result = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(result.error || 'That action could not be completed.');
+              if (action === 'queue') this.actionNotice = `Added to queue: ${video.title || 'video'}.`;
+              if (action === 'watch-later') {
+                this.actionNotice = `Saved to Watch later: ${video.title || 'video'}.`;
+                if (this.currentView === 'playlists' && this.selectedPlaylistId === 'watch-later') await this.loadPlaylists('watch-later');
+              }
+              if (action === 'download') this.actionNotice = result.status === 'ready' ? 'This video is already ready to play locally.' : result.stage || result.message || 'Download added to the local queue.';
+              if (action === 'not-interested') this.actionNotice = 'YourTube will hide this video from homepage recommendations.';
+              if (action === 'dont-recommend-channel') this.actionNotice = `YourTube will hide recommendations from ${result.channel || video.channel}.`;
+              if (action === 'not-interested') this.videos = this.videos.map(item => item.id === video.id ? { ...item, notInterested: 1 } : item);
+              if (action === 'dont-recommend-channel') {
+                const blocked = String(result.channel || video.channel || '').trim().toLowerCase();
+                this.videos = this.videos.map(item => String(item.channel || '').trim().toLowerCase() === blocked ? { ...item, channelBlocked: 1 } : item);
+              }
+              if (action === 'not-interested' || action === 'dont-recommend-channel' || action === 'download') await this.refresh();
+            } catch (error) {
+              this.actionError = true;
+              this.actionNotice = error.message || 'That action could not be completed.';
+            }
+          },
+          async addToSelectedPlaylist() {
+            if (!this.playlistVideoToAdd || !this.playlistDialogSelectedId || this.playlistSaving) return;
+            this.playlistSaving = true;
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(this.playlistDialogSelectedId)}/items`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: this.playlistVideoToAdd.id }) });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Video could not be added.');
+              const selectedId = this.selectedPlaylistId;
+              const savedTitle = this.playlists.find(item => item.id === this.playlistDialogSelectedId)?.title || 'playlist';
+              const savedVideoTitle = this.playlistVideoToAdd.title || 'video';
+              this.closeAddToPlaylist();
+              await this.loadPlaylists(selectedId);
+              this.actionError = false;
+              this.actionNotice = `Saved ${savedVideoTitle} to ${savedTitle}.`;
+            } catch (error) { this.actionError = true; this.actionNotice = error.message || 'Video could not be added to that playlist.'; }
+            finally { this.playlistSaving = false; }
+          },
+          async createPlaylistAndAdd() {
+            if (!this.playlistVideoToAdd || !this.playlistDialogNewTitle.trim() || this.playlistSaving) return;
+            this.playlistSaving = true;
+            try {
+              const createResponse = await fetch('/api/playlists', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: this.playlistDialogNewTitle.trim() }) });
+              const playlist = await createResponse.json();
+              if (!createResponse.ok) throw new Error(playlist.error || 'Playlist could not be created.');
+              const addResponse = await fetch(`/api/playlists/${encodeURIComponent(playlist.id)}/items`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: this.playlistVideoToAdd.id }) });
+              const added = await addResponse.json();
+              if (!addResponse.ok) throw new Error(added.error || 'Video could not be added.');
+              const selectedId = this.selectedPlaylistId;
+              const savedVideoTitle = this.playlistVideoToAdd.title || 'video';
+              this.closeAddToPlaylist();
+              await this.loadPlaylists(selectedId);
+              this.actionError = false;
+              this.actionNotice = `Saved ${savedVideoTitle} to ${playlist.title}.`;
+            } catch (error) { this.actionError = true; this.actionNotice = error.message || 'Playlist could not be created.'; }
+            finally { this.playlistSaving = false; }
+          },
+          saveDownloadSortOrder() {
+            try { localStorage.setItem('yourtube-downloaded-sort', this.downloadSortOrder); } catch {}
+          },
+          async refreshMode() {
+            try {
+              const response = await fetch(`/api/mode?refresh=${Date.now()}`, { cache: 'no-store' });
+              if (!response.ok) return;
+              const state = await response.json();
+              const previousMode = this.networkMode;
+              this.networkMode = state.mode;
+              this.networkNotice = state.connectivityNotice || '';
+              this.offlinePreparation = state.preparation || this.offlinePreparation;
+              if (state.mode === this.modeTransitionTarget) this.modeTransitionTarget = '';
+              if (['online', 'offline', 'preparing'].includes(state.mode) && previousMode !== state.mode) window.postMessage({ type: 'yourtube:mode-change', mode: state.mode }, location.origin);
+              if (this.networkMode !== 'online') {
+                this.searchSource = 'local';
+                if (this.currentView === 'search' && this.activeSearchSource !== 'local') this.beginSearch(this.searchTerm);
+              }
+            } catch {}
+            try {
+              const response = await fetch(`/api/auto-delete?refresh=${Date.now()}`, { cache: 'no-store' });
+              if (response.ok) {
+                const state = await response.json();
+                this.autoDeleteEnabled = Boolean(state.enabled);
+                this.autoDeleteUpdatedAt = state.updatedAt || '';
+                if (!this.autoDeleteEnabled && this.downloadSortOrder === 'autodeletion') {
+                  this.downloadSortOrder = 'newest';
+                  this.saveDownloadSortOrder();
+                }
+              }
+            } catch {}
+          },
+          async toggleAutoDelete() {
+            if (this.autoDeleteUpdating) return;
+            this.autoDeleteUpdating = true;
+            const enabled = !this.autoDeleteEnabled;
+            try {
+              const response = await fetch('/api/auto-delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled, expectedUpdatedAt: this.autoDeleteUpdatedAt }) });
+              const state = await response.json();
+              if (typeof state.enabled === 'boolean') { this.autoDeleteEnabled = state.enabled; this.autoDeleteUpdatedAt = state.updatedAt || this.autoDeleteUpdatedAt; }
+              if (!response.ok) throw new Error(state.error || 'Could not change auto-delete setting.');
+              this.autoDeleteEnabled = state.enabled;
+              this.autoDeleteUpdatedAt = state.updatedAt || '';
+              if (!state.enabled && this.downloadSortOrder === 'autodeletion') {
+                this.downloadSortOrder = 'newest';
+                this.saveDownloadSortOrder();
+              }
+              await this.refresh();
+            } catch (error) { this.error = error.message; }
+            finally { this.autoDeleteUpdating = false; }
+          },
+          async toggleNetworkMode() {
+            if (this.networkModeUpdating) return;
+            this.networkModeUpdating = true;
+            const mode = this.networkMode === 'offline' || this.offlineTransitionActive ? 'online' : 'offline';
+            this.modeTransitionTarget = mode;
+            try {
+              const response = await fetch('/api/mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode }) });
+              const state = await response.json();
+              if (state.mode) this.networkMode = state.mode;
+              this.networkNotice = state.connectivityNotice || '';
+              if (!response.ok && response.status !== 202) throw new Error(state.error || 'Could not change mode.');
+              this.networkMode = state.mode;
+              this.offlinePreparation = state.preparation || this.offlinePreparation;
+              if (['online', 'offline', 'preparing'].includes(state.mode)) {
+                window.postMessage({ type: 'yourtube:mode-change', mode: state.mode }, location.origin);
+                if (state.mode === mode) this.modeTransitionTarget = '';
+              }
+              if (mode === 'online') this.searchSource = 'youtube';
+              else this.searchSource = 'local';
+              await this.refresh(true);
+              if (this.currentView === 'search' && this.searchTerm) this.beginSearch(this.searchTerm);
+            } catch (error) { this.modeTransitionTarget = ''; this.error = error.message; this.networkNotice ||= error.message; }
+            finally { this.networkModeUpdating = false; if (mode === 'online') this.modeTransitionTarget = ''; }
+          },
+          async goOfflineImmediately() {
+            if (this.networkModeUpdating) return;
+            this.networkModeUpdating = true;
+            this.modeTransitionTarget = 'offline';
+            try {
+              const response = await fetch('/api/mode', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ mode: 'offline', immediate: true })
+              });
+              const state = await response.json();
+              if (state.mode) this.networkMode = state.mode;
+              this.offlinePreparation = state.preparation || this.offlinePreparation;
+              this.networkNotice = state.connectivityNotice || '';
+              if (!response.ok) throw new Error(state.error || 'Could not switch Offline immediately.');
+              this.networkMode = 'offline';
+              this.searchSource = 'local';
+              window.postMessage({ type: 'yourtube:mode-change', mode: 'offline' }, location.origin);
+              await this.refresh(true);
+              if (this.currentView === 'search' && this.searchTerm) this.beginSearch(this.searchTerm);
+            } catch (error) {
+              this.modeTransitionTarget = '';
+              this.error = error.message;
+              this.networkNotice ||= error.message;
+            } finally {
+              this.networkModeUpdating = false;
+              this.modeTransitionTarget = '';
+            }
+          },
+          async refresh(shuffle = false) {
+            if (this.refreshing) return;
+            this.refreshing = true;
+            try {
+              const options = { cache: 'no-store' };
+              const [videoResponse, subscriptionResponse, downloadResponse, statsResponse, historyResponse] = await Promise.all([
+                fetch(`/api/videos?refresh=${Date.now()}`, options),
+                fetch(`/api/subscriptions?refresh=${Date.now()}`, options),
+                fetch(`/api/downloads?refresh=${Date.now()}`, options),
+                fetch(`/api/stats?refresh=${Date.now()}`, options),
+                fetch(`/api/history?refresh=${Date.now()}`, options)
+              ]);
+              if (!videoResponse.ok || !subscriptionResponse.ok || !downloadResponse.ok || !statsResponse.ok || !historyResponse.ok) throw new Error('Feed refresh failed');
+              this.videos = this.orderHomepageVideos(await videoResponse.json(), shuffle);
+              this.subscriptions = await subscriptionResponse.json();
+              this.downloadedVideos = await downloadResponse.json();
+              this.stats = await statsResponse.json();
+              this.historyVideos = await historyResponse.json();
+              this.error = '';
+            } catch { this.error = 'Could not connect to the local server.'; }
+            finally { this.refreshing = false; }
+          },
+          toggleBackgroundQueue() {
+            this.backgroundQueueExpanded = !this.backgroundQueueExpanded;
+            clearInterval(this.backgroundQueueTimer);
+            this.backgroundQueueTimer = null;
+            if (!this.backgroundQueueExpanded) return;
+            this.refreshBackgroundQueue();
+            this.backgroundQueueTimer = setInterval(() => {
+              if (this.currentView === 'status' && this.backgroundQueueExpanded) this.refreshBackgroundQueue();
+            }, 5000);
+          },
+          async refreshBackgroundQueue() {
+            if (this.backgroundQueueLoading || !this.backgroundQueueExpanded || this.currentView !== 'status') return;
+            this.backgroundQueueLoading = true;
+            try {
+              const response = await fetch(`/api/background-queue?refresh=${Date.now()}`, { cache: 'no-store' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Could not read the background queue.');
+              this.backgroundQueue = result;
+              this.backgroundQueueError = '';
+            } catch (error) {
+              this.backgroundQueueError = error.message || 'Could not read the background queue.';
+            } finally {
+              this.backgroundQueueLoading = false;
+            }
+          },
+          queueTimestamp(timestamp) {
+            const value = Date.parse(timestamp || '');
+            return Number.isFinite(value) ? new Date(value).toLocaleString() : 'not scheduled';
+          },
+          async deleteDownloadedVideo(video) {
+            const name = video.title || 'this video';
+            if (!window.confirm(`Delete the local media for “${name}”? The video entry will remain available to download again.`)) return;
+            try {
+              const response = await fetch(`/api/downloads/${encodeURIComponent(video.id)}`, { method: 'DELETE' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Local media could not be deleted.');
+              this.error = '';
+              await this.refresh();
+            } catch (error) {
+              this.error = error.message || 'Local media could not be deleted.';
+            }
+          },
+          async postponeDownloadedVideo(video) {
+            try {
+              const response = await fetch(`/api/downloads/${encodeURIComponent(video.id)}/postpone`, { method: 'POST' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Could not postpone deletion.');
+              this.error = '';
+              await this.refresh();
+            } catch (error) {
+              this.error = error.message || 'Could not postpone deletion.';
+            }
+          },
+          normalizeChannelKey(input) {
+            let value = String(input || '').trim().replace(/^\/+|\/+$/g, '');
+            try { if (/^https?:\/\//i.test(value)) value = new URL(value).pathname.replace(/^\/+|\/+$/g, ''); } catch { return ''; }
+            const parts = value.split('/').map(part => { try { return decodeURIComponent(part); } catch { return part; } });
+            value = parts[0]?.startsWith('@') ? parts[0] : parts.length > 1 && ['channel', 'user', 'c'].includes(parts[0]) ? `${parts[0]}/${parts[1]}` : value;
+            return /^(?:@[\p{L}\p{N}._-]{3,100}|channel\/UC[A-Za-z0-9_-]{20,32}|(?:user|c)\/[\p{L}\p{N}._-]{1,100})$/u.test(value) ? value : '';
+          },
+          channelPagePath(key, tab = 'videos') {
+            const normalized = this.normalizeChannelKey(key);
+            const path = normalized.startsWith('@') ? `@${encodeURIComponent(normalized.slice(1))}` : normalized.split('/').map(encodeURIComponent).join('/');
+            return `/channel/${path}/${encodeURIComponent(tab)}`;
+          },
+          channelCaptureFor(tab) { return this.channelCaptures.find(item => item.tab === tab) || null; },
+          channelCaptureLabel(tab) {
+            const capture = this.channelCaptureFor(tab);
+            if (capture?.phase === 'retrying') return 'Retrying';
+            if (capture?.status === 'collecting') return `Loading ${Number(capture.videoCount) || 0}`;
+            if (capture?.status === 'complete') return `Ready ${Number(capture.videoCount) || 0}`;
+            return ({ opening: 'Opening', queued: 'Queued', paused: 'Paused', error: 'Error' })[capture?.status] || '';
+          },
+          openChannel(key) {
+            const normalized = this.normalizeChannelKey(key);
+            if (!normalized) return;
+            location.assign(this.channelPagePath(normalized, 'videos'));
+          },
+          async startChannelCapture(key, tab = 'videos') {
+            key = this.normalizeChannelKey(key);
+            if (!key) return;
+            clearInterval(this.channelPollTimer);
+            clearTimeout(this.channelOpenTimeout);
+            const token = ++this.channelLoadToken;
+            this.channelKey = key;
+            this.channelTab = tab;
+            this.channelCaptureId = '';
+            this.channelCaptureStatus = '';
+            this.channelCaptureError = '';
+            this.channelCaptures = [];
+            this.channelLoading = true;
+            try {
+              const cachedResponse = await fetch(`/api/channels/${encodeURIComponent(key)}?tab=${encodeURIComponent(tab)}&refresh=${Date.now()}`, { cache: 'no-store' });
+              if (!cachedResponse.ok) throw new Error('Could not load saved channel data.');
+              const cached = await cachedResponse.json();
+              if (token !== this.channelLoadToken) return;
+              this.channelData = cached.channel;
+              this.channelVideos = Array.isArray(cached.videos) ? cached.videos : [];
+              this.channelCaptures = Array.isArray(cached.captures) ? cached.captures : [];
+            } catch (error) {
+              if (token !== this.channelLoadToken) return;
+              this.channelCaptureError = error.message || 'Could not load saved channel data.';
+              this.channelLoading = false;
+              return;
+            }
+            if (this.networkMode !== 'online') {
+              this.channelCaptureStatus = 'offline';
+              this.channelLoading = false;
+              return;
+            }
+            try {
+              const captureOrder = [tab, ...this.channelTabs.map(item => item.key).filter(key => key !== tab)];
+              const requested = captureOrder.map(section => ({ captureId: crypto.randomUUID(), tab: section }));
+              const response = await fetch('/api/channel-captures/batch', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ channelKey: key, captures: requested })
+              });
+              const result = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(result.error || 'Could not queue channel sections.');
+              if (token !== this.channelLoadToken) return;
+              this.channelCaptures = Array.isArray(result.captures) ? result.captures : [];
+              const current = this.channelCaptures.find(item => item.tab === tab);
+              this.channelCaptureId = current?.captureId || '';
+              this.channelCaptureStatus = current?.status || 'opening';
+              window.postMessage({ type: 'yourtube:collect-channel-batch', channelKey: key, captures: this.channelCaptures.map(item => ({ captureId: item.captureId, tab: item.tab })) }, location.origin);
+              this.channelOpenTimeout = setTimeout(() => {
+                if (token === this.channelLoadToken && ['opening', 'queued'].includes(this.channelCaptureStatus)) {
+                  this.channelCaptureError = 'The extension has not acknowledged the channel capture yet. Check that it is installed and enabled.';
+                  this.channelCaptureStatus = 'error';
+                  this.channelLoading = false;
+                }
+              }, 30000);
+              this.channelPollTimer = setInterval(() => this.pollChannelCapture(this.channelCaptureId, token), 1000);
+              await this.pollChannelCapture(this.channelCaptureId, token);
+            } catch (error) {
+              if (token !== this.channelLoadToken) return;
+              this.channelCaptureError = error.message || 'Channel capture could not be started.';
+              this.channelCaptureStatus = 'error';
+              this.channelLoading = false;
+            }
+          },
+          async loadChannelSection(tab) {
+            if (!this.channelKey || !this.channelTabs.some(item => item.key === tab)) return;
+            clearInterval(this.channelPollTimer);
+            clearTimeout(this.channelOpenTimeout);
+            const token = ++this.channelLoadToken;
+            this.channelTab = tab;
+            this.channelCaptureId = '';
+            this.channelCaptureError = '';
+            this.channelLoading = true;
+            this.channelVideos = [];
+            try {
+              await this.fetchChannelSection(tab, token);
+              if (token !== this.channelLoadToken) return;
+              if (this.networkMode === 'online' && this.channelCaptures.length === 6) {
+                window.postMessage({ type: 'yourtube:collect-channel-batch', channelKey: this.channelKey, captures: this.channelCaptures.map(item => ({ captureId: item.captureId, tab: item.tab })) }, location.origin);
+              }
+              if (this.channelCaptures.some(item => ['opening', 'queued', 'collecting'].includes(item.status))) {
+                this.channelPollTimer = setInterval(() => this.pollChannelCapture(this.channelCaptureId, token), 1000);
+              }
+            } catch (error) {
+              if (token !== this.channelLoadToken) return;
+              this.channelCaptureError = error.message || 'Could not load saved channel data.';
+              this.channelLoading = false;
+            }
+          },
+          async fetchChannelSection(tab, token) {
+            const response = await fetch(`/api/channels/${encodeURIComponent(this.channelKey)}?tab=${encodeURIComponent(tab)}&captureId=${encodeURIComponent(this.channelCaptureId)}&refresh=${Date.now()}`, { cache: 'no-store' });
+            if (!response.ok) throw new Error('Could not load saved channel data.');
+            const result = await response.json();
+            if (token !== this.channelLoadToken) return;
+            if (result.channel) this.channelData = result.channel;
+            if (Array.isArray(result.videos)) this.channelVideos = result.videos;
+            if (Array.isArray(result.captures)) this.channelCaptures = result.captures;
+            if (result.capture) {
+              this.channelCaptureId = result.capture.captureId;
+              this.channelCaptureStatus = result.capture.status;
+              if (result.capture.status === 'error' && result.capture.message) this.channelCaptureError = result.capture.message;
+            } else {
+              const selected = this.channelCaptures.find(item => item.tab === tab);
+              this.channelCaptureId = selected?.captureId || '';
+              this.channelCaptureStatus = selected?.status || '';
+            }
+            this.channelLoading = ['opening', 'queued', 'collecting'].includes(this.channelCaptureStatus);
+            if (this.channelCaptureStatus === 'collecting') clearTimeout(this.channelOpenTimeout);
+          },
+          async pollChannelCapture(captureId, token = this.channelLoadToken) {
+            if (token !== this.channelLoadToken) return;
+            try {
+              await this.fetchChannelSection(this.channelTab, token);
+              if (token !== this.channelLoadToken) return;
+              const inProgress = this.channelCaptures.some(item => ['opening', 'queued', 'collecting'].includes(item.status));
+              if (!inProgress) {
+                clearInterval(this.channelPollTimer);
+                clearTimeout(this.channelOpenTimeout);
+              }
+            } catch {}
+          },
+          onChannelExtensionMessage(event) {
+            if (event.source !== window || event.origin !== location.origin) return;
+            const message = event.data;
+            if (message?.type === 'yourtube:channel-batch-opened') {
+              if (message.result?.ok) {
+                clearTimeout(this.channelOpenTimeout);
+                this.pollChannelCapture(this.channelCaptureId, this.channelLoadToken);
+              } else {
+                this.channelCaptureError = message.result?.error || 'The extension could not queue channel sections.';
+                this.channelCaptureStatus = 'error';
+                this.channelLoading = false;
+              }
+              return;
+            }
+            if (message?.type !== 'yourtube:channel-opened' || message.captureId !== this.channelCaptureId || message.result?.ok) return;
+            this.channelCaptureError = message.result?.error || 'The extension could not open this channel.';
+            this.channelCaptureStatus = 'error';
+            this.channelLoading = false;
+          },
+          async openChannelTab(tab) {
+            if (!this.channelKey || !this.channelTabs.some(item => item.key === tab)) return;
+            this.currentView = 'channel';
+            window.history.pushState({}, '', this.channelPagePath(this.channelKey, tab));
+            await this.loadChannelSection(tab);
+          },
+          onAppPopState() {
+            const route = location.pathname.match(/^\/channel\/([^/]+)(?:\/(home|videos|shorts|streams|playlists|community))?\/?$/);
+            if (route) {
+              let key = '';
+              try { key = decodeURIComponent(route[1]); } catch {}
+              if (key) {
+                this.currentView = 'channel';
+                this.startChannelCapture(key, route[2] || 'videos');
+                return;
+              }
+            }
+            const view = new URLSearchParams(location.search).get('view');
+            this.currentView = ['downloaded', 'history', 'playlists', 'status'].includes(view) ? view : 'home';
+            if (this.currentView === 'playlists') this.loadPlaylists(new URLSearchParams(location.search).get('playlist') || '');
+          },
+          setCurrentView(view) {
+            this.currentView = view;
+            const target = view === 'home' ? '/' : `/?view=${encodeURIComponent(view)}`;
+            window.history.replaceState({}, '', target);
+            if (view === 'history') this.refresh();
+            if (view === 'playlists') {
+              this.selectedPlaylistId = '';
+              this.selectedPlaylist = null;
+              this.loadPlaylists();
+            }
+          },
+          openSidebarItem(item) {
+            if (item === 'History') this.setCurrentView('history');
+            if (item === 'Playlists') this.setCurrentView('playlists');
+            if (item === 'Watch later') this.openPlaylist('watch-later');
+          },
+          goHome() { this.setCurrentView('home'); this.refresh(true); },
+          searchLocalFromTeaser() {
+            this.searchSource = 'local';
+            this.beginSearch(this.searchTerm);
+          },
+          toggleSearchSource() {
+            if (this.networkMode !== 'online') { this.searchSource = 'local'; return; }
+            this.searchSource = this.searchSource === 'youtube' ? 'local' : 'youtube';
+            if (this.currentView === 'search' && this.searchTerm) this.beginSearch(this.searchTerm);
+          },
+          onSearchInput() {
+            const term = this.query.trim().slice(0, 200);
+            clearTimeout(this.searchDebounceTimer);
+            if (term.length < 2) {
+              this.searchRequestToken += 1;
+              clearTimeout(this.searchPollTimer);
+              clearTimeout(this.searchLivePollTimer);
+              clearTimeout(this.searchCollectionTimer);
+              this.currentView = 'home';
+              this.searchLoading = false;
+              this.searchResultsReady = false;
+              return;
+            }
+            this.beginSearch(term);
+          },
+          beginSearch(term) {
+            clearTimeout(this.searchDebounceTimer);
+            clearTimeout(this.searchPollTimer);
+            clearTimeout(this.searchLivePollTimer);
+            clearTimeout(this.searchCollectionTimer);
+            clearTimeout(this.searchLivePollTimer);
+            clearTimeout(this.searchCollectionTimer);
+            this.searchRequestToken += 1;
+            const token = this.searchRequestToken;
+            this.searchTerm = term;
+            this.activeSearchSource = this.searchSource;
+            this.searchSessionId = crypto.randomUUID();
+            this.searchSelectionRecorded = false;
+            this.currentView = 'search';
+            this.searchVideos = [];
+            this.localSearchPreview = [];
+            this.localSearchTotal = 0;
+            this.searchOffset = 0;
+            this.searchVisibleCount = 12;
+            this.searchTotal = 0;
+            this.searchHasMore = false;
+            this.searchResultsReady = false;
+            this.searchStableCount = 0;
+            this.searchLastSignature = '';
+            this.searchError = '';
+            this.searchLoading = true;
+            this.searchSessionComplete = this.activeSearchSource !== 'youtube';
+            this.searchSessionAcknowledged = false;
+            this.searchDebounceTimer = setTimeout(() => this.pollFirstBatch(token), 250);
+            if (this.activeSearchSource === 'youtube') this.searchCollectionTimer = setTimeout(() => this.startSearchCollection(token), 1000);
+          },
+          async startSearchCollection(token) {
+            if (token !== this.searchRequestToken || this.activeSearchSource !== 'youtube') return;
+            try {
+              const response = await fetch('/api/search-sessions', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ searchId: this.searchSessionId, query: this.searchTerm })
+              });
+              if (!response.ok) throw new Error('Could not start background YouTube search.');
+              if (token !== this.searchRequestToken) return;
+              window.postMessage({ type: 'yourtube:collect-search', searchId: this.searchSessionId, query: this.searchTerm }, location.origin);
+              this.pollSearchSession(token);
+            } catch (error) {
+              if (token === this.searchRequestToken) this.searchError = `${error.message} Showing saved local matches.`;
+            }
+          },
+          async pollSearchSession(token) {
+            if (token !== this.searchRequestToken || !this.searchSessionId) return;
+            try {
+              const response = await fetch(`/api/search-sessions/${encodeURIComponent(this.searchSessionId)}?refresh=${Date.now()}`, { cache: 'no-store' });
+              if (!response.ok) throw new Error('Background search status is unavailable.');
+              const result = await response.json();
+              if (token !== this.searchRequestToken) return;
+              const sessionVideos = (Array.isArray(result.videos) ? result.videos : []).filter(video => video && !video.downloaded);
+              const existing = new Set(this.searchVideos.map(video => video.id));
+              const fresh = sessionVideos.filter(video => video.id && !existing.has(video.id) && existing.add(video.id));
+              if (fresh.length) this.searchVideos.push(...fresh);
+              this.searchSessionComplete = result.status === 'ready' || result.status === 'displayed';
+              this.searchTotal = Math.max(this.searchTotal, sessionVideos.length, this.searchVideos.length);
+              if (this.searchVideos.length >= 12 || this.searchSessionComplete) {
+                this.searchResultsReady = true;
+                this.searchLoading = false;
+                if (this.activeSearchSource === 'youtube' && !this.searchLivePollTimer) this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
+              }
+              this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
+              if (this.searchSessionComplete && !this.searchSessionAcknowledged) {
+                this.searchSessionAcknowledged = true;
+                fetch(`/api/search-sessions/${encodeURIComponent(this.searchSessionId)}`, { method: 'POST' }).catch(() => {});
+              } else if (!this.searchSessionComplete) {
+                this.searchLivePollTimer = setTimeout(() => this.pollSearchSession(token), 900);
+              }
+            } catch {
+              if (token === this.searchRequestToken) this.searchLivePollTimer = setTimeout(() => this.pollSearchSession(token), 1800);
+            }
+          },
+          async recordSearchSelection(videoId, event) {
+            if (this.activeSearchSource !== 'youtube' || this.searchSelectionRecorded || !this.searchSessionId) return;
+            const targetUrl = new URL(event?.currentTarget?.href || `/watch/${encodeURIComponent(videoId)}`, location.origin);
+            targetUrl.searchParams.set('yourtubeSearchId', this.searchSessionId);
+            const target = targetUrl.href;
+            event?.preventDefault?.();
+            this.searchSelectionRecorded = true;
+            try {
+              await fetch('/api/search-history', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ searchId: this.searchSessionId, query: this.searchTerm, source: 'youtube', selectedVideoId: videoId }),
+                keepalive: true
+              });
+            } catch {}
+            location.assign(target);
+          },
+          async pollFirstBatch(token) {
+            if (token !== this.searchRequestToken || this.searchResultsReady) return;
+            try {
+              const params = new URLSearchParams({ q: this.searchTerm, source: this.activeSearchSource, limit: '12', offset: '0', refresh: String(Date.now()) });
+              const response = await fetch(`/api/search?${params}`, { cache: 'no-store' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Search is temporarily unavailable.');
+              if (token !== this.searchRequestToken) return;
+              this.localSearchTotal = Number(result.localTotal) || 0;
+              this.localSearchPreview = Array.isArray(result.localVideos) ? result.localVideos : [];
+              const seenIds = new Set();
+              const batch = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !seenIds.has(video.id) && seenIds.add(video.id));
+              this.searchTotal = Number(result.total) || 0;
+              const signature = batch.map(video => video.id).join('|');
+              if (batch.length >= 12) {
+                this.searchVideos = batch;
+                this.searchOffset = batch.length;
+                this.searchHasMore = Boolean(result.hasMore);
+                this.searchResultsReady = true;
+                this.searchLoading = false;
+                if (this.activeSearchSource === 'youtube') this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
+                return;
+              }
+              if (batch.length && signature === this.searchLastSignature) this.searchStableCount += 1;
+              else this.searchStableCount = 0;
+              this.searchLastSignature = signature;
+              if (batch.length && this.searchStableCount >= 2 && !result.hasMore && (this.activeSearchSource === 'local' || this.searchSessionComplete)) {
+                this.searchVideos = batch;
+                this.searchOffset = batch.length;
+                this.searchHasMore = Boolean(result.hasMore);
+                this.searchResultsReady = true;
+                this.searchLoading = false;
+                if (this.activeSearchSource === 'youtube') this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
+                return;
+              }
+              this.searchPollTimer = setTimeout(() => this.pollFirstBatch(token), 1400);
+            } catch (error) {
+              if (token !== this.searchRequestToken) return;
+              this.searchError = error.message || 'Search is temporarily unavailable.';
+              this.searchPollTimer = setTimeout(() => this.pollFirstBatch(token), 2500);
+            }
+          },
+          async pollLiveLocalSearch(token) {
+            if (token !== this.searchRequestToken || this.activeSearchSource !== 'youtube') return;
+            try {
+              const params = new URLSearchParams({ q: this.searchTerm, source: 'youtube', limit: '20', offset: '0', refresh: String(Date.now()) });
+              const response = await fetch(`/api/search?${params}`, { cache: 'no-store' });
+              if (response.ok) {
+                const result = await response.json();
+                if (token !== this.searchRequestToken) return;
+                this.localSearchTotal = Number(result.localTotal) || 0;
+                this.localSearchPreview = Array.isArray(result.localVideos) ? result.localVideos : [];
+                const existing = new Set(this.searchVideos.map(video => video.id));
+                const fresh = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !video.downloaded && !existing.has(video.id) && existing.add(video.id));
+                if (fresh.length) this.searchVideos.push(...fresh);
+                this.searchTotal = Math.max(Number(result.total) || 0, this.searchTotal, this.searchVideos.length);
+                this.searchOffset = Math.max(this.searchOffset, Math.min(20, Number(result.total) || 0));
+                this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
+              }
+            } catch {}
+            if (token === this.searchRequestToken) this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 1200);
+          },
+          async loadMoreSearch() {
+            if (this.currentView !== 'search' || !this.searchResultsReady || !this.searchHasMore || this.searchLoading) return;
+            this.searchLoading = true;
+            this.searchVisibleCount += 12;
+            const token = this.searchRequestToken;
+            try {
+              if (this.searchVisibleCount <= this.searchVideos.length) {
+                this.searchLoading = false;
+                this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
+                return;
+              }
+              const params = new URLSearchParams({ q: this.searchTerm, source: this.activeSearchSource, limit: '12', offset: String(this.searchOffset), refresh: String(Date.now()) });
+              const response = await fetch(`/api/search?${params}`, { cache: 'no-store' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'More search results could not be loaded.');
+              if (token !== this.searchRequestToken) return;
+              this.localSearchTotal = Number(result.localTotal) || this.localSearchTotal;
+              if (Array.isArray(result.localVideos)) this.localSearchPreview = result.localVideos;
+              const existing = new Set(this.searchVideos.map(video => video.id));
+              const batch = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !existing.has(video.id) && existing.add(video.id));
+              this.searchVideos.push(...batch);
+              this.searchOffset += Array.isArray(result.videos) ? result.videos.length : 0;
+              this.searchTotal = Number(result.total) || this.searchTotal;
+              this.searchHasMore = Boolean(result.hasMore) || this.searchVisibleCount < this.searchVideos.length || !this.searchSessionComplete;
+            } catch (error) { this.searchError = error.message || 'More search results could not be loaded.'; }
+            finally { if (token === this.searchRequestToken) this.searchLoading = false; }
+          },
+          onSearchScroll() {
+            if (this.currentView !== 'search' || this.searchLoading || !this.searchHasMore) return;
+            const trigger = document.querySelector('#search-load-trigger');
+            if (trigger && trigger.getBoundingClientRect().top <= window.innerHeight + 120) this.loadMoreSearch();
+          },
+          onVisibilityChange() { if (document.visibilityState === 'visible') this.refresh(); },
+          orderHomepageVideos(videos, shuffle) {
+            const acquired = videos.filter(video => video.downloaded).sort((a, b) => String(b.acquiredAt || '').localeCompare(String(a.acquiredAt || '')));
+            const remaining = videos.filter(video => !video.downloaded);
+            if (shuffle) {
+              for (let index = remaining.length - 1; index > 0; index--) {
+                const swapIndex = Math.floor(Math.random() * (index + 1));
+                [remaining[index], remaining[swapIndex]] = [remaining[swapIndex], remaining[index]];
+              }
+            } else {
+              const previousOrder = new Map(this.videos.map((video, index) => [video.id, index]));
+              remaining.sort((a, b) => (previousOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (previousOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+            }
+            return [...acquired, ...remaining];
+          },
+          matching(list) { const query = this.query.trim().toLowerCase(); return query ? list.filter(video => `${video.title} ${video.channel}`.toLowerCase().includes(query)) : list; },
+          toggleForYouAgeFilter(filter) { this.forYouAgeFilter = this.forYouAgeFilter === filter ? '' : filter; this.homeExpanded = { ...this.homeExpanded, 'for-you': 1 }; },
+          topicVideos(index) { const topic = this.topics[index]; const current = this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && (video.topic || '').toLowerCase() === topic.toLowerCase() && video.kind !== 'short')); return (current.length ? current : this.normalVideos.slice(index * 4, index * 4 + 12)).slice(0, 12); },
+          topicSource(video, topic) { return String(video.topic || '').toLowerCase() === topic.toLowerCase() ? topic : 'homepage'; },
+          lowerSectionVideos(section) { const source = section.kind === 'shorts' ? this.shortsVideos : this.normalVideos; return source.slice(section.start, section.start + section.count); },
+          homepageRowSize(kind = 'video') { if (kind === 'shorts') return this.homeViewportWidth <= 620 ? 3 : this.homeViewportWidth <= 1200 ? 5 : 6; return this.homeViewportWidth <= 620 ? 2 : this.homeViewportWidth <= 900 ? 3 : 4; },
+          homeVisibleCount(key, available, kind = 'video') { const rows = Math.max(1, Number(this.homeExpanded[key]) || 1); return Math.min(Math.max(0, Number(available) || 0), rows * this.homepageRowSize(kind)); },
+          homeHasMore(key, available, kind = 'video') { return (Number(available) || 0) > this.homepageRowSize(kind); },
+          homeToggleLabel(key, available, kind = 'video') { return this.homeVisibleCount(key, available, kind) > this.homepageRowSize(kind) ? 'Show less' : 'Show more'; },
+          toggleHomeMore(key, available, kind = 'video') { const size = this.homepageRowSize(kind); const totalRows = Math.max(1, Math.ceil((Number(available) || 0) / size)); const currentRows = Math.max(1, Number(this.homeExpanded[key]) || 1); const nextRows = currentRows >= totalRows ? 1 : currentRows + 1; this.homeExpanded = { ...this.homeExpanded, [key]: nextRows }; },
+          onHomeResize() { this.homeViewportWidth = window.innerWidth || this.homeViewportWidth; },
+          isCollapsed(key) { return Boolean(this.collapsedSections[key]); },
+          toggleSection(key) { this.collapsedSections = { ...this.collapsedSections, [key]: !this.isCollapsed(key) }; },
+          iconFor(item) { return ({ 'Your channel': '◉', History: '◷', Playlists: '☷', 'Watch later': '◷', 'Liked videos': '♡', 'Your videos': '▣', Music: '♫', 'Movies & TV': '▣', Live: '◉' })[item] || '•'; },
+          subscriptionInitials(name) { return String(name || '•').trim().slice(0, 1).toUpperCase(); },
+          formatCount(value) { return new Intl.NumberFormat().format(Number(value) || 0); },
+          formatDurationBaseline(value) { return value ? `${value.firstWithDuration}/${value.sampled} · ${value.firstRatePercent}%` : '—'; },
+          durationBaselineTitle(value) { return value ? `Extension ${value.version}: video length present on first capture for ${value.firstWithDuration} of ${value.sampled} unique stubs (${value.firstRatePercent}%). Latest capture coverage: ${value.latestWithDuration}/${value.sampled} (${value.latestRatePercent}%). ${value.filledLater} stubs gained a video length in a later capture.` : 'Waiting for extension 0.4.0 captures. Existing video rows are excluded from this baseline.'; },
+          formatBytes(value) {
+            const bytes = Math.max(0, Number(value) || 0);
+            if (bytes < 1024) return `${bytes} B`;
+            const units = ['KB', 'MB', 'GB', 'TB'];
+            let size = bytes / 1024;
+            let unit = units[0];
+            for (let index = 1; size >= 1024 && index < units.length; index++) { size /= 1024; unit = units[index]; }
+            return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
+          },
+        }
+      }).mount('#app');
+    </script>
+    <script src="/header-value-ticker.js"></script>
+  </body>
+</html>
