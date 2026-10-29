@@ -68,7 +68,7 @@ One shared extension adapter recognizes YouTube playlist and Mix records from ho
 
 ### Browser metadata capture
 
-When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, sends only structured metadata to localhost, and closes the capture tab. Source version **0.5.13** can process two metadata captures concurrently while channel work uses its own serialized slot when capacity permits. Captures time out and are retried rather than leaving a permanent browser-side lock. The extension popup exposes queue state and recent capture errors; its diagnostics endpoint is restricted to extension-origin requests. A Chrome extension reload is required to activate source changes.
+When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, sends only structured metadata to localhost, and closes the capture tab. Source version **0.5.14** can process two metadata captures concurrently while channel work uses its own serialized slot when capacity permits. Captures time out and are retried rather than leaving a permanent browser-side lock. The extension popup exposes queue state and recent capture errors, probes localhost directly if its worker is unavailable, and identifies a stale worker separately from a server outage. Its diagnostics endpoint is restricted to extension-origin requests. A Chrome extension reload is required to activate source changes.
 
 ## Acquisition and playback
 

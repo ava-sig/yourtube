@@ -2,13 +2,36 @@ const $ = selector => document.querySelector(selector);
 let currentMode = 'preparing';
 let refreshing = false;
 
-function sendMessage(message) {
+function sendMessage(message, timeoutMs = 7000) {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('The extension background worker did not answer in time.')), timeoutMs);
     chrome.runtime.sendMessage(message, result => {
+      clearTimeout(timeout);
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(result || {});
     });
   });
+}
+
+async function readServerDiagnosticsDirectly() {
+  let lastError = null;
+  for (const baseUrl of ['http://127.0.0.1:4173', 'http://localhost:4173']) {
+    try {
+      const response = await fetch(`${baseUrl}/api/extension/diagnostics`, {
+        cache: 'no-store', signal: AbortSignal.timeout(5000)
+      });
+      if (response.ok) return await response.json();
+      lastError = new Error(`Diagnostics returned HTTP ${response.status}`);
+    } catch (error) { lastError = error; }
+    try {
+      const response = await fetch(`${baseUrl}/api/mode`, {
+        cache: 'no-store', signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) throw new Error(`YourTube returned HTTP ${response.status}`);
+      return { ...(await response.json()), diagnosticsUnavailable: true };
+    } catch (error) { lastError = error; }
+  }
+  throw new Error(lastError?.message || 'Could not read local server diagnostics.');
 }
 
 function number(value) {
@@ -95,7 +118,7 @@ function renderList(selector, rows, emptyMessage, renderRow) {
 
 function render(data) {
   currentMode = data.server?.mode || data.extensionMode || 'preparing';
-  $('#version').textContent = `v${data.extensionVersion || ''}`;
+  $('#version').textContent = `v${data.extensionVersion || chrome.runtime.getManifest().version}`;
   $('#page-badge').textContent = data.currentPage || '—';
   const connection = $('#connection');
   const server = data.server;
@@ -112,23 +135,25 @@ function render(data) {
     setWorkerNotice('');
     $('#length-total').textContent = '—';
     $('#length-breakdown').textContent = 'Queue counts unavailable';
-    $('#capture-count').textContent = `${data.captures?.length || 0}/2`;
-    $('#capture-detail').textContent = 'Active browser tabs';
+    $('#capture-count').textContent = data.workerUnavailable ? '—/2' : `${data.captures?.length || 0}/2`;
+    $('#capture-detail').textContent = data.workerUnavailable ? 'Extension worker unavailable' : 'Active browser tabs';
     $('#media-active').textContent = '—';
     $('#media-detail').textContent = 'Local server unavailable';
-    $('#sync-count').textContent = number(data.syncRetries?.length);
-    $('#sync-detail').textContent = 'Waiting to reach the server';
+    $('#sync-count').textContent = data.workerUnavailable ? '—' : number(data.syncRetries?.length);
+    $('#sync-detail').textContent = data.workerUnavailable ? 'Extension storage unavailable' : 'Waiting to reach the server';
     $('#local-metadata-count').textContent = '—';
     $('#local-metadata-detail').textContent = 'Local server unavailable';
     $('#nudge').disabled = true;
     $('#media-queue-summary').textContent = 'Unavailable';
-    renderList('#media-items', [], 'Download queue details need a local connection.', () => {});
+    renderList('#media-items', [], data.workerUnavailable ? 'Extension worker did not respond; media queue details are unavailable.' : 'Download queue details need a local connection.', () => {});
     $('#channel-summary').textContent = 'Unavailable';
   } else {
     const mode = server.mode || data.extensionMode;
     connection.dataset.state = mode === 'offline' || mode === 'preparing' ? mode : 'online';
     $('#connection-title').textContent = mode === 'online' ? 'Connected · YourTube Online' : mode === 'preparing' ? 'Connected · switching mode' : 'Connected · YourTube Offline';
-    $('#connection-detail').textContent = server.internetAvailable === false ? 'No internet connection detected' : 'Local server and browser extension are communicating';
+    $('#connection-detail').textContent = data.workerUnavailable
+      ? 'Local server responds; extension background worker did not'
+      : server.internetAvailable === false ? 'No internet connection detected' : 'Local server and browser extension are communicating';
     $('#mode-label').textContent = mode === 'online' ? 'Online' : mode === 'preparing' ? 'Preparing offline' : 'Offline';
     $('#mode-detail').textContent = mode === 'offline'
       ? 'Browser captures and new discovery are paused.'
@@ -137,14 +162,19 @@ function render(data) {
         : 'The extension can open YouTube pages to collect missing details.';
     $('#mode').dataset.mode = mode;
     $('#mode').textContent = mode === 'preparing' ? 'Preparing…' : mode === 'offline' ? 'Go Online' : 'Go Offline';
-    $('#mode').disabled = mode === 'preparing';
+    $('#mode').disabled = mode === 'preparing' || Boolean(data.workerUnavailable);
+    $('#mode').title = data.workerUnavailable ? 'Reload the extension to restore its background worker.' : '';
     setNotice('#server-error', '');
 
     const lengths = server.videoLengths || {};
-    $('#length-total').textContent = number(lengths.missing);
-    $('#length-breakdown').textContent = `${number(lengths.waitingExtension)} waiting for extension · ${number(lengths.capturing)} in browser · ${number(lengths.queued)} queued · ${number(lengths.retrying)} retrying · ${number(lengths.unavailable)} unavailable`;
-    $('#capture-count').textContent = `${data.captures?.length || 0}/2`;
-    $('#capture-detail').textContent = data.captures?.length
+    $('#length-total').textContent = data.diagnosticsPartial ? '—' : number(lengths.missing);
+    $('#length-breakdown').textContent = data.diagnosticsPartial
+      ? 'Detailed queue endpoint unavailable'
+      : `${number(lengths.waitingExtension)} waiting for extension · ${number(lengths.capturing)} in browser · ${number(lengths.queued)} queued · ${number(lengths.retrying)} retrying · ${number(lengths.unavailable)} unavailable`;
+    $('#capture-count').textContent = data.workerUnavailable ? '—/2' : `${data.captures?.length || 0}/2`;
+    $('#capture-detail').textContent = data.workerUnavailable
+      ? 'Extension worker unavailable'
+      : data.captures?.length
       ? data.captures.map(capture => capture.tabStatus).join(' · ')
       : data.metadataQueueBusy
         ? `Queue worker checking for ${data.metadataQueueBusyForSeconds || 0}s · ${data.metadataQueueState?.message || 'reading queue'}`
@@ -152,19 +182,29 @@ function render(data) {
         ? `${data.metadataQueueState?.message || 'No capture tab is currently open'} · checked ${timeAgo(data.metadataQueueState?.checkedAt)}`
         : 'Capture slots paused';
     const media = server.mediaDownloads || {};
-    $('#media-active').textContent = number(media.active);
-    $('#media-detail').textContent = `${number(media.queued)} queued · ${number(media.paused)} paused · ${number(media.ready)} ready`;
-    $('#sync-count').textContent = number(data.syncRetries?.length);
+    $('#media-active').textContent = data.diagnosticsPartial ? '—' : number(media.active);
+    $('#media-detail').textContent = data.diagnosticsPartial
+      ? 'Detailed queue endpoint unavailable'
+      : `${number(media.queued)} queued · ${number(media.paused)} paused · ${number(media.ready)} ready`;
+    $('#sync-count').textContent = data.workerUnavailable ? '—' : number(data.syncRetries?.length);
     const latestSyncRetry = data.syncRetries?.[0];
-    $('#sync-detail').textContent = latestSyncRetry
+    $('#sync-detail').textContent = data.workerUnavailable
+      ? 'Extension storage unavailable'
+      : latestSyncRetry
       ? `${latestSyncRetry.path} · next retry ${timeUntil(latestSyncRetry.nextAttemptAt)}`
       : 'No captured data waiting to sync';
     const localMetadata = server.downloadedMetadata || {};
     const localMetadataPending = Number(localMetadata.active || 0) + Number(localMetadata.waitingExtension || 0) + Number(localMetadata.queued || 0);
-    $('#local-metadata-count').textContent = number(localMetadataPending);
-    $('#local-metadata-detail').textContent = `${number(localMetadata.active)} active · ${number(localMetadata.waitingExtension)} waiting extension · ${number(localMetadata.queued)} queued`;
+    $('#local-metadata-count').textContent = data.diagnosticsPartial ? '—' : number(localMetadataPending);
+    $('#local-metadata-detail').textContent = data.diagnosticsPartial
+      ? 'Detailed queue endpoint unavailable'
+      : `${number(localMetadata.active)} active · ${number(localMetadata.waitingExtension)} waiting extension · ${number(localMetadata.queued)} queued`;
 
-    const noProgress = mode === 'offline'
+    const noProgress = data.workerUnavailable
+      ? `The extension background worker did not answer. Reload YourTube Local Feed in Chrome’s Extensions page to restore capture and local queue diagnostics.${data.diagnosticsPartial ? ' The server is reachable, but its detailed diagnostics endpoint is unavailable; restart the YourTube server.' : ''}`
+      : data.diagnosticsPartial
+        ? 'The server is reachable, but detailed queue diagnostics are unavailable. Restart the YourTube server to load its diagnostics endpoint.'
+      : mode === 'offline'
       ? `${number(lengths.waitingExtension)} items are marked “waiting for extension”. That work is paused in Offline mode; switch Online to let the extension open YouTube capture pages.`
       : mode === 'preparing'
         ? 'New browser captures wait until the Offline transition finishes.'
@@ -173,17 +213,21 @@ function render(data) {
           : '';
     setNotice('#offline-note', noProgress);
     const workerState = data.metadataQueueState;
-    const workerNote = mode === 'online' && !noProgress && lengths.waitingExtension > 0 && !(data.captures?.length)
+    const workerNote = data.workerUnavailable
+      ? 'The popup could read localhost directly, but the extension worker did not respond. Reload the extension; its queue controls are disabled until then.'
+      : mode === 'online' && !noProgress && lengths.waitingExtension > 0 && !(data.captures?.length)
       ? data.metadataQueueBusy
         ? `The extension queue worker is still checking (${data.metadataQueueBusyForSeconds || 0}s). If it stays here, this view will show its last error.`
         : `Last queue check ${timeAgo(workerState?.checkedAt)}: ${workerState?.message || 'No capture tab is active.'}`
       : '';
     setWorkerNotice(workerNote, workerState?.status === 'error' || Boolean(data.metadataQueueBusy && (data.metadataQueueBusyForSeconds || 0) > 45));
-    $('#nudge').disabled = mode !== 'online' || data.metadataQueueBusy || !lengths.waitingExtension;
-    $('#channel-summary').textContent = `${number(server.channelCaptures?.active)} active · ${number(server.channelCaptures?.queued)} queued · ${number(server.channelCaptures?.stale)} stale`;
+    $('#nudge').disabled = mode !== 'online' || data.metadataQueueBusy || !lengths.waitingExtension || Boolean(data.workerUnavailable);
+    $('#channel-summary').textContent = data.diagnosticsPartial
+      ? 'Details unavailable'
+      : `${number(server.channelCaptures?.active)} active · ${number(server.channelCaptures?.queued)} queued · ${number(server.channelCaptures?.stale)} stale`;
   }
 
-  renderList('#capture-list', data.captures, 'No browser captures are active.', (container, item) => {
+  renderList('#capture-list', data.captures, data.workerUnavailable ? 'Extension worker did not respond; active tabs cannot be read.' : 'No browser captures are active.', (container, item) => {
     appendItem(container, {
       title: item.title,
       status: item.tabStatus,
@@ -192,7 +236,7 @@ function render(data) {
     });
   });
 
-  renderList('#queue-items', server?.videoLengthSamples, data.serverReachable ? 'No video-length work is queued.' : 'Queue details need a local connection.', (container, item) => {
+  renderList('#queue-items', server?.videoLengthSamples, data.diagnosticsPartial ? 'The server does not expose detailed queue diagnostics yet.' : data.serverReachable ? 'No video-length work is queued.' : 'Queue details need a local connection.', (container, item) => {
     const attemptText = item.attempts ? ` · attempt ${item.attempts}/3` : '';
     appendItem(container, {
       title: item.title || item.videoId,
@@ -227,9 +271,12 @@ function render(data) {
         meta: `${item.channel || item.videoId} · ${item.phase || 'Download'}${progressText}${item.attempts ? ` · attempt ${item.attempts}` : ''}${retryText}`
       });
     });
+  } else {
+    $('#media-queue-summary').textContent = data.diagnosticsPartial ? 'Details unavailable' : data.serverReachable ? 'No data' : 'Unavailable';
+    renderList('#media-items', [], data.diagnosticsPartial ? 'Detailed media queue diagnostics are unavailable.' : 'Media queue details need a local connection.', () => {});
   }
 
-  renderList('#last-events', data.events, 'No extension capture errors or events have been recorded yet.', (container, event) => {
+  renderList('#last-events', data.events, data.workerUnavailable ? 'Extension worker did not respond; local activity history cannot be read.' : 'No extension capture errors or events have been recorded yet.', (container, event) => {
     appendItem(container, {
       title: event.kind === 'error' ? 'Capture issue'
         : event.kind === 'sync-error' ? 'Sync retry queued'
@@ -248,15 +295,39 @@ async function refreshDiagnostics() {
   $('#refresh').disabled = true;
   try {
     const data = await sendMessage({ type: 'yourtube:get-diagnostics' });
-    render(data);
+    if (data.serverReachable) render(data);
+    else {
+      try {
+        const server = await readServerDiagnosticsDirectly();
+        render({ ...data, server, serverReachable: true, diagnosticsPartial: Boolean(server.diagnosticsUnavailable) });
+      } catch { render({ ...data, extensionVersion: data.extensionVersion || chrome.runtime.getManifest().version }); }
+    }
   } catch (error) {
-    render({ extensionMode: currentMode, serverReachable: false, serverError: error.message, captures: [], syncRetries: [], events: [] });
+    try {
+      const server = await readServerDiagnosticsDirectly();
+      render({
+        extensionVersion: chrome.runtime.getManifest().version,
+        extensionMode: server.mode, currentPage: 'Extension worker offline',
+        serverReachable: true, server, captures: [], syncRetries: [], events: [],
+        diagnosticsPartial: Boolean(server.diagnosticsUnavailable),
+        workerUnavailable: true, workerError: error.message,
+        metadataQueueState: { status: 'error', message: error.message, checkedAt: new Date().toISOString() }
+      });
+    } catch (serverError) {
+      render({
+        extensionVersion: chrome.runtime.getManifest().version,
+        extensionMode: currentMode, serverReachable: false,
+        serverError: `${serverError.message} Extension worker: ${error.message}`,
+        captures: [], syncRetries: [], events: [], workerUnavailable: true
+      });
+    }
   } finally {
     refreshing = false;
     $('#refresh').disabled = false;
   }
 }
 
+$('#version').textContent = `v${chrome.runtime.getManifest().version}`;
 $('#refresh').addEventListener('click', refreshDiagnostics);
 $('#mode').addEventListener('click', async () => {
   if (currentMode === 'preparing') return;

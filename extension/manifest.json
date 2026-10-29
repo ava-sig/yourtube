@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YourTube Local Feed",
-  "version": "0.5.13",
+  "version": "0.5.14",
   "description": "Capture YouTube pages for YourTube and inspect local capture queues and failures.",
   "permissions": ["storage", "alarms"],
   "action": { "default_title": "YourTube capture diagnostics", "default_popup": "popup.html" },
