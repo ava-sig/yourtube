@@ -590,6 +590,15 @@ function sendJson(response, status, value) {
 
 const modeSetting = database.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = 'network_mode'").get();
 let networkMode = modeSetting?.value === 'offline' ? 'offline' : 'online';
+const explicitOfflineSetting = database.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = 'explicit_offline_preference'").get();
+let explicitOfflinePreference = explicitOfflineSetting ? explicitOfflineSetting.value === 'true' : networkMode === 'offline';
+const reconnectOnlineSetting = database.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = 'auto_online_after_connectivity_loss'").get();
+let autoOnlineAfterConnectivityLoss = reconnectOnlineSetting?.value === 'true' && networkMode === 'offline';
+const persistAppSetting = (key, value) => database.prepare(`INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`)
+  .run(key, String(value), new Date().toISOString());
+if (!explicitOfflineSetting) persistAppSetting('explicit_offline_preference', explicitOfflinePreference);
+if (reconnectOnlineSetting?.value === 'true' && !autoOnlineAfterConnectivityLoss) persistAppSetting('auto_online_after_connectivity_loss', false);
 const autoDeleteSetting = database.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = 'auto_delete_enabled'").get();
 let autoDeleteEnabled = autoDeleteSetting?.value === 'true';
 const mediaLifetimeMs = 24 * 60 * 60 * 1000;
@@ -648,8 +657,15 @@ let connectivityCheck = null;
 const reportedNetworkMode = () => networkMode !== 'offline' && (offlinePreparationRequested || !offlinePreparationBackground && ['queued', 'running'].includes(offlinePreparation.status)) ? 'preparing' : networkMode;
 const mediaDiscoveryPaused = () => reportedNetworkMode() !== 'online';
 function setOfflinePreparationTarget(target) {
-  database.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES ('offline_preparation_target', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at")
-    .run(target, new Date().toISOString());
+  persistAppSetting('offline_preparation_target', target);
+}
+function setExplicitOfflinePreference(enabled) {
+  explicitOfflinePreference = Boolean(enabled);
+  persistAppSetting('explicit_offline_preference', explicitOfflinePreference);
+}
+function setAutoOnlineAfterConnectivityLoss(enabled) {
+  autoOnlineAfterConnectivityLoss = Boolean(enabled);
+  persistAppSetting('auto_online_after_connectivity_loss', autoOnlineAfterConnectivityLoss);
 }
 function saveOfflinePreparationCheckpoint(preparation = offlinePreparation) {
   const now = new Date().toISOString();
@@ -685,11 +701,17 @@ function switchOfflineForConnectionLoss() {
   offlinePreparationBackground = false;
   offlinePreparationPaused = Boolean(pausedPreparation);
   networkMode = 'offline';
+  const shouldReconnectOnline = !explicitOfflinePreference;
+  setAutoOnlineAfterConnectivityLoss(shouldReconnectOnline);
   offlinePreparation = pausedPreparation
-    ? { ...pausedPreparation, status: 'paused', message: 'Preparation remains paused. Reconnect, then switch Online to resume it in the background.' }
+    ? { ...pausedPreparation, status: 'paused', message: shouldReconnectOnline
+      ? 'Preparation is paused while the internet is unavailable. It will resume when YourTube returns Online.'
+      : 'Preparation remains paused. Reconnect, then switch Online to resume it in the background.' }
     : { status: 'idle', phase: 'comments', completed: 0, total: 0, message: '' };
   noInternetFallback = true;
-  connectivityNotice = 'No internet connection detected. YourTube switched to Offline. Reconnect, then turn Online on.';
+  connectivityNotice = shouldReconnectOnline
+    ? 'No internet connection detected. YourTube switched Offline and will return Online when the connection is restored.'
+    : 'No internet connection detected. YourTube switched Offline and will stay Offline until you turn Online on.';
   const now = new Date().toISOString();
   database.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES ('network_mode', 'offline', ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = 'offline', updated_at = excluded.updated_at").run(now);
   if (offlinePreparationPaused) {
@@ -703,11 +725,43 @@ function switchOfflineForConnectionLoss() {
   if (offlinePreparationPaused) saveOfflinePreparationCheckpoint(offlinePreparation);
   pauseRetryQueueForOffline();
 }
+function switchOnlineAfterConnectivityRestore(automatic = false) {
+  const resumePreparation = offlinePreparationPaused;
+  const resumePhase = offlinePreparation.phase || 'video lengths';
+  const resumeCompleted = Number(offlinePreparation.completed) || 0;
+  const resumeTotal = Number(offlinePreparation.total) || 0;
+  offlinePreparationRun += 1;
+  offlinePreparationRequested = false;
+  offlinePreparationPaused = false;
+  offlinePreparationBackground = resumePreparation;
+  networkMode = 'online';
+  setExplicitOfflinePreference(false);
+  setAutoOnlineAfterConnectivityLoss(false);
+  noInternetFallback = false;
+  connectivityNotice = automatic ? 'Internet connection restored. YourTube switched back Online automatically.' : '';
+  const now = new Date().toISOString();
+  // Resume the original schedule. Resetting next_retry_at here made every
+  // Online toggle extend the wait, even when the retry was already due.
+  database.prepare("UPDATE download_retry_queue SET status = 'pending', updated_at = ? WHERE status = 'paused-offline'").run(now);
+  database.prepare("UPDATE downloads SET status = 'error', message = 'Retry queued after returning Online.', stage = 'Waiting to retry', updated_at = ? WHERE status = 'paused-offline'").run(now);
+  setOfflinePreparationTarget(resumePreparation ? 'background' : 'online');
+  offlinePreparation = resumePreparation
+    ? { status: 'queued', phase: resumePhase, completed: resumeCompleted, total: resumeTotal, message: 'Resuming preparation in the background while YourTube stays Online.' }
+    : { status: 'idle', phase: 'comments', completed: 0, total: 0, message: '' };
+  persistAppSetting('network_mode', 'online');
+  if (resumePreparation) saveOfflinePreparationCheckpoint(offlinePreparation);
+  if (resumePreparation) setTimeout(() => {
+    if (networkMode === 'online' && offlinePreparationBackground) prepareOfflineCache({ backgroundOnly: true }).catch(error => console.error('Background preparation:', error));
+  }, 0);
+}
 async function monitorInternetConnectivity() {
+  const requestGeneration = networkModeRequestGeneration;
   await checkInternetConnectivity();
+  if (requestGeneration !== networkModeRequestGeneration) return;
   if (!connectivityStatus.available && networkMode === 'online') switchOfflineForConnectionLoss();
-  else if (connectivityStatus.available && noInternetFallback && networkMode === 'offline') {
-    connectivityNotice = 'Internet connection restored. YourTube is still Offline; turn Online on when you are ready.';
+  else if (connectivityStatus.available && autoOnlineAfterConnectivityLoss && !explicitOfflinePreference && networkMode === 'offline') {
+    networkModeRequestGeneration += 1;
+    switchOnlineAfterConnectivityRestore(true);
   }
 }
 const imageKey = source => createHash('sha256').update(source).digest('hex');
@@ -2502,6 +2556,10 @@ const server = createServer(async (request, response) => {
       if (!['online', 'offline'].includes(body.mode)) { sendJson(response, 400, { error: 'Mode must be online or offline.' }); return; }
       const requestGeneration = ++networkModeRequestGeneration;
       if (body.mode === 'online') {
+        // An explicit Online choice owns this transition; the connectivity
+        // monitor must not race it with an automatic reconnect.
+        setExplicitOfflinePreference(false);
+        setAutoOnlineAfterConnectivityLoss(false);
         await checkInternetConnectivity();
         if (requestGeneration !== networkModeRequestGeneration) {
           sendJson(response, 409, { mode: reportedNetworkMode(), preparation: offlinePreparation, internetAvailable: connectivityStatus.available, connectivityNotice });
@@ -2512,32 +2570,12 @@ const server = createServer(async (request, response) => {
           sendJson(response, 503, { error: connectivityNotice, mode: 'offline', preparation: offlinePreparation, internetAvailable: false, connectivityNotice });
           return;
         }
-        const resumePreparation = offlinePreparationPaused;
-        const resumePhase = offlinePreparation.phase || 'video lengths';
-        const resumeCompleted = Number(offlinePreparation.completed) || 0;
-        const resumeTotal = Number(offlinePreparation.total) || 0;
-        offlinePreparationRun += 1;
-        offlinePreparationRequested = false;
-        offlinePreparationPaused = false;
-        offlinePreparationBackground = resumePreparation;
-        networkMode = 'online';
-        noInternetFallback = false;
-        connectivityNotice = '';
-        const now = new Date().toISOString();
-        // Resume the original schedule. Resetting next_retry_at here made every
-        // Online toggle extend the wait, even when the retry was already due.
-        database.prepare("UPDATE download_retry_queue SET status = 'pending', updated_at = ? WHERE status = 'paused-offline'").run(now);
-        database.prepare("UPDATE downloads SET status = 'error', message = 'Retry queued after returning Online.', stage = 'Waiting to retry', updated_at = ? WHERE status = 'paused-offline'").run(now);
-        setOfflinePreparationTarget(resumePreparation ? 'background' : 'online');
-        offlinePreparation = resumePreparation
-          ? { status: 'queued', phase: resumePhase, completed: resumeCompleted, total: resumeTotal, message: 'Resuming preparation in the background while YourTube stays Online.' }
-          : { status: 'idle', phase: 'comments', completed: 0, total: 0, message: '' };
-        database.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES ('network_mode', 'online', ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = 'online', updated_at = excluded.updated_at").run(new Date().toISOString());
-        if (resumePreparation) saveOfflinePreparationCheckpoint(offlinePreparation);
+        switchOnlineAfterConnectivityRestore(false);
         sendJson(response, 200, { mode: networkMode, preparation: offlinePreparation, internetAvailable: true, connectivityNotice });
-        if (resumePreparation) setTimeout(() => { if (networkMode === 'online' && offlinePreparationBackground) prepareOfflineCache({ backgroundOnly: true }).catch(error => console.error('Background preparation:', error)); }, 0);
         return;
       }
+      setExplicitOfflinePreference(true);
+      setAutoOnlineAfterConnectivityLoss(false);
       noInternetFallback = false;
       connectivityNotice = '';
       if (networkMode === 'offline') { sendJson(response, 200, { mode: networkMode, preparation: offlinePreparation }); return; }
