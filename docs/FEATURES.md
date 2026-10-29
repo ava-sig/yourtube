@@ -5,6 +5,7 @@ This inventory reflects the source currently in this project. Feature proposals 
 ## Feed capture and homepage
 
 - The unpacked Chrome extension captures rendered YouTube video cards, subscriptions, thumbnails, channel avatars, visible durations, playlist/Mix cards, and channel-page content.
+- The extension toolbar popup shows localhost reachability and mode, video-length queue counts, active metadata tabs, media retry counts, channel work, recent capture events, and a way to claim the next video-length job while Online.
 - It filters likely sponsored cards and YouTube Playables and rejects generic `Watch` titles. Cards are de-duplicated by video ID.
 - The homepage is a local projection of accumulated stubs. It has **For you**, **Downloaded**, **Top News**, topic rows, Shorts, and normal-video rows, with YouTube-style section separators and Show more controls.
 - **For you** excludes downloaded files. Its Most recent/Older chips use the two-day boundary; with no chip selected, the current default ordering is retained. Each card can show its exact source and a rounded “pulled … ago” time.

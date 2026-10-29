@@ -27,7 +27,7 @@ The server and UI are one local application. `server.js` serves the HTML pages, 
 | `extension/capture.js` | Reads rendered YouTube cards, durations, subscriptions, playlist/Mix structures, channel details, and page-visible video/comment data. Expands supported “Show more” controls and scrolls tracked channel sections. |
 | `extension/background.js` | Sends captured records, manages browser-side sync retries, reflects Online/Offline state, sequences channel captures, and runs browser-page metadata captures. |
 | `extension/bridge.js` | Relays requests from the YourTube page to the extension, including search and channel-capture requests. |
-| `extension/popup.*` | Small extension control for YourTube network mode. |
+| `extension/popup.*` | Extension diagnostics for server/mode connectivity, browser capture tabs, local sync retries, queue samples, and recent failures; also controls Online/Offline mode. |
 | `public/index.html` | Vue-based home, search, channel, playlist, history, downloads, and background-status views. |
 | `public/player.html` | Local watch page, comments, playlist and Up next panels, plus the downloads-in-progress view. |
 | `scripts/backfill-video-durations.js` | Explicit sequential duration backfill that can be paused by Offline mode. |
@@ -68,7 +68,7 @@ One shared extension adapter recognizes YouTube playlist and Mix records from ho
 
 ### Browser metadata capture
 
-When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, sends only structured metadata to localhost, and closes the capture tab. Source version **0.5.12** can process two metadata captures concurrently while channel work uses its own serialized slot when capacity permits. Captures time out and are retried rather than leaving a permanent browser-side lock. A Chrome extension reload is required to activate source changes.
+When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, sends only structured metadata to localhost, and closes the capture tab. Source version **0.5.13** can process two metadata captures concurrently while channel work uses its own serialized slot when capacity permits. Captures time out and are retried rather than leaving a permanent browser-side lock. The extension popup exposes queue state and recent capture errors; its diagnostics endpoint is restricted to extension-origin requests. A Chrome extension reload is required to activate source changes.
 
 ## Acquisition and playback
 

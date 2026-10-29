@@ -2405,15 +2405,15 @@ const server = createServer(async (request, response) => {
 
   const origin = request.headers.origin || '';
   const extensionOrigin = origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
-  const extensionMetadataRoute = url.pathname === '/api/extension/metadata-capture-jobs' || url.pathname === '/api/extension/video-metadata';
-  if (extensionOrigin && (extensionMetadataRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
+  const extensionOnlyRoute = ['/api/extension/metadata-capture-jobs', '/api/extension/video-metadata', '/api/extension/diagnostics'].includes(url.pathname);
+  if (extensionOrigin && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Vary', 'Origin');
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'content-type');
     response.setHeader('Access-Control-Allow-Private-Network', 'true');
   }
-  if (request.method === 'OPTIONS' && (extensionMetadataRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname)) && extensionOrigin) {
+  if (request.method === 'OPTIONS' && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname)) && extensionOrigin) {
     response.writeHead(204).end();
     return;
   }
@@ -3185,6 +3185,76 @@ const server = createServer(async (request, response) => {
     };
     sendJson(response, 200, { localFiles, mediaBytes, historicalViews, extensionVideos, activeDownloads, pausedDownloads, queuedDownloads,
       activeChannelCaptures, durationLookupActive, pendingDurations, durationBaseline, downloadMetadata });
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/extension/diagnostics' && extensionOrigin) {
+    const durationCounts = database.prepare(`SELECT COUNT(*) AS missing,
+      COALESCE(SUM(CASE WHEN l.video_id IS NULL OR l.status IN ('pending', 'running') THEN 1 ELSE 0 END), 0) AS queued,
+      COALESCE(SUM(CASE WHEN l.status = 'extension' THEN 1 ELSE 0 END), 0) AS waitingExtension,
+      COALESCE(SUM(CASE WHEN l.status = 'capturing' THEN 1 ELSE 0 END), 0) AS capturing,
+      COALESCE(SUM(CASE WHEN l.status = 'extension-retry' THEN 1 ELSE 0 END), 0) AS retrying,
+      COALESCE(SUM(CASE WHEN l.status = 'unavailable' THEN 1 ELSE 0 END), 0) AS unavailable
+      FROM videos v LEFT JOIN video_duration_lookups l ON l.video_id = v.video_id WHERE trim(v.duration) = ''`).get();
+    const durationSamples = database.prepare(`SELECT v.video_id AS videoId, v.title, v.channel,
+      CASE WHEN l.video_id IS NULL THEN 'queued'
+        WHEN l.status = 'extension' THEN 'waiting-extension'
+        WHEN l.status = 'extension-retry' THEN 'retrying'
+        ELSE l.status END AS status,
+      COALESCE(NULLIF(l.message, ''), 'A local video length has not been saved yet.') AS message,
+      COALESCE(l.extension_attempts, 0) AS attempts, l.next_attempt_at AS nextAttemptAt,
+      COALESCE(l.updated_at, v.last_seen) AS updatedAt
+      FROM videos v LEFT JOIN video_duration_lookups l ON l.video_id = v.video_id
+      WHERE trim(v.duration) = '' AND (l.video_id IS NULL OR l.status IN ('pending', 'running', 'extension', 'capturing', 'extension-retry', 'unavailable'))
+      ORDER BY CASE l.status WHEN 'capturing' THEN 0 WHEN 'extension' THEN 1 WHEN 'extension-retry' THEN 2
+        WHEN 'pending' THEN 3 WHEN 'running' THEN 4 WHEN 'unavailable' THEN 5 ELSE 3 END,
+        COALESCE(l.updated_at, v.last_seen) ASC LIMIT 6`).all();
+    const mediaCounts = database.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN status = 'downloading' THEN 1 ELSE 0 END), 0) AS active,
+      COALESCE(SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END), 0) AS ready
+      FROM downloads`).get();
+    const downloadRetryCounts = database.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN status IN ('pending', 'waiting-live') THEN 1 ELSE 0 END), 0) AS queued,
+      COALESCE(SUM(CASE WHEN status IN ('paused', 'paused-offline', 'paused-limit', 'exhausted') THEN 1 ELSE 0 END), 0) AS paused
+      FROM download_retry_queue`).get();
+    const activeMediaSamples = database.prepare(`SELECT v.video_id AS videoId, v.title, v.channel, d.status,
+      d.stage AS phase, d.message, d.progress, 0 AS attempts, '' AS nextAttemptAt, d.updated_at AS updatedAt
+      FROM downloads d JOIN videos v ON v.video_id = d.video_id WHERE d.status = 'downloading'
+      ORDER BY d.updated_at DESC LIMIT 4`).all();
+    const retryMediaSamples = database.prepare(`SELECT v.video_id AS videoId, v.title, v.channel, q.status,
+      COALESCE(d.stage, 'Queued for download') AS phase,
+      COALESCE(NULLIF(q.last_error, ''), d.message, '') AS message,
+      d.progress, q.attempts, q.next_retry_at AS nextAttemptAt, q.updated_at AS updatedAt
+      FROM download_retry_queue q JOIN videos v ON v.video_id = q.video_id
+      LEFT JOIN downloads d ON d.video_id = q.video_id
+      WHERE q.status IN ('pending', 'waiting-live', 'paused', 'paused-offline', 'paused-limit', 'exhausted')
+      ORDER BY CASE q.status WHEN 'pending' THEN 0 WHEN 'waiting-live' THEN 1 ELSE 2 END, q.next_retry_at, q.updated_at DESC LIMIT 4`).all();
+    const staleChannelBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    const channelCounts = database.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN status IN ('opening', 'collecting') AND updated_at > ? THEN 1 ELSE 0 END), 0) AS active,
+      COALESCE(SUM(CASE WHEN status IN ('opening', 'collecting') AND updated_at <= ? THEN 1 ELSE 0 END), 0) AS stale,
+      COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+      COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS errors
+      FROM channel_captures`).get(staleChannelBefore, staleChannelBefore);
+    const channelSamples = database.prepare(`SELECT channel_key AS channel, tab_key AS tab, status, phase, message, updated_at AS updatedAt
+      FROM channel_captures WHERE status IN ('opening', 'collecting', 'queued', 'error')
+      ORDER BY CASE WHEN status IN ('opening', 'collecting') AND updated_at > ? THEN 0
+        WHEN status IN ('opening', 'collecting') THEN 1 WHEN status = 'queued' THEN 2 ELSE 3 END,
+        updated_at DESC LIMIT 4`).all(staleChannelBefore);
+    const localMetadataCounts = database.prepare(`SELECT
+      COALESCE(SUM(CASE WHEN m.status = 'running' THEN 1 ELSE 0 END), 0) AS active,
+      COALESCE(SUM(CASE WHEN m.status = 'waiting-extension' THEN 1 ELSE 0 END), 0) AS waitingExtension,
+      COALESCE(SUM(CASE WHEN m.status IN ('pending', 'retry') OR m.status IS NULL THEN 1 ELSE 0 END), 0) AS queued
+      FROM downloads d LEFT JOIN download_metadata m ON m.video_id = d.video_id WHERE d.status = 'ready'`).get();
+    sendJson(response, 200, {
+      updatedAt: new Date().toISOString(), mode: reportedNetworkMode(),
+      internetAvailable: connectivityStatus.available, connectivityNotice,
+      preparation: offlinePreparation,
+      videoLengths: durationCounts, videoLengthSamples: durationSamples,
+      mediaDownloads: { ...mediaCounts, ...downloadRetryCounts, samples: [...activeMediaSamples, ...retryMediaSamples] },
+      channelCaptures: { ...channelCounts, samples: channelSamples },
+      downloadedMetadata: localMetadataCounts
+    });
     return;
   }
 

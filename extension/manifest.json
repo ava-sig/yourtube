@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "YourTube Local Feed",
-  "version": "0.5.12",
-  "description": "Capture rendered YouTube feeds, searches, playlists, channel sections, and browser-visible video metadata for your local YourTube library.",
+  "version": "0.5.13",
+  "description": "Capture YouTube pages for YourTube and inspect local capture queues and failures.",
   "permissions": ["storage", "alarms"],
-  "action": { "default_title": "YourTube network mode", "default_popup": "popup.html" },
+  "action": { "default_title": "YourTube capture diagnostics", "default_popup": "popup.html" },
   "host_permissions": ["http://127.0.0.1:4173/*", "http://localhost:4173/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [

@@ -9,21 +9,42 @@ const CHANNEL_PAUSED_KEY = 'yourtubeChannelCapturePaused';
 const CHANNEL_ALARM = 'yourtube-channel-prefetch';
 const METADATA_CAPTURE_KEY = 'yourtubeActiveMetadataCapture';
 const METADATA_CAPTURE_ALARM = 'yourtube-metadata-capture';
+const DIAGNOSTICS_KEY = 'yourtubeExtensionDiagnostics';
+const METADATA_QUEUE_STATE_KEY = 'yourtubeMetadataQueueState';
 const MAX_METADATA_CAPTURE_TABS = 2;
 // Fail closed until the localhost server reports its persisted mode.
 let extensionMode = 'preparing';
 let queueMutation = Promise.resolve();
 let channelBatchMutation = Promise.resolve();
+let diagnosticMutation = Promise.resolve();
 let prioritizingChannelBatch = false;
 let metadataCaptureStarting = false;
+let metadataCaptureStartedAt = 0;
+let metadataQueueState = { status: 'idle', message: 'Waiting for the next queue check.', checkedAt: '' };
 
 function metadataCaptureEntries(value) {
   if (Array.isArray(value)) return value.filter(item => item?.videoId);
   return value?.videoId ? [value] : [];
 }
 
+function recordExtensionEvent(kind, message, videoId = '') {
+  const task = diagnosticMutation.then(async () => {
+    const stored = await chrome.storage.local.get(DIAGNOSTICS_KEY);
+    const events = Array.isArray(stored[DIAGNOSTICS_KEY]) ? stored[DIAGNOSTICS_KEY] : [];
+    events.unshift({ kind, message: String(message || '').replace(/[\r\n]+/g, ' ').slice(0, 400), videoId, at: new Date().toISOString() });
+    await chrome.storage.local.set({ [DIAGNOSTICS_KEY]: events.slice(0, 12) });
+  });
+  diagnosticMutation = task.catch(() => {});
+  return task.catch(() => {});
+}
+
 async function saveMetadataCaptureEntries(entries) {
   await chrome.storage.local.set({ [METADATA_CAPTURE_KEY]: entries.length ? entries : null });
+}
+
+async function updateMetadataQueueState(status, message) {
+  metadataQueueState = { status, message: String(message || '').slice(0, 400), checkedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ [METADATA_QUEUE_STATE_KEY]: metadataQueueState }).catch(() => {});
 }
 
 async function removeMetadataCapture(videoId, tabId) {
@@ -61,6 +82,7 @@ async function refreshMode() {
 }
 
 async function reportMetadataCaptureFailure(videoId, message) {
+  await recordExtensionEvent('error', message, videoId);
   try {
     await fetch('http://127.0.0.1:4173/api/extension/video-metadata', {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -70,11 +92,18 @@ async function reportMetadataCaptureFailure(videoId, message) {
 }
 
 async function pollMetadataCaptureQueue() {
-  if (metadataCaptureStarting || extensionMode !== 'online') return;
+  if (metadataCaptureStarting) return;
+  if (extensionMode !== 'online') {
+    await updateMetadataQueueState('paused', `Queue polling paused because the extension is ${extensionMode}.`);
+    return;
+  }
   metadataCaptureStarting = true;
+  metadataCaptureStartedAt = Date.now();
+  await updateMetadataQueueState('checking', 'Checking the local video-length queue.');
+  let active = [];
   try {
     const stored = await chrome.storage.local.get(METADATA_CAPTURE_KEY);
-    let active = metadataCaptureEntries(stored[METADATA_CAPTURE_KEY]);
+    active = metadataCaptureEntries(stored[METADATA_CAPTURE_KEY]);
     for (const capture of [...active]) {
       if (capture.tabId === undefined || capture.tabId === null) {
         if (Date.now() - (capture.startedAt || Date.now()) < 30_000) continue;
@@ -104,12 +133,29 @@ async function pollMetadataCaptureQueue() {
     await saveMetadataCaptureEntries(active);
     while (active.length < MAX_METADATA_CAPTURE_TABS && extensionMode === 'online') {
       const response = await fetch('http://127.0.0.1:4173/api/extension/metadata-capture-jobs', { cache: 'no-store' });
-      if (!response.ok) break;
+      if (!response.ok) {
+        await updateMetadataQueueState('error', `The server returned HTTP ${response.status} for the capture queue.`);
+        break;
+      }
       const result = await response.json().catch(() => ({}));
       if (result.mode) await saveMode(result.mode);
-      if (extensionMode !== 'online' || !result.job?.videoId) break;
+      if (extensionMode !== 'online') {
+        await updateMetadataQueueState('paused', `Queue polling paused because YourTube is ${extensionMode}.`);
+        break;
+      }
+      if (!result.job?.videoId) {
+        await updateMetadataQueueState('empty', 'The server returned no eligible video-length job.');
+        break;
+      }
       const videoId = String(result.job.videoId);
-      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || active.some(item => item.videoId === videoId)) break;
+      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+        await updateMetadataQueueState('error', 'The server returned a malformed video ID for capture.');
+        break;
+      }
+      if (active.some(item => item.videoId === videoId)) {
+        await updateMetadataQueueState('error', `The server offered ${videoId}, which is already active in this browser.`);
+        break;
+      }
       const capture = { videoId, tabId: null, startedAt: Date.now() };
       active = [...active, capture];
       await saveMetadataCaptureEntries(active);
@@ -119,6 +165,8 @@ async function pollMetadataCaptureQueue() {
         const tab = await chrome.tabs.create({ url: captureUrl.href, active: false });
         active = active.map(item => item.videoId === videoId ? { ...item, tabId: tab.id, startedAt: Date.now() } : item);
         await saveMetadataCaptureEntries(active);
+        await recordExtensionEvent('capture-started', 'Opened a background YouTube tab for video-length capture.', videoId);
+        await updateMetadataQueueState('active', `Opened a capture tab for ${videoId}.`);
       } catch (error) {
         active = active.filter(item => item.videoId !== videoId);
         await saveMetadataCaptureEntries(active);
@@ -128,8 +176,14 @@ async function pollMetadataCaptureQueue() {
     }
   } catch (error) {
     console.warn('[YourTube] Browser metadata capture could not start:', error?.message || error);
+    await updateMetadataQueueState('error', error?.message || 'The browser capture queue could not be checked.');
+    await recordExtensionEvent('error', `The browser capture queue could not reach or read YourTube: ${error?.message || error}`);
   } finally {
     metadataCaptureStarting = false;
+    metadataCaptureStartedAt = 0;
+    if (active.length && metadataQueueState.status === 'checking') {
+      await updateMetadataQueueState('active', `${active.length} browser metadata capture${active.length === 1 ? '' : 's'} active.`);
+    }
   }
 }
 
@@ -181,7 +235,7 @@ async function scheduleQueueRetry(queue) {
   await chrome.alarms.create(RETRY_ALARM, { when: Math.max(Date.now() + 1000, next) });
 }
 
-async function enqueueFailedSync(request) {
+async function enqueueFailedSync(request, failureReason = 'The local server did not acknowledge the captured data.') {
   return serializeQueueMutation(async () => {
     const queue = await readQueue();
     queue.push({
@@ -194,6 +248,7 @@ async function enqueueFailedSync(request) {
     });
     await writeQueue(queue);
     await scheduleQueueRetry(queue);
+    await recordExtensionEvent('sync-error', `${request.path}: ${failureReason}. Captured data was saved for automatic retry.`);
   });
 }
 
@@ -212,6 +267,68 @@ async function postSync(request) {
     throw error;
   }
   return result;
+}
+
+async function extensionDiagnosticsSnapshot() {
+  let server = null;
+  let serverError = '';
+  try {
+    await refreshMode();
+    const response = await fetch('http://127.0.0.1:4173/api/extension/diagnostics', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`YourTube returned HTTP ${response.status}`);
+    server = await response.json();
+    if (server.mode) await saveMode(server.mode);
+  } catch (error) {
+    serverError = error?.message || 'YourTube could not be reached.';
+  }
+
+  const stored = await chrome.storage.local.get([
+    RETRY_KEY, METADATA_CAPTURE_KEY, CHANNEL_QUEUE_KEY, CHANNEL_ACTIVE_KEY,
+    CHANNEL_PAUSED_KEY, DIAGNOSTICS_KEY, METADATA_QUEUE_STATE_KEY
+  ]);
+  const active = metadataCaptureEntries(stored[METADATA_CAPTURE_KEY]);
+  const captures = await Promise.all(active.map(async capture => {
+    const sample = server?.videoLengthSamples?.find(item => item.videoId === capture.videoId);
+    const item = {
+      videoId: capture.videoId, title: sample?.title || capture.videoId,
+      startedAt: capture.startedAt || 0,
+      ageSeconds: Math.max(0, Math.floor((Date.now() - (capture.startedAt || Date.now())) / 1000)),
+      tabStatus: capture.tabId === null ? 'Opening tab' : 'Checking tab…'
+    };
+    if (capture.tabId !== undefined && capture.tabId !== null) {
+      try {
+        const tab = await chrome.tabs.get(capture.tabId);
+        item.title = sample?.title || tab.title || item.title;
+        item.tabStatus = tab.status === 'complete' ? 'YouTube page loaded' : 'YouTube page loading';
+        try {
+          const parsed = new URL(tab.pendingUrl || tab.url || '');
+          if (!['www.youtube.com', 'm.youtube.com'].includes(parsed.hostname) || parsed.searchParams.get('v') !== capture.videoId) {
+            item.tabStatus = 'Unexpected YouTube redirect';
+          }
+        } catch { item.tabStatus = 'Tab URL unavailable'; }
+      } catch { item.tabStatus = 'Capture tab is missing'; }
+    }
+    return item;
+  }));
+  let currentPage = 'Unknown page';
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const host = new URL(tab?.url || '').hostname;
+    currentPage = host === 'www.youtube.com' || host === 'm.youtube.com' ? 'YouTube' : host.includes('localhost') || host === '127.0.0.1' ? 'YourTube' : host || 'Unknown page';
+  } catch {}
+  const syncRetries = Array.isArray(stored[RETRY_KEY]) ? stored[RETRY_KEY] : [];
+  const channelQueue = Array.isArray(stored[CHANNEL_QUEUE_KEY]) ? stored[CHANNEL_QUEUE_KEY] : [];
+  const events = Array.isArray(stored[DIAGNOSTICS_KEY]) ? stored[DIAGNOSTICS_KEY].slice(0, 5) : [];
+  return {
+    extensionVersion: chrome.runtime.getManifest().version,
+    extensionMode, currentPage, serverReachable: Boolean(server), serverError,
+    server, captures, syncRetries: syncRetries.map(item => ({ path: item.path, attempts: item.attempts || 0, nextAttemptAt: item.nextAttemptAt || 0 })),
+    metadataQueueState: stored[METADATA_QUEUE_STATE_KEY] || metadataQueueState,
+    metadataQueueBusy: metadataCaptureStarting,
+    metadataQueueBusyForSeconds: metadataCaptureStarting ? Math.floor((Date.now() - metadataCaptureStartedAt) / 1000) : 0,
+    channel: { active: stored[CHANNEL_ACTIVE_KEY] || null, queued: channelQueue.length, paused: stored[CHANNEL_PAUSED_KEY] === true },
+    events
+  };
 }
 
 const CHANNEL_TABS = ['home', 'videos', 'shorts', 'streams', 'playlists', 'community'];
@@ -686,6 +803,23 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'yourtube:get-diagnostics') {
+    extensionDiagnosticsSnapshot().then(sendResponse).catch(error => sendResponse({
+      extensionVersion: chrome.runtime.getManifest().version,
+      extensionMode, serverReachable: false, serverError: error?.message || 'Diagnostics could not be collected.'
+    }));
+    return true;
+  }
+  if (message?.type === 'yourtube:nudge-capture-queue') {
+    (async () => {
+      await refreshMode();
+      if (extensionMode !== 'online') return { ok: false, error: 'Set YourTube Online before starting browser captures.' };
+      if (metadataCaptureStarting) return { ok: false, error: `The capture worker is already busy checking the queue for ${Math.floor((Date.now() - metadataCaptureStartedAt) / 1000)} seconds.` };
+      await pollMetadataCaptureQueue();
+      return { ok: true };
+    })().then(sendResponse).catch(error => sendResponse({ ok: false, error: error?.message || 'The video-length queue could not be started.' }));
+    return true;
+  }
   if (message?.type === 'yourtube:metadata-page-capture') {
     const videoId = String(message.videoId || '');
     let senderPage;
@@ -710,6 +844,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const result = await response.json().catch(() => ({}));
         if (result.mode) await saveMode(result.mode);
         if (!response.ok) throw new Error(result.error || `Local server returned ${response.status}`);
+        await recordExtensionEvent('capture-completed', result.duration
+          ? 'YouTube page metadata arrived and a video length was saved.'
+          : 'YouTube page metadata arrived, but it did not include a video length.', videoId);
         sendResponse({ ok: true, ...result });
       } catch (error) {
         await reportMetadataCaptureFailure(videoId, error.message || 'Could not deliver the captured browser metadata.');
@@ -873,7 +1010,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
         try {
-          await enqueueFailedSync(request);
+          await enqueueFailedSync(request, error.message);
           const completed = request.complete === true;
           if (completed || request.body.final) await channelCaptureState(captureId, 'queued', 'retrying', 'Captured channel data is saved in the extension retry queue. Automatic delivery will retry shortly.');
           sendResponse({ ok: true, queued: true, error: `${error.message}. Saved for automatic retry.` });
@@ -888,7 +1025,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       try {
-        await enqueueFailedSync(request);
+        await enqueueFailedSync(request, error.message);
         let tabClosed = false;
         if (request.isChannel && request.complete && /^https:\/\/(www\.)?youtube\.com\//.test(sender.url || '') && sender.tab?.id !== undefined) {
           try { await chrome.tabs.remove(sender.tab.id); tabClosed = true; } catch {}

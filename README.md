@@ -22,7 +22,7 @@ Then open `http://<computer-LAN-IP>:4173` on the other device. Binding to `0.0.0
 
 ## Load the extension
 
-In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files, then refresh the YourTube tab. The current source manifest is version **0.5.12**.
+In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files, then refresh the YourTube tab. The current source manifest is version **0.5.13**. Its toolbar popup shows server connectivity, network mode, queue counts, active browser captures, recent extension events, and the oldest video-length jobs.
 
 Open YouTube in the same browser profile where the extension is installed. The extension captures rendered cards, subscriptions, playlist/Mix structures, channel sections, and page-visible metadata. It sends structured records to `127.0.0.1:4173`; it does not send credentials. Homepage and search captures update the local stub database asynchronously. Channel-page prefetch uses one channel tab at a time; missing video-length jobs can use up to two inactive metadata-capture tabs alongside channel work.
 

@@ -3,19 +3,98 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>YourTube mode</title>
-  <style>
-    body { width: 220px; margin: 0; padding: 16px; background: #181818; color: #f1f1f1; font: 14px system-ui, sans-serif; }
-    h1 { margin: 0 0 12px; font-size: 15px; }
-    button { width: 100%; padding: 10px 12px; border: 0; border-radius: 20px; background: #303030; color: white; font: inherit; cursor: pointer; }
-    button:disabled { opacity: .7; cursor: wait; }
-    p { min-height: 18px; margin: 10px 0 0; color: #aaa; font-size: 12px; }
-  </style>
+  <title>YourTube diagnostics</title>
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>YourTube network mode</h1>
-  <button id="mode" type="button">Loading…</button>
-  <p id="status" aria-live="polite"></p>
+  <main>
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">YT</div>
+      <div class="brand-copy">
+        <h1>YourTube</h1>
+        <p>Extension diagnostics <span id="version"></span></p>
+      </div>
+      <button id="refresh" class="icon-button" type="button" aria-label="Refresh diagnostics" title="Refresh diagnostics">↻</button>
+    </header>
+
+    <section id="connection" class="connection" aria-live="polite">
+      <span id="connection-dot" class="status-dot"></span>
+      <div class="connection-copy">
+        <strong id="connection-title">Checking YourTube…</strong>
+        <span id="connection-detail">Reading local queues</span>
+      </div>
+      <span id="page-badge" class="site-badge">—</span>
+    </section>
+
+    <section class="mode-panel">
+      <div>
+        <div class="eyebrow">NETWORK MODE</div>
+        <div id="mode-label" class="mode-label">Checking…</div>
+        <p id="mode-detail" class="mode-detail"></p>
+      </div>
+      <button id="mode" class="mode-button" type="button" disabled>Loading…</button>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div><div class="eyebrow">QUEUE HEALTH</div><h2>What is waiting</h2></div>
+        <button id="nudge" class="text-button" type="button" disabled>Start captures</button>
+      </div>
+      <div class="metrics-grid">
+        <article class="metric-card metric-primary">
+          <span class="metric-label">Video lengths missing</span>
+          <strong id="length-total" class="metric-value">—</strong>
+          <div id="length-breakdown" class="metric-breakdown">Waiting for server…</div>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Browser captures</span>
+          <strong id="capture-count" class="metric-value">—</strong>
+          <div id="capture-detail" class="metric-breakdown">Up to 2 at once</div>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Media downloads</span>
+          <strong id="media-active" class="metric-value">—</strong>
+          <div id="media-detail" class="metric-breakdown">Active · queued · paused</div>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Extension sync retries</span>
+          <strong id="sync-count" class="metric-value">—</strong>
+          <div id="sync-detail" class="metric-breakdown">Stored in this browser</div>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Downloaded metadata</span>
+          <strong id="local-metadata-count" class="metric-value">—</strong>
+          <div id="local-metadata-detail" class="metric-breakdown">Comments and images</div>
+        </article>
+      </div>
+      <div id="offline-note" class="notice hidden"></div>
+      <div id="worker-note" class="notice hidden"></div>
+      <div id="server-error" class="notice notice-error hidden"></div>
+      <div id="action-feedback" class="notice hidden" aria-live="polite"></div>
+    </section>
+
+    <section class="section-block compact-section">
+      <div class="section-heading"><div><div class="eyebrow">IN FLIGHT</div><h2>Browser work</h2></div><span id="channel-summary" class="section-meta"></span></div>
+      <div id="capture-list" class="item-list"><div class="empty-state">No browser captures are active.</div></div>
+    </section>
+
+    <section class="section-block compact-section">
+      <div class="section-heading"><div><div class="eyebrow">MEDIA ACQUISITION</div><h2>Download attempts</h2></div><span id="media-queue-summary" class="section-meta"></span></div>
+      <div id="media-items" class="item-list"><div class="empty-state">Checking local download attempts…</div></div>
+    </section>
+
+    <section class="section-block compact-section">
+      <div class="section-heading"><div><div class="eyebrow">SERVER QUEUE</div><h2>Next video lengths</h2></div><span class="section-meta">Oldest first</span></div>
+      <div id="queue-items" class="item-list"><div class="empty-state">Loading queue…</div></div>
+    </section>
+
+    <section class="section-block compact-section">
+      <div class="section-heading"><div><div class="eyebrow">RECENT ACTIVITY</div><h2>Extension events</h2></div></div>
+      <div id="last-events" class="item-list"><div class="empty-state">No extension events recorded yet.</div></div>
+    </section>
+
+    <footer><span id="updated">Last checked —</span><span>Local diagnostics</span></footer>
+  </main>
   <script src="popup.js"></script>
 </body>
 </html>
