@@ -83,12 +83,20 @@
       .chip { flex: 0 0 auto; padding: 8px 13px; border-radius: 8px; background: #272727; font-weight: 600; }
       .chip.active { color: #0f0f0f; background: #f1f1f1; }
       .feed-section { margin: 10px 0 30px; }
-      .playlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
-      .playlist-tile { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px; border: 1px solid #303030; border-radius: 12px; background: #181818; text-align: left; }
-      .playlist-tile:hover { background: #242424; }
-      .playlist-tile img { flex: 0 0 108px; width: 108px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: #272727; }
-      .playlist-tile-copy { min-width: 0; }
-      .playlist-tile-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 700; }
+      .playlist-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 34px 16px; }
+      .playlist-tile { display: block; width: 100%; min-width: 0; padding: 0; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      .playlist-tile:hover { background: transparent; }
+      .playlist-thumbnail-stack { position: relative; display: block; aspect-ratio: 16 / 9; margin: 9px 4px 12px; }
+      .playlist-thumbnail-stack::before, .playlist-thumbnail-stack::after { position: absolute; top: -5px; right: 5px; left: 5px; height: 100%; border-radius: 13px; content: ''; }
+      .playlist-thumbnail-stack::before { top: -9px; right: 11px; left: 11px; background: #504e59; }
+      .playlist-thumbnail-stack::after { background: #36383e; }
+      .playlist-thumbnail-stack img { position: relative; z-index: 2; display: block; width: 100%; height: 100%; border-radius: 12px; object-fit: cover; background: #272727; }
+      .playlist-card-badge { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: 7px; background: #111d; color: #fff; font-size: 13px; font-weight: 700; }
+      .playlist-card-badge-icon { font-size: 12px; }
+      .playlist-tile-copy { display: block; min-width: 0; padding: 0 4px; }
+      .playlist-tile-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 16px; font-weight: 700; line-height: 1.4; }
+      .playlist-tile-type { display: block; margin-top: 3px; color: #aaa; font-size: 14px; }
+      .playlist-tile-meta { display: block; margin-top: 4px; color: #777; font-size: 12px; line-height: 1.4; }
       .playlist-items { display: grid; gap: 8px; max-width: 960px; }
       .playlist-item { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; background: #181818; }
       .playlist-item:hover { background: #222; }
@@ -303,8 +311,8 @@
       .notice strong { display: block; margin-bottom: 8px; color: #f1f1f1; font-size: 18px; }
       .error { color: #ff9b9b; }
       @media (max-width: 1200px) { aside { width: 210px; flex-basis: 210px; } main { padding-inline: 22px; } .shorts-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
-      @media (max-width: 900px) { aside { width: 72px; flex-basis: 72px; padding: 10px 6px; } .nav-link { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 2px; font-size: 10px; } .nav-icon { font-size: 18px; } .nav-heading, .sub-link, .show-more-nav, .sidebar-stats, .divider:nth-of-type(n+2) { display: none; } .video-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-      @media (max-width: 620px) { .topbar { padding: 0 12px; gap: 12px; } .brand { font-size: 17px; } .search { max-width: none; } aside { width: 58px; flex-basis: 58px; } main { padding: 14px 12px 60px; } .channel-profile { gap: 14px; min-height: 128px; padding: 18px 0; } .channel-avatar, .channel-skeleton-avatar { flex-basis: 80px; width: 80px; height: 80px; } .channel-profile-copy h1 { font-size: 22px; } .channel-banner, .channel-skeleton-banner { min-height: 96px; } .video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 10px; } .shorts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .topic-label { margin-bottom: 14px; } h2 { font-size: 18px; } }
+      @media (max-width: 900px) { aside { width: 72px; flex-basis: 72px; padding: 10px 6px; } .nav-link { flex-direction: column; justify-content: center; gap: 4px; padding: 8px 2px; font-size: 10px; } .nav-icon { font-size: 18px; } .nav-heading, .sub-link, .show-more-nav, .sidebar-stats, .divider:nth-of-type(n+2) { display: none; } .video-grid, .playlist-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+      @media (max-width: 620px) { .topbar { padding: 0 12px; gap: 12px; } .brand { font-size: 17px; } .search { max-width: none; } aside { width: 58px; flex-basis: 58px; } main { padding: 14px 12px 60px; } .channel-profile { gap: 14px; min-height: 128px; padding: 18px 0; } .channel-avatar, .channel-skeleton-avatar { flex-basis: 80px; width: 80px; height: 80px; } .channel-profile-copy h1 { font-size: 22px; } .channel-banner, .channel-skeleton-banner { min-height: 96px; } .video-grid, .playlist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 10px; } .shorts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .topic-label { margin-bottom: 14px; } h2 { font-size: 18px; } }
       @media (max-width: 980px) { .topbar { gap: 14px; } .background-status { flex-basis: 170px; } }
       @media (max-width: 1100px) { .system-status-grid { grid-template-columns: minmax(0, 1fr) minmax(270px, .8fr); } }
       @media (max-width: 900px) { .system-status-grid { grid-template-columns: 1fr; } .system-side-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); } .system-side-stack .system-terminal { grid-column: 1 / -1; } }
@@ -497,8 +505,8 @@
                 </div>
               </template>
               <template v-else-if="localPlaylists.length || youtubePlaylists.length">
-                <h3>Your playlists</h3><div class="playlist-grid"><button v-for="playlist in localPlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="meta">{{ playlist.capturedCount }} {{ playlist.capturedCount === 1 ? 'video' : 'videos' }}</span></span></button></div>
-                <h3 v-if="youtubePlaylists.length" style="margin-top:30px">Captured from YouTube</h3><div v-if="youtubePlaylists.length" class="playlist-grid"><button v-for="playlist in youtubePlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="meta">{{ playlist.kind === 'mix' ? 'Mix' : 'YouTube playlist' }} · {{ playlist.capturedCount }} captured<span v-if="playlist.declaredItemCount > playlist.capturedCount"> · {{ playlist.declaredItemCount }} total</span><span v-if="playlist.channel"> · {{ playlist.channel }}</span></span></span></button></div>
+                <h3>Your playlists</h3><div class="playlist-grid"><button v-for="playlist in localPlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><span class="playlist-thumbnail-stack"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-card-badge"><span class="playlist-card-badge-icon" aria-hidden="true">▸</span>Playlist</span></span><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="playlist-tile-type">Playlist</span><span class="playlist-tile-meta">{{ playlist.capturedCount }} {{ playlist.capturedCount === 1 ? 'video' : 'videos' }}</span></span></button></div>
+                <h3 v-if="youtubePlaylists.length" style="margin-top:30px">Captured from YouTube</h3><div v-if="youtubePlaylists.length" class="playlist-grid"><button v-for="playlist in youtubePlaylists" :key="playlist.id" class="playlist-tile" @click="openPlaylist(playlist.id)"><span class="playlist-thumbnail-stack"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" /><span class="playlist-card-badge"><span class="playlist-card-badge-icon" aria-hidden="true">▸</span>{{ playlist.kind === 'mix' ? 'Mix' : 'Playlist' }}</span></span><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="playlist-tile-type">Playlist</span><span class="playlist-tile-meta">{{ playlist.capturedCount }} captured<span v-if="playlist.declaredItemCount > playlist.capturedCount"> · {{ playlist.declaredItemCount }} total</span><span v-if="playlist.channel"> · {{ playlist.channel }}</span></span></span></button></div>
               </template>
               <div v-else-if="!playlistLoading" class="notice"><strong>No playlists yet</strong>Create a playlist from your local videos, or browse YouTube with the extension enabled to capture playlists.</div>
             </section>
@@ -537,6 +545,11 @@
               <div v-if="homeHasMore('for-you', Math.min(12, forYouVideos.length), 'video')" class="home-section-divider">
                 <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('for-you', Math.min(12, forYouVideos.length), 'video')">{{ homeToggleLabel('for-you', Math.min(12, forYouVideos.length), 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
               </div>
+            </section>
+            <section v-if="homepagePlaylists.length" class="feed-section home-feed-section">
+              <div class="section-head"><h2>Playlists &amp; mixes</h2></div>
+              <div class="playlist-grid"><button v-for="playlist in homepagePlaylists.slice(0, homeVisibleCount('homepage-playlists', homepagePlaylists.length, 'video'))" :key="playlist.id" class="playlist-tile" type="button" @click="openPlaylist(playlist.id)"><span class="playlist-thumbnail-stack"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="$event.currentTarget.src = '/image-placeholder.svg'" /><span class="playlist-card-badge"><span class="playlist-card-badge-icon" aria-hidden="true">▸</span>{{ playlist.kind === 'mix' ? 'Mix' : 'Playlist' }}</span></span><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="playlist-tile-type">Playlist</span><span class="playlist-tile-meta">{{ playlist.capturedCount }} captured<span v-if="playlist.declaredItemCount > playlist.capturedCount"> · {{ playlist.declaredItemCount }} total</span><span v-if="playlist.channel"> · {{ playlist.channel }}</span></span></span></button></div>
+              <div v-if="homeHasMore('homepage-playlists', homepagePlaylists.length, 'video')" class="home-section-divider"><span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('homepage-playlists', homepagePlaylists.length, 'video')">{{ homeToggleLabel('homepage-playlists', homepagePlaylists.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span></div>
             </section>
             <section v-if="downloadedFeedVideos.length" class="feed-section home-feed-section">
               <div class="section-head"><h2>Downloaded</h2></div>
@@ -766,6 +779,7 @@
           subscriptionsVisible() { return this.subscriptionsExpanded ? this.subscriptions : this.subscriptions.slice(0, 7); },
           localPlaylists() { return this.playlists.filter(playlist => playlist.source === 'local' && playlist.kind !== 'watch-later'); },
           youtubePlaylists() { return this.playlists.filter(playlist => playlist.source === 'youtube'); },
+          homepagePlaylists() { return this.networkMode === 'online' ? this.youtubePlaylists.slice().sort((a, b) => (Date.parse(b.updatedAt || '') || 0) - (Date.parse(a.updatedAt || '') || 0)).slice(0, 24) : []; },
           downloadedFeedVideos() { return this.matching(this.downloadedVideos); },
           normalVideos() { return this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && video.kind !== 'short' && video.section === 'home')); },
           forYouVideos() {
@@ -1134,12 +1148,13 @@
             this.refreshing = true;
             try {
               const options = { cache: 'no-store' };
-              const [videoResponse, subscriptionResponse, downloadResponse, statsResponse, historyResponse] = await Promise.all([
+              const [videoResponse, subscriptionResponse, downloadResponse, statsResponse, historyResponse, playlistResponse] = await Promise.all([
                 fetch(`/api/videos?refresh=${Date.now()}`, options),
                 fetch(`/api/subscriptions?refresh=${Date.now()}`, options),
                 fetch(`/api/downloads?refresh=${Date.now()}`, options),
                 fetch(`/api/stats?refresh=${Date.now()}`, options),
-                fetch(`/api/history?refresh=${Date.now()}`, options)
+                fetch(`/api/history?refresh=${Date.now()}`, options),
+                fetch(`/api/playlists?refresh=${Date.now()}`, options).catch(() => null)
               ]);
               if (!videoResponse.ok || !subscriptionResponse.ok || !downloadResponse.ok || !statsResponse.ok || !historyResponse.ok) throw new Error('Feed refresh failed');
               this.videos = this.orderHomepageVideos(await videoResponse.json(), shuffle);
@@ -1147,6 +1162,10 @@
               this.downloadedVideos = await downloadResponse.json();
               this.stats = await statsResponse.json();
               this.historyVideos = await historyResponse.json();
+              if (playlistResponse?.ok) {
+                const playlistRows = await playlistResponse.json().catch(() => null);
+                if (Array.isArray(playlistRows)) this.playlists = playlistRows;
+              }
               this.error = '';
             } catch { this.error = 'Could not connect to the local server.'; }
             finally { this.refreshing = false; }
