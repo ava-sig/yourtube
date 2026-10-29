@@ -33,7 +33,7 @@ Search collection requires Online mode and the extension. YouTube-mode results a
 
 ## Local playback and Up next
 
-- Opening a stub routes to a local watch page immediately. It shows acquisition progress, waits for a local WebM, then plays that file. Failure is shown explicitly; playback does not silently switch back to YouTube.
+- Opening a stub routes to a local watch page immediately. It shows acquisition progress, waits for local media, then plays the saved file. WebM is preferred; finite videos can use a compatible MP4 fallback. Failure is shown explicitly; playback does not silently switch back to YouTube.
 - Playback position is persisted and restored for unfinished videos. The local view-start count increments when playback starts; it is a start counter, not a measure of watch time.
 - The player supports speed/volume controls, a local download link, autoplay, smooth expanded/theater layout, fullscreen, and a responsive layout that keeps navigation and comments available around the player.
 - Keyboard shortcuts: **J** seeks back 10 seconds, **K** and **Space** toggle play/pause, **L** seeks forward 10 seconds, **0–9** seek to 0–90%, and **F** toggles fullscreen.
@@ -47,7 +47,7 @@ The current recommendation endpoint considers up to 100 recent searches and retu
 ## Downloads and durable work
 
 - yt-dlp runs in the Node process. Progress output is parsed into a percentage and human-readable stage shown in the browser and downloads view.
-- WebM video and audio are merged with ffmpeg when separate tracks are needed. Completed files are one local `.webm` per video ID.
+- Separate audio/video tracks are merged with ffmpeg when needed. Completed media is one local WebM or MP4 per video ID, with WebM preferred. A missing compatible format pauses for attention instead of retrying the same request.
 - Downloads continue when the user navigates away, as long as the local server process stays running. The progress page sorts active downloads by progress and lists paused work separately.
 - Failures carry a reason, attempt count, and scheduled retry. First retry delay is 10 seconds with exponential increase up to 30 minutes. After ten failures the item remains paused for user attention.
 - Live streams are treated separately from finite videos. A live capture can be ended and saved or discarded. Offline transitions pause download attempts but allow transfers already underway to settle; a captured playable copy is retained.
@@ -66,7 +66,7 @@ Optional anti-throttling protections (`off`, `auto`, `always`) are controlled by
 
 ## Storage and limits
 
-`data/yourtube.sqlite` stores structured state; `data/media/` stores WebM files; `data/images/` stores cached images. `YOURTUBE_DATA_DIR` moves this local state as a unit. There is no tenant model or remote YourTube database in this project.
+`data/yourtube.sqlite` stores structured state; `data/media/` stores WebM or MP4 files; `data/images/` stores cached images. `YOURTUBE_DATA_DIR` moves this local state as a unit. There is no tenant model or remote YourTube database in this project.
 
 Transcripts, transcript search, semantic embeddings, and AI-generated multi-video chapter overviews with selection rationales are **not implemented**. The app currently has aggregate view counts, latest playback progress, titles/channels/provenance, comments, and media metadata. It does not retain a complete timestamped event for every playback start.
 

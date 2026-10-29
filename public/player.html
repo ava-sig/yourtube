@@ -1032,7 +1032,7 @@
             const progressResponse = await fetch(`/api/progress/${videoId}?refresh=${Date.now()}`, { cache: 'no-store' });
             if (progressResponse.ok) resumeAt = Number((await progressResponse.json()).currentTime) || 0;
           } catch {}
-          buildPlayer(`/media/${videoId}.webm`, info.title, resumeAt);
+          buildPlayer(`/media/${videoId}.webm`, info.title, resumeAt, result.mediaExtension || 'webm');
         } catch (error) {
           showError(error.message);
         }
@@ -1834,7 +1834,7 @@
         return words.join(' ');
       }
 
-      function buildPlayer(source, videoTitle, resumeAt = 0) {
+      function buildPlayer(source, videoTitle, resumeAt = 0, mediaExtension = 'webm') {
         const shell = document.createElement('div');
         shell.className = 'player-shell';
         shell.tabIndex = 0;
@@ -1877,7 +1877,7 @@
         const downloadLink = shell.querySelector('.download-link');
         downloadLink.href = source;
         const filename = videoTitle.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || videoId;
-        downloadLink.download = `${filename}.webm`;
+        downloadLink.download = `${filename}.${mediaExtension}`;
         // The autoplay switch controls whether Up Next advances after a video ends.
         // Opening a video from any view should always start its local playback.
         video.autoplay = true;

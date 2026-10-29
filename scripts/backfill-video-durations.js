@@ -64,11 +64,11 @@ function saveDuration(id, duration) {
   return true;
 }
 
-function probeLocal(id) {
+function probeLocal(filePath) {
   return new Promise(resolve => {
     const child = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
-      path.join(mediaDirectory, `${id}.webm`)
+      filePath
     ], { stdio: ['ignore', 'pipe', 'ignore'] });
     let output = '';
     const timeout = setTimeout(() => { child.kill('SIGKILL'); resolve(''); }, 10_000);
@@ -152,7 +152,8 @@ while (true) {
   }
   const video = findNext.get();
   if (!video) break;
-  const localDuration = mediaNames.has(`${video.id}.webm`) ? await probeLocal(video.id) : '';
+  const localFile = ['webm', 'mp4'].map(extension => `${video.id}.${extension}`).find(name => mediaNames.has(name));
+  const localDuration = localFile ? await probeLocal(path.join(mediaDirectory, localFile)) : '';
   const duration = localDuration || formatSeconds(video.progressDuration);
   if (duration) {
     saveDuration(video.id, duration);

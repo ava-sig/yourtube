@@ -11,6 +11,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDirectory = process.env.YOURTUBE_DATA_DIR || path.join(root, 'data');
 const mediaDirectory = path.join(dataDirectory, 'media');
 const imageCacheDirectory = path.join(dataDirectory, 'images');
+const mediaContentTypes = Object.freeze({ webm: 'video/webm', mp4: 'video/mp4' });
 await mkdir(dataDirectory, { recursive: true });
 await mkdir(mediaDirectory, { recursive: true });
 await mkdir(imageCacheDirectory, { recursive: true });
@@ -29,6 +30,23 @@ const commentJobs = new Map();
 const channelLookups = new Map();
 let downloadedMetadataWorkerRunning = false;
 const ffmpegAvailable = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+
+function getStoredMediaPath(id) {
+  for (const extension of Object.keys(mediaContentTypes)) {
+    const candidate = path.join(mediaDirectory, `${id}.${extension}`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return '';
+}
+
+function getStoredMediaExtension(id) {
+  const storedPath = getStoredMediaPath(id);
+  return storedPath ? path.extname(storedPath).slice(1).toLowerCase() : '';
+}
+
+function hasFiniteVideoDuration(duration) {
+  return /^\d{1,3}:\d{2}(?::\d{2})?$/.test(String(duration || '').trim());
+}
 
 database.exec(`
   PRAGMA journal_mode = WAL;
@@ -289,7 +307,9 @@ const setAcquiredAt = database.prepare('UPDATE downloads SET acquired_at = ? WHE
 await Promise.all(legacyReadyDownloads.map(async row => {
   let acquiredAt = row.updatedAt;
   try {
-    const file = await stat(path.join(mediaDirectory, `${row.id}.webm`));
+    const storedPath = getStoredMediaPath(row.id);
+    if (!storedPath) throw new Error('Local media file not found.');
+    const file = await stat(storedPath);
     acquiredAt = (file.birthtimeMs > 0 ? file.birthtime : file.mtime).toISOString();
   } catch {}
   setAcquiredAt.run(acquiredAt, row.id);
@@ -1035,11 +1055,12 @@ function saveDownload(id, status, message = '', progress = 0, stage = '') {
 }
 
 function getDownload(id) {
-  return database.prepare(`SELECT d.status, d.message, d.progress, d.stage, d.updated_at AS updatedAt,
+  const result = database.prepare(`SELECT d.status, d.message, d.progress, d.stage, d.updated_at AS updatedAt,
     r.attempts AS retryAttempts, r.next_retry_at AS retryAt, r.last_error AS retryError, r.status AS retryStatus,
     m.status AS metadataStatus, m.phase AS metadataPhase, m.message AS metadataMessage
     FROM downloads d LEFT JOIN download_retry_queue r ON r.video_id = d.video_id
     LEFT JOIN download_metadata m ON m.video_id = d.video_id WHERE d.video_id = ?`).get(id) || null;
+  return result ? { ...result, mediaExtension: getStoredMediaExtension(id) } : null;
 }
 
 const downloadRetryDelay = 10_000;
@@ -1075,6 +1096,9 @@ function startYoutubeDownloadCooldown() {
 function explainDownloadFailure(rawMessage) {
   const raw = String(rawMessage || '').replace(/https?:\/\/\S+/g, '').trim();
   const normalized = raw.replace(/^ERROR:\s*/i, '');
+  if (/requested format is not available|requested format not available|no video formats found|did not offer a compatible (?:webm|mp4) format/i.test(raw)) {
+    return { retryable: false, message: 'YouTube did not offer a compatible WebM or MP4 format for this video. The download is paused because repeating the same format request will not help. Choose Retry later if YouTube makes another format available.' };
+  }
   if (/yt-dlp (?:is )?not installed|not available on PATH|ENOENT|could not start yt-dlp/i.test(raw)) {
     return { retryable: false, message: 'YourTube could not find yt-dlp. Install it or add it to the server PATH, restart YourTube, then choose Retry.' };
   }
@@ -1462,7 +1486,8 @@ function lookupVideoDuration(id, url) {
 
 function probeLocalDuration(id) {
   return new Promise(resolve => {
-    const filePath = path.join(mediaDirectory, `${id}.webm`);
+    const filePath = getStoredMediaPath(id);
+    if (!filePath) { resolve(''); return; }
     const probe = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath
     ], { stdio: ['ignore', 'pipe', 'ignore'] });
@@ -1754,8 +1779,8 @@ async function waitForComments(id, timeoutMs = 100_000) {
 }
 
 async function ensureDownloadedMetadata(id, reportPhase) {
-  const mediaPath = path.join(mediaDirectory, `${id}.webm`);
-  await access(mediaPath);
+  const mediaPath = getStoredMediaPath(id);
+  if (!mediaPath) throw new Error('The downloaded media file is missing.');
   let video = database.prepare(`SELECT video_id AS id, url, title, channel, channel_key AS channelKey, channel_url AS channelUrl,
     thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
   if (!video) throw new Error('The video metadata row is missing.');
@@ -1863,24 +1888,23 @@ async function runDownloadedMetadataQueue() {
 }
 
 async function beginDownload(id) {
-  const outputPath = path.join(mediaDirectory, `${id}.webm`);
-  try {
-    await access(outputPath);
+  if (getStoredMediaPath(id)) {
     saveDownload(id, 'ready', '', 100, 'Ready to play');
-    return { status: 'ready', message: '', progress: 100, stage: 'Ready to play' };
-  } catch {}
+    return { status: 'ready', message: '', progress: 100, stage: 'Ready to play', mediaExtension: getStoredMediaExtension(id) };
+  }
 
   if (jobs.has(id)) return getDownload(id) || { status: 'downloading', message: '' };
-  const video = database.prepare('SELECT url FROM videos WHERE video_id = ?').get(id);
+  const video = database.prepare('SELECT url, duration FROM videos WHERE video_id = ?').get(id);
   if (!video) return null;
 
+  const allowMp4Fallback = hasFiniteVideoDuration(video.duration);
   const format = ffmpegAvailable
-    ? 'bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]'
-    : 'best[ext=webm]';
+    ? `bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]${allowMp4Fallback ? '/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]' : ''}`
+    : `best[ext=webm]${allowMp4Fallback ? '/best[ext=mp4]' : ''}`;
   const args = [
     '--ignore-config', '--no-cookies', '--no-playlist', '--no-color', '--newline', '--progress', '--progress-delta', '0.5',
     '--progress-template', 'download:YT_PROGRESS:%(progress._percent_str)s', '--format', format,
-    '--print', 'before_dl:YT_LIVE:%(live_status)s', '--merge-output-format', 'webm', '--output', path.join(mediaDirectory, '%(id)s.%(ext)s'), video.url
+    '--print', 'before_dl:YT_LIVE:%(live_status)s', '--merge-output-format', 'webm/mp4', '--output', path.join(mediaDirectory, '%(id)s.%(ext)s'), video.url
   ];
   saveDownload(id, 'downloading', '', 0, 'Checking video formats…');
   const startedAt = database.prepare('SELECT started_at AS value FROM downloads WHERE video_id = ?').get(id)?.value || new Date().toISOString();
@@ -1984,20 +2008,18 @@ async function beginDownload(id) {
       return;
     }
     if (job.pauseRequested) {
-      try {
-        await access(outputPath);
+      if (getStoredMediaPath(id)) {
         saveDownload(id, 'ready', '', 100, 'Ready to play');
-      } catch {
+      } else {
         markDownloadPausedByUser(id, job.progress);
       }
       jobs.delete(id);
       return;
     }
     if (job.offlinePauseRequested) {
-      try {
-        await access(outputPath);
+      if (getStoredMediaPath(id)) {
         saveDownload(id, 'ready', '', 100, 'Ready to play');
-      } catch {
+      } else {
         if (offlinePreparationRequested || networkMode === 'offline') markDownloadPausedOffline(id);
         else queueCancelledDownloadForOnline(id);
       }
@@ -2012,19 +2034,19 @@ async function beginDownload(id) {
       return;
     }
     try {
-      await access(outputPath);
+      if (!getStoredMediaPath(id)) throw new Error('No complete local media file was created.');
       saveDownload(id, 'ready', '', 100, 'Ready to play');
     } catch {
-      const unsupported = !ffmpegAvailable && /requested format is not available|no video formats found|requested format not available/i.test(ytOutput);
+      const unsupported = /requested format is not available|no video formats found|requested format not available/i.test(ytOutput);
       const signInRequired = /sign in to confirm (?:you(?:'|’)re|you are) not a bot/i.test(ytOutput);
       const lastErrorLine = ytOutput.split(/\r?\n/).map(line => line.trim()).filter(line => /^ERROR:/i.test(line)).at(-1)?.replace(/https?:\/\/\S+/g, '[URL]');
       const message = signInRequired
         ? 'YouTube requires a signed-in session for this video. YourTube keeps browser credentials out of the download backend, so automatic retries are paused.'
         : unsupported
-        ? 'No single-file WebM is available. Install ffmpeg to merge separate WebM video and audio streams.'
+        ? 'YouTube did not offer a compatible WebM or MP4 format for this video.'
         : code === 0
-          ? 'yt-dlp finished, but no WebM file was produced.'
-          : lastErrorLine || 'This video could not be acquired as a local WebM. It may be unavailable or require unsupported access.';
+          ? 'yt-dlp finished, but no playable WebM or MP4 file was produced.'
+          : lastErrorLine || 'This video could not be acquired as a local WebM or MP4. It may be unavailable or require unsupported access.';
       saveDownload(id, 'error', message, job.progress, 'Download failed');
       recordDownloadFailure(id, message);
     }
@@ -2034,12 +2056,14 @@ async function beginDownload(id) {
 }
 
 async function serveMedia(request, response, id) {
-  const filePath = path.join(mediaDirectory, `${id}.webm`);
+  const filePath = getStoredMediaPath(id);
+  if (!filePath) { response.writeHead(404).end('Media not found'); return; }
   let fileInfo;
   try { fileInfo = await stat(filePath); } catch { response.writeHead(404).end('Media not found'); return; }
   const range = request.headers.range;
   response.setHeader('Accept-Ranges', 'bytes');
-  response.setHeader('Content-Type', 'video/webm');
+  const extension = path.extname(filePath).slice(1).toLowerCase();
+  response.setHeader('Content-Type', mediaContentTypes[extension] || 'application/octet-stream');
   response.setHeader('Cache-Control', 'no-store');
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
@@ -2094,8 +2118,11 @@ async function cleanupExpiredMedia() {
         database.exec('COMMIT');
         continue;
       }
-      try { unlinkSync(path.join(mediaDirectory, `${item.id}.webm`)); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      const mediaPath = getStoredMediaPath(item.id);
+      if (mediaPath) {
+        try { unlinkSync(mediaPath); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
       const deleted = database.prepare("DELETE FROM downloads WHERE video_id = ? AND status = 'ready' AND expires_at = ?").run(item.id, item.expiresAt);
       database.exec('COMMIT');
       if (deleted.changes) console.log(`Auto-deleted expired local video ${item.id}`);
@@ -3105,7 +3132,7 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/stats') {
     const mediaFiles = await readdir(mediaDirectory);
-    const validMediaFiles = mediaFiles.filter(name => /^[A-Za-z0-9_-]{11}\.webm$/i.test(name));
+    const validMediaFiles = mediaFiles.filter(name => /^[A-Za-z0-9_-]{11}\.(?:webm|mp4)$/i.test(name));
     const mediaStats = await Promise.all(validMediaFiles.map(async name => {
       try { return await stat(path.join(mediaDirectory, name)); } catch { return null; }
     }));
@@ -3747,7 +3774,7 @@ const server = createServer(async (request, response) => {
     let skipped = 0;
     for (const { id } of paused) {
       if (jobs.has(id)) { skipped += 1; continue; }
-      const mediaExists = await access(path.join(mediaDirectory, `${id}.webm`)).then(() => true, () => false);
+      const mediaExists = Boolean(getStoredMediaPath(id));
       if (mediaExists) {
         saveDownload(id, 'ready', '', 100, 'Ready to play');
         deleted += 1;
@@ -3864,7 +3891,7 @@ const server = createServer(async (request, response) => {
     const id = url.pathname.split('/').at(-1);
     if (jobs.has(id)) { sendJson(response, 202, getDownload(id) || { status: 'downloading', message: '' }); return; }
     try {
-      await access(path.join(mediaDirectory, `${id}.webm`));
+      if (!getStoredMediaPath(id)) throw new Error('Downloaded file not found.');
       saveDownload(id, 'ready', '', 100, 'Ready to play');
       sendJson(response, 200, getDownload(id));
       return;
@@ -3924,9 +3951,7 @@ const server = createServer(async (request, response) => {
     const download = database.prepare("SELECT status FROM downloads WHERE video_id = ?").get(id);
     if (!download || download.status !== 'ready') { sendJson(response, 404, { error: 'This video is not in your downloaded library.' }); return; }
     try {
-      await unlink(path.join(mediaDirectory, `${id}.webm`)).catch(error => {
-        if (error.code !== 'ENOENT') throw error;
-      });
+      await discardDownloadFiles(id);
       database.prepare("DELETE FROM downloads WHERE video_id = ? AND status = 'ready'").run(id);
       database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
       sendJson(response, 200, { deleted: true, id });

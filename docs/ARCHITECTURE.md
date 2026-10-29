@@ -12,8 +12,8 @@ flowchart LR
   UI[YourTube Vue interface] <-->|HTTP API| API
   API <--> DB[(SQLite library and queues)]
   API -->|Cookie-free acquisition and metadata| YTDLP[yt-dlp]
-  YTDLP --> WEBM[Local WebM files]
-  FFMPEG[ffmpeg] -->|Merge separate WebM tracks| WEBM
+  YTDLP --> MEDIA[Local WebM or MP4 files]
+  FFMPEG[ffmpeg] -->|Merge separate compatible tracks| MEDIA
   API --> IMG[Local image cache]
 ```
 
@@ -46,7 +46,7 @@ YouTube's 11-character video ID is the stable local identity. Repeated captures 
 - `video_duration_lookups` and `extension_duration_baseline`: duration work state and per-extension-version duration coverage observations.
 - `app_settings`: persistent Online/Offline, auto-delete, protection-cooldown, and preparation settings.
 
-The database, media, and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. This folder contains personal viewing data and may contain many gigabytes of media; it is deliberately ignored by Git.
+The database, media, and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. Media is WebM where available; finite videos can use a compatible MP4 fallback. This folder contains personal viewing data and may contain many gigabytes of media; it is deliberately ignored by Git.
 
 ## Capture and search flows
 
@@ -72,7 +72,7 @@ When `yt-dlp` cannot return a video length or browser-visible details are needed
 
 ## Acquisition and playback
 
-Selecting a stub opens the local watch route. The server runs `yt-dlp` with `--no-cookies`, `--no-playlist`, and a WebM format selection. If ffmpeg is available, separate WebM video/audio streams are merged into one playable `.webm`; without it, only a suitable single-file WebM is used. Progress is parsed from yt-dlp output and stored for the UI. The player waits for the local file and presents explicit failure/retry states; there is no online-playback fallback.
+Selecting a stub opens the local watch route. The server runs `yt-dlp` with `--no-cookies`, `--no-playlist`, and a WebM-first format selection. For videos with a known finite duration, it can fall back to compatible MP4 streams if YouTube offers no WebM. Unknown-duration and live captures stay WebM-only so the existing partial-recording finalizer can safely save them. ffmpeg merges separate tracks when needed; the media endpoint serves the correct content type for either container. Progress is parsed from yt-dlp output and stored for the UI. A no-compatible-format response is paused as non-retryable instead of repeatedly issuing the same request. The player waits for the local file and presents explicit failure/retry states; there is no online-playback fallback.
 
 Downloads run independently of watch-page polling while the Node process remains running. A persistent SQLite retry queue handles transient failures, exponential delay, and pause states. After ten failures an item is paused for user attention. Optional anti-throttling behavior is configurable; it is off by default. Live acquisition is identified separately; a captured playable file can be finalized and saved, or discarded.
 

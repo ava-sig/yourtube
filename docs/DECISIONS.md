@@ -42,13 +42,13 @@ These notes capture the current choices and their practical consequences. They d
 
 **Consequence:** Browser work needs the extension loaded, YouTube reachable, and the server online. A queued state is distinct from a claimed/capturing state; stale tabs are timed out and retried rather than treated as success.
 
-## Local WebM as the playable unit
+## Prefer WebM and support finite-video MP4 fallback
 
-**Decision:** Save one merged WebM file per video ID. Use ffmpeg when yt-dlp returns separate WebM audio and video tracks. The watch page plays the saved file.
+**Decision:** Prefer one merged WebM file per video ID. For finite videos with no compatible WebM formats, accept a compatible MP4. Use ffmpeg when yt-dlp returns separate audio and video tracks. The watch page plays the locally saved container and serves its matching MIME type.
 
-**Reason:** A single local media file simplifies seeking, pause/resume, autoplay, portability, and file accounting.
+**Reason:** A single local media file simplifies seeking, pause/resume, autoplay, portability, and file accounting. A container fallback prevents videos available only as MP4 from entering a futile retry loop.
 
-**Consequence:** ffmpeg is needed for videos whose available tracks are separate. Without it, only a suitable single-file WebM can be acquired. Unsupported formats and failed downloads remain explicit errors.
+**Consequence:** ffmpeg is needed for videos whose available tracks are separate. Without it, only a suitable single-file WebM or MP4 can be acquired. MP4 fallback is limited to items with a recognized finite duration; live and unknown-duration captures keep the WebM path used by the partial-recording finalizer. If neither supported container is available, the item pauses with a clear error rather than retrying unchanged.
 
 ## Preserve progress and distinguish counters
 

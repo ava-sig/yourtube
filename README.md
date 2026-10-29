@@ -6,7 +6,7 @@ The extension does not copy YouTube's page or send browser cookies or account cr
 
 ## Start YourTube
 
-Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate WebM video and audio streams. Vue is bundled in `public/vendor`; no npm packages need to be installed.
+Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate audio and video streams. YourTube prefers WebM; for videos with a known finite length, it can fall back to a compatible MP4. Vue is bundled in `public/vendor`; no npm packages need to be installed.
 
 ```sh
 npm start
@@ -28,7 +28,7 @@ Open YouTube in the same browser profile where the extension is installed. The e
 
 ## Local data
 
-By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere. The database includes viewing counts and progress, search history, playlists, metadata, and local-library state. These are personal data, so `data/`, media, image caches, and runtime files are excluded from Git.
+By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded WebM/MP4 media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere. The database includes viewing counts and progress, search history, playlists, metadata, and local-library state. These are personal data, so `data/`, media, image caches, and runtime files are excluded from Git.
 
 See [Architecture](docs/ARCHITECTURE.md) for the data flow and tables, [Features](docs/FEATURES.md) for the implemented user-facing behavior, and [Decision record](docs/DECISIONS.md) for the reasons behind the main choices and current limits.
 
