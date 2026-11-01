@@ -15,8 +15,9 @@
     'A local attractor for the videos you choose.',
     'Each click can move a video from feed to library.'
   ];
-  const header = document.querySelector('.watch-header, .topbar');
-  const ticker = document.querySelector('#header-value-ticker');
+  const scope = window.__yourtubePlayerRootForStartup || document;
+  const header = scope.querySelector('.watch-header, .topbar');
+  const ticker = scope.querySelector('#header-value-ticker');
   const line = ticker?.querySelector('.header-value-line');
   const brand = header?.querySelector('.brand');
   const search = header?.querySelector('.watch-search, .search');

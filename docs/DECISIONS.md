@@ -130,6 +130,14 @@ These notes capture the current choices and their practical consequences. They d
 
 **Consequence:** Artist affinity is inferred from channel identity and title prefixes; style affinity is limited to tags discoverable in stored titles, channel descriptions, topic/section fields, and playlist names. It is not an audio fingerprint or a promise that a never-heard artist is similar. Missing tags mean the candidate receives freshness/variety consideration but no invented style affinity.
 
+## Preserve one local player across app navigation
+
+**Decision:** Keep one watch view and one media element alive in the app shell. Move that same element into a draggable mini player when a user navigates away, and restore it on return. Use the existing SQLite playback queue for playlist, card, and mini-player actions.
+
+**Reason:** Recreating the video element on each route interrupts playback and loses its live playback state. A second player or separate queue would create conflicting playback and ordering state.
+
+**Consequence:** SPA navigation preserves the active media element and local progress handlers. Queued items take priority after the current clip ends, even with Autoplay off; automatic playlist and recommendation progression still follows the Autoplay setting. Full page reloads still recreate the document and are outside this in-page continuity behavior.
+
 ## Repository and commit boundary
 
 **Decision:** Track source, bundled runtime/license, scripts, and documentation. Ignore `data/`, local media, cached images, SQLite/WAL files, logs, environment files, and machine-specific `.DS_Store` files.

@@ -6,7 +6,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <title>YourTube</title>
     <script src="/vendor/vue.global.prod.js"></script>
-    <style>
+    <style id="home-styles">
       :root { color-scheme: dark; font: 14px/1.45 Roboto, Arial, sans-serif; background: #0f0f0f; color: #f1f1f1; }
       * { box-sizing: border-box; }
       body { margin: 0; }
@@ -41,6 +41,10 @@
       .auto-delete-toggle[aria-checked="true"] .network-switch::after { transform: translateX(16px); background: #fff; }
       .network-toggle:disabled { opacity: .65; cursor: progress; }
       .network-notice { padding: 9px 24px; background: #302218; color: #ffd9a0; font-size: 13px; }
+      .route-navigation-error { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 24px; border-bottom: 1px solid #5a3737; background: #2a1b1b; color: #ffd0d0; font-size: 13px; }
+      .route-navigation-error-message { min-width: 0; }
+      .route-navigation-error button { flex: 0 0 auto; padding: 7px 11px; border: 1px solid #785050; border-radius: 18px; background: #392525; color: #fff; }
+      .route-navigation-error button:hover { background: #4a2c2c; }
       .brand { display: inline-flex; align-items: center; color: inherit; text-decoration: none; font-size: 20px; font-weight: 700; letter-spacing: -.8px; white-space: nowrap; }
       .logo-cycle { position: relative; display: inline-grid; width: 22px; height: 24px; place-items: center; margin-right: 5px; color: #ff0033; }
       .logo-cycle > span { grid-area: 1 / 1; }
@@ -114,6 +118,13 @@
       .playlist-item-link { display: flex; min-width: 0; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
       .playlist-item-link img { flex: 0 0 144px; width: 144px; aspect-ratio: 16 / 9; border-radius: 7px; object-fit: cover; background: #272727; }
       .playlist-item-copy { min-width: 0; }
+      .playlist-item-row { position: relative; min-width: 0; }
+      .playlist-item-mini-actions { position: absolute; top: 0; left: 0; display: flex; width: 144px; aspect-ratio: 16 / 9; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; background: #0008; opacity: 0; pointer-events: none; transition: opacity .16s ease; }
+      body.yourtube-mini-player-active .playlist-item-row:hover .playlist-item-mini-actions,
+      body.yourtube-mini-player-active .playlist-item-row:focus-within .playlist-item-mini-actions { opacity: 1; pointer-events: auto; }
+      .playlist-item-mini-actions button { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #ffffff80; border-radius: 50%; background: #171717ed; color: #fff; font: inherit; font-size: 19px; font-weight: 750; cursor: pointer; }
+      .playlist-item-mini-actions button:disabled { color: #888; cursor: not-allowed; }
+      @media (hover: none) { body.yourtube-mini-player-active .playlist-item-mini-actions { opacity: 1; pointer-events: auto; background: linear-gradient(transparent 38%, #0005); } }
       .playlist-item-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-weight: 650; }
       .playlist-item-actions { display: flex; gap: 5px; }
       .playlist-create-panel { display: flex; gap: 8px; max-width: 540px; margin: 16px 0; }
@@ -278,6 +289,17 @@
       .video-card.is-offline-stub .thumb-wrap img { filter: grayscale(1) brightness(.58); }
       .video-card.is-offline-stub .card-info { opacity: .72; }
       .video-card-thumb { position: relative; }
+      .video-card-mini-actions { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 12px; background: #0008; opacity: 0; pointer-events: none; transition: opacity .16s ease; }
+      .video-card-mini-action { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid #ffffff80; border-radius: 50%; background: #171717ed; color: #fff; font: inherit; font-size: 21px; font-weight: 700; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px #0009; transition: transform .14s ease, background .14s ease; }
+      .video-card-mini-action:hover { transform: scale(1.08); background: #333; }
+      .video-card-mini-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+      .video-card-mini-action:disabled { color: #888; cursor: not-allowed; transform: none; }
+      .video-card-mini-action-queue { font-size: 25px; }
+      .video-card-mini-action-busy { animation: mini-action-pulse 1s ease-in-out infinite; }
+      @keyframes mini-action-pulse { 50% { opacity: .55; } }
+      body.yourtube-mini-player-active .video-card:hover .video-card-mini-actions,
+      body.yourtube-mini-player-active .video-card:focus-within .video-card-mini-actions { opacity: 1; pointer-events: auto; }
+      @media (hover: none) { body.yourtube-mini-player-active .video-card-mini-actions { opacity: 1; pointer-events: auto; background: linear-gradient(transparent 38%, #0005); } }
       .offline-stub-overlay { position: absolute; inset: 0; z-index: 2; display: flex; width: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; border: 0; background: #080808a8; color: #fff; text-align: center; cursor: pointer; }
       .offline-stub-overlay span { color: #dedede; font-size: 11px; font-weight: 650; text-shadow: 0 1px 3px #000; }
       .offline-stub-overlay strong { max-width: 100%; padding: 6px 12px; border: 1px solid #ffffff55; border-radius: 18px; background: #f1f1f1; color: #111; font-size: 11px; font-weight: 750; }
@@ -526,7 +548,7 @@
                 <div class="playlist-items">
                   <div v-for="(video, index) in selectedPlaylistItems" :key="video.itemId" class="playlist-item">
                     <span class="playlist-item-number">{{ index + 1 }}</span>
-                    <a class="playlist-item-link" :href="playlistWatchUrl(video.id, index)"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="thumbnailError($event, video)" /><span class="playlist-item-copy"><span class="playlist-item-title">{{ video.title }}</span><span class="meta">{{ video.channel || 'Channel unavailable' }}<span v-if="video.duration"> · {{ video.duration }}</span><span v-if="video.downloaded"> · Local copy</span></span></span></a>
+                    <div class="playlist-item-row"><a class="playlist-item-link" :href="playlistWatchUrl(video.id, index)"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="thumbnailError($event, video)" /><span class="playlist-item-copy"><span class="playlist-item-title">{{ video.title }}</span><span class="meta">{{ video.channel || 'Channel unavailable' }}<span v-if="video.duration"> · {{ video.duration }}</span><span v-if="video.downloaded"> · Local copy</span></span></span></a><div class="playlist-item-mini-actions" role="group" :aria-label="`Actions for ${video.title || 'video'}`"><button v-if="video.downloaded" type="button" :aria-label="`Play ${video.title || 'video'}`" title="Play locally" @click.stop.prevent="openPlaylistVideo(video, index)">▶</button><button v-else type="button" :disabled="networkMode !== 'online'" :aria-label="`Download ${video.title || 'video'}`" :title="networkMode !== 'online' ? 'Go online to download' : 'Download locally'" @click.stop.prevent="miniPlayerAction('download', video)">⇩</button><button type="button" :disabled="!video.downloaded && networkMode !== 'online'" :aria-label="video.downloaded ? `Add ${video.title || 'video'} to queue` : `Add ${video.title || 'video'} to queue and download`" :title="video.downloaded ? 'Add to queue' : networkMode !== 'online' ? 'Go online to queue and download' : 'Add to queue and start download'" @click.stop.prevent="miniPlayerAction('queue', video)">＋</button></div></div>
                     <div v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'daily-mix'" class="playlist-item-actions"><button class="quiet-button" type="button" :disabled="index === 0" :aria-label="`Move ${video.title} up`" @click="movePlaylistItem(index, -1)">↑</button><button class="quiet-button" type="button" :disabled="index === selectedPlaylistItems.length - 1" :aria-label="`Move ${video.title} down`" @click="movePlaylistItem(index, 1)">↓</button><button class="quiet-button" type="button" :aria-label="`Remove ${video.title} from playlist`" @click="removePlaylistItem(video)">×</button></div>
                   </div>
                 </div>
@@ -641,6 +663,11 @@
             <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
           </a>
           <button v-if="offlineStub" class="offline-stub-overlay" type="button" :disabled="$root.networkModeUpdating" @click="$root.switchOnlineAndPlay(video)"><span>Not stored on this device</span><strong>{{ $root.networkModeUpdating ? 'Going online…' : 'Go online' }}</strong><small>Download and play locally</small></button>
+          <div class="video-card-mini-actions" role="group" :aria-label="`Actions for ${video.title || 'video'}`">
+            <button v-if="video.downloaded" class="video-card-mini-action" type="button" :aria-label="`Play ${video.title || 'video'}`" title="Play locally" @click.stop.prevent="$root.miniPlayerAction('play', video)"><span aria-hidden="true">▶</span></button>
+            <button v-else class="video-card-mini-action" type="button" :disabled="$root.networkMode !== 'online'" :aria-label="`Download ${video.title || 'video'}`" :title="$root.networkMode !== 'online' ? 'Go online to download' : 'Download locally'" @click.stop.prevent="$root.miniPlayerAction('download', video)"><span aria-hidden="true">⇩</span></button>
+            <button class="video-card-mini-action video-card-mini-action-queue" type="button" :disabled="!video.downloaded && $root.networkMode !== 'online'" :aria-label="video.downloaded ? `Add ${video.title || 'video'} to queue` : `Add ${video.title || 'video'} to queue and download`" :title="video.downloaded ? 'Add to queue' : $root.networkMode !== 'online' ? 'Go online to queue and download' : 'Add to queue and start download'" @click.stop.prevent="$root.miniPlayerAction('queue', video)"><span aria-hidden="true">＋</span></button>
+          </div>
         </div>
         <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="`/watch/${video.id}`" @click="handleVideoLink">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu">⋮</button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop.prevent="$root.openChannel(video.channelKey)">{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="publishedLabel" class="meta">{{ publishedLabel }}</div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
             <div v-if="menuOpen" class="video-card-menu" role="menu" @click.stop>
@@ -917,7 +944,7 @@
               this.recordSearchSelection(video.id, event, url);
               return;
             }
-            location.assign(url);
+            window.yourtubeNavigate?.(url) || location.assign(url);
           },
           thumbnailError(event, video) {
             const image = event.currentTarget;
@@ -1157,7 +1184,7 @@
           },
           playPlaylist(index = 0) {
             const video = this.selectedPlaylist?.items?.[index];
-            if (video) location.assign(this.playlistWatchUrl(video.id, index));
+            if (video) window.yourtubeNavigate?.(this.playlistWatchUrl(video.id, index)) || location.assign(this.playlistWatchUrl(video.id, index));
           },
           playLocallyAvailablePlaylist() {
             const localIds = new Set(this.downloadedVideos.map(video => video.id));
@@ -1180,7 +1207,7 @@
             const index = this.selectedPlaylist.items.findIndex(video => String(video.itemId) === String(first.itemId));
             const target = new URL(this.playlistWatchUrl(first.id, index), location.origin);
             target.searchParams.set('yourtubePlaylistLocal', '1');
-            location.assign(`${target.pathname}${target.search}`);
+            window.yourtubeNavigate?.(`${target.pathname}${target.search}`) || location.assign(`${target.pathname}${target.search}`);
           },
           async openAddToPlaylist(video) {
             this.playlistVideoToAdd = video;
@@ -1196,21 +1223,62 @@
             this.playlistVideoToAdd = null;
             this.playlistDialogNewTitle = '';
           },
+          async miniPlayerAction(action, video) {
+            if (!video?.id) return false;
+            const local = video.downloaded === true || Number(video.downloaded) === 1;
+            if (action === 'play' && local) {
+              this.openVideoCard(video);
+              return true;
+            }
+            if (!local && this.networkMode !== 'online') {
+              this.actionError = true;
+              this.actionNotice = 'Go Online to download this video. Current playback will keep going.';
+              return false;
+            }
+            if (action === 'download') return this.performVideoAction('download', video);
+            if (action === 'queue') {
+              if (local) return this.performVideoAction('queue', video);
+              return this.queueAndDownloadVideo(video);
+            }
+            return false;
+          },
+          openPlaylistVideo(video, index) {
+            if (!video?.id) return;
+            const url = this.playlistWatchUrl(video.id, index);
+            window.yourtubeNavigate?.(url) || location.assign(url);
+          },
+          async queueAndDownloadVideo(video) {
+            const added = await this.performVideoAction('queue', video);
+            if (!added || this.networkMode !== 'online') return false;
+            return this.performVideoAction('download', video);
+          },
           async performVideoAction(action, video) {
-            if (!video?.id || ['share', 'report'].includes(action)) return;
+            if (!video?.id || ['share', 'report'].includes(action)) return false;
             this.actionNotice = '';
             this.actionError = false;
             try {
-              if (action === 'playlist') { await this.openAddToPlaylist(video); return; }
+              if (action === 'playlist') { await this.openAddToPlaylist(video); return true; }
               let response;
-              if (action === 'queue') response = await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id }) });
+              if (action === 'queue') {
+                const queueResponse = await fetch(`/api/queue?refresh=${Date.now()}`, { cache: 'no-store' });
+                const queued = queueResponse.ok ? await queueResponse.json().catch(() => []) : [];
+                if (Array.isArray(queued) && queued.some(item => item.id === video.id)) {
+                  this.actionNotice = `Already in queue: ${video.title || 'video'}.`;
+                  window.dispatchEvent(new CustomEvent('yourtube-queue-updated'));
+                  return true;
+                }
+                response = await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id }) });
+              }
               else if (action === 'watch-later') response = await fetch('/api/playlists/watch-later/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id }) });
               else if (action === 'download') response = await fetch(`/api/downloads/${encodeURIComponent(video.id)}`, { method: 'POST' });
               else if (action === 'not-interested' || action === 'dont-recommend-channel') response = await fetch('/api/video-feedback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: video.id, action }) });
               else return;
               const result = await response.json().catch(() => ({}));
               if (!response.ok) throw new Error(result.error || 'That action could not be completed.');
-              if (action === 'queue') this.actionNotice = `Added to queue: ${video.title || 'video'}.`;
+              if (action === 'queue') {
+                this.actionNotice = `Added to queue: ${video.title || 'video'}.`;
+                window.dispatchEvent(new CustomEvent('yourtube-queue-updated'));
+              }
               if (action === 'watch-later') {
                 this.actionNotice = `Saved to Watch later: ${video.title || 'video'}.`;
                 if (this.currentView === 'playlists' && this.selectedPlaylistId === 'watch-later') await this.loadPlaylists('watch-later');
@@ -1224,9 +1292,11 @@
                 this.videos = this.videos.map(item => String(item.channel || '').trim().toLowerCase() === blocked ? { ...item, channelBlocked: 1 } : item);
               }
               if (action === 'not-interested' || action === 'dont-recommend-channel' || action === 'download') await this.refresh();
+              return true;
             } catch (error) {
               this.actionError = true;
               this.actionNotice = error.message || 'That action could not be completed.';
+              return false;
             }
           },
           async addToSelectedPlaylist() {
@@ -1321,7 +1391,7 @@
             const videoId = String(video?.id || '');
             if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || this.networkModeUpdating) return;
             if (this.networkMode === 'online') {
-              location.assign(`/watch/${encodeURIComponent(videoId)}`);
+              window.yourtubeNavigate?.(`/watch/${encodeURIComponent(videoId)}`) || location.assign(`/watch/${encodeURIComponent(videoId)}`);
               return;
             }
             this.networkModeUpdating = true;
@@ -1341,7 +1411,7 @@
               if (!response.ok || state.mode !== 'online') throw new Error(state.error || 'YourTube could not return Online. Check your internet connection and try again.');
               this.searchSource = 'youtube';
               window.postMessage({ type: 'yourtube:mode-change', mode: 'online' }, location.origin);
-              location.assign(`/watch/${encodeURIComponent(videoId)}`);
+              window.yourtubeNavigate?.(`/watch/${encodeURIComponent(videoId)}`) || location.assign(`/watch/${encodeURIComponent(videoId)}`);
             } catch (error) {
               this.modeTransitionTarget = '';
               this.actionNotice = error.message || 'YourTube could not switch Online.';
@@ -1816,7 +1886,7 @@
                 keepalive: true
               }).catch(() => {});
             }
-            location.assign(targetUrl.href);
+            window.yourtubeNavigate?.(targetUrl.href) || location.assign(targetUrl.href);
           },
           async pollFirstBatch(token) {
             if (token !== this.searchRequestToken || this.searchResultsReady) return;
@@ -1964,6 +2034,70 @@
         }
       }).mount('#app');
     </script>
+    <aside id="mini-player" class="mini-player" aria-label="YourTube mini player" hidden>
+      <header id="mini-player-drag-handle" class="mini-player-header" title="Drag to move">
+        <div class="mini-player-title-wrap"><strong>Now playing</strong><span id="mini-player-title">Your local video</span></div>
+        <div class="mini-player-actions">
+          <button id="mini-player-return" type="button" title="Return to video" aria-label="Return to video">↗</button>
+          <button id="mini-player-close" type="button" title="Close mini player" aria-label="Close mini player">×</button>
+        </div>
+      </header>
+      <div id="mini-player-video-slot" class="mini-player-video-slot"></div>
+      <div class="mini-player-queue-toolbar">
+        <span class="mini-player-playback-state"><span class="mini-player-state-dot" aria-hidden="true"></span><span id="mini-player-state">Playing while you browse</span></span>
+        <button id="mini-player-queue-toggle" type="button" aria-expanded="false" aria-controls="mini-player-queue-panel"><span>Up next</span><span id="mini-player-queue-count" class="mini-player-queue-count">0</span><span class="mini-player-queue-chevron" aria-hidden="true">⌄</span></button>
+      </div>
+      <section id="mini-player-queue-panel" class="mini-player-queue-panel" aria-label="Playback queue" hidden>
+        <div class="mini-player-queue-heading"><strong>Up next</strong><span id="mini-player-queue-summary">Queue is empty</span></div>
+        <ol id="mini-player-queue" class="mini-player-queue"></ol>
+      </section>
+    </aside>
+    <style id="mini-player-styles">
+      .mini-player[hidden] { display: none; }
+      .mini-player { position: fixed; z-index: 100; top: auto; right: 22px; bottom: 22px; width: min(540px, calc(100vw - 32px)); height: auto; min-height: 0; max-height: min(84vh, 820px); flex: 0 0 auto; display: flex; flex-direction: column; overflow: hidden; padding: 0; border: 1px solid #414141; border-radius: 14px; background: #181818; color: #f1f1f1; box-shadow: 0 14px 48px #000c; }
+      .mini-player-header { display: flex; flex: 0 0 auto; min-height: 56px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 8px 16px; border-bottom: 1px solid #303030; cursor: grab; touch-action: none; }
+      .mini-player-header:active { cursor: grabbing; }
+      .mini-player-title-wrap { display: grid; min-width: 0; gap: 3px; }
+      .mini-player-title-wrap strong { color: #aaa; font-size: 10px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
+      .mini-player-title-wrap span { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .mini-player-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+      .mini-player-actions button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #ddd; font: inherit; font-size: 18px; cursor: pointer; }
+      .mini-player-actions button:hover { border-color: #454545; background: #292929; color: #fff; }
+      .mini-player-video-slot { flex: 0 0 auto; width: 100%; background: #000; }
+      .mini-player-video-slot video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: min(48vh, 360px); background: #000; object-fit: contain; }
+      .mini-player-queue-toolbar { display: flex; flex: 0 0 auto; min-height: 48px; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 12px 5px 16px; color: #aaa; font-size: 11px; }
+      .mini-player-playback-state { display: inline-flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; }
+      .mini-player-state-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: #69c98c; box-shadow: 0 0 8px #69c98c55; }
+      #mini-player-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mini-player-queue-toolbar button { display: inline-flex; min-width: 0; height: 34px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #383838; border-radius: 18px; background: #222; color: #ddd; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+      .mini-player-queue-toolbar button:hover, .mini-player-queue-toolbar button[aria-expanded="true"] { border-color: #555; background: #2a2a2a; color: #fff; }
+      .mini-player-queue-count { display: grid; min-width: 20px; height: 20px; place-items: center; border-radius: 10px; background: #3ea6ff; color: #07131d; font-size: 10px; font-weight: 750; font-variant-numeric: tabular-nums; }
+      .mini-player-queue-chevron { color: #999; font-size: 14px; transition: transform .16s ease; }
+      .mini-player-queue-toolbar button[aria-expanded="true"] .mini-player-queue-chevron { transform: rotate(180deg); }
+      .mini-player-queue-panel { display: flex; min-height: 0; flex-direction: column; border-top: 1px solid #303030; background: #141414; }
+      .mini-player-queue-panel[hidden] { display: none; }
+      .mini-player-queue-heading { display: flex; flex: 0 0 auto; align-items: baseline; justify-content: space-between; gap: 10px; padding: 11px 16px 8px; }
+      .mini-player-queue-heading strong { color: #eee; font-size: 12px; }
+      .mini-player-queue-heading span { color: #888; font-size: 10px; }
+      .mini-player-queue { display: grid; max-height: min(270px, 30vh); gap: 2px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 0 8px 9px; list-style: none; scrollbar-color: #555 transparent; }
+      .mini-player-queue li { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 9px; }
+      .mini-player-queue li:hover { background: #202020; }
+      .mini-queue-position { flex: 0 0 20px; color: #888; font-size: 10px; font-variant-numeric: tabular-nums; text-align: center; }
+      .mini-queue-play { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; padding: 0; border-radius: 6px; background: transparent; color: #eee; text-align: left; cursor: pointer; }
+      .mini-queue-thumbnail-wrap { position: relative; display: grid; width: 112px; flex: 0 0 112px; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; border-radius: 6px; background: linear-gradient(135deg, #2c3038, #17191e); }
+      .mini-queue-thumbnail { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .mini-queue-duration { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; background: #000c; color: #fff; font-size: 9px; font-variant-numeric: tabular-nums; }
+      .mini-queue-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: #ffffff40; }
+      .mini-queue-progress span { display: block; height: 100%; background: #ff0033; }
+      .mini-queue-copy { display: grid; min-width: 0; gap: 5px; }
+      .mini-queue-title { display: -webkit-box; overflow: hidden; color: #eee; font-size: 12px; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      .mini-queue-meta { overflow: hidden; color: #999; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .mini-queue-remove { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; border-radius: 50%; background: transparent; color: #999; font-size: 17px; cursor: pointer; }
+      .mini-queue-remove:hover { background: #383838; color: #fff; }
+      .mini-queue-empty { padding: 14px 12px 18px; color: #888; font-size: 11px; text-align: center; }
+      @media (max-width: 560px) { .mini-player { right: 8px; bottom: 8px; width: min(460px, calc(100vw - 16px)); max-height: 84vh; } .mini-player-video-slot video { max-height: 42vh; } .mini-queue-thumbnail-wrap { width: 96px; flex-basis: 96px; } }
+    </style>
     <script src="/header-value-ticker.js"></script>
+    <script src="/app-router.js"></script>
   </body>
 </html>

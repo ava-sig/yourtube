@@ -4,6 +4,8 @@ YourTube is a single-user, local-first video library. A browser extension reads 
 
 The extension does not copy YouTube's page or send browser cookies or account credentials to the server. The server uses `yt-dlp` without cookies. A YourTube watch page plays the local file and reports acquisition errors instead of silently falling back to YouTube playback.
 
+Local playback continues while navigating between YourTube pages. Away from the watch view, the same video element appears in a movable mini player; the shared **Add to queue** list is available there and on playlists and Up next cards.
+
 ## Start YourTube
 
 Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate audio and video streams. YourTube prefers WebM; for videos with a known finite length, it can fall back to a compatible MP4. Vue is bundled in `public/vendor`; no npm packages need to be installed.

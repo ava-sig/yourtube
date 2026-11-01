@@ -18,6 +18,8 @@ await mkdir(mediaDirectory, { recursive: true });
 await mkdir(imageCacheDirectory, { recursive: true });
 const page = await readFile(path.join(root, 'public', 'index.html'));
 const playerPage = await readFile(path.join(root, 'public', 'player.html'));
+const appRouterScript = await readFile(path.join(root, 'public', 'app-router.js'));
+const headerTickerScript = await readFile(path.join(root, 'public', 'header-value-ticker.js'));
 const favicon = await readFile(path.join(root, 'public', 'favicon.ico'));
 const vueRuntime = await readFile(path.join(root, 'public', 'vendor', 'vue.global.prod.js'));
 const imagePlaceholder = await readFile(path.join(root, 'public', 'image-placeholder.svg'));
@@ -2725,6 +2727,21 @@ const server = createServer(async (request, response) => {
     response.end(vueRuntime);
     return;
   }
+  if (request.method === 'GET' && url.pathname === '/app-router.js') {
+    response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' });
+    response.end(appRouterScript);
+    return;
+  }
+  if (request.method === 'GET' && url.pathname === '/header-value-ticker.js') {
+    response.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' });
+    response.end(headerTickerScript);
+    return;
+  }
+  if (request.method === 'GET' && url.pathname === '/__app/player-template') {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+    response.end(playerPage);
+    return;
+  }
   if (request.method === 'GET' && url.pathname === '/image-placeholder.svg') {
     response.writeHead(200, { 'content-type': 'image/svg+xml; charset=utf-8', 'cache-control': 'public, max-age=86400' });
     response.end(imagePlaceholder);
@@ -2882,7 +2899,7 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/downloads') {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(playerPage);
+    response.end(page);
     return;
   }
 
@@ -2896,7 +2913,7 @@ const server = createServer(async (request, response) => {
   const watchMatch = /^\/watch\/([A-Za-z0-9_-]{11})$/.exec(url.pathname);
   if (request.method === 'GET' && watchMatch) {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    response.end(playerPage);
+    response.end(page);
     return;
   }
 
@@ -3243,7 +3260,7 @@ const server = createServer(async (request, response) => {
       LEFT JOIN video_progress p ON p.video_id = v.video_id
       ORDER BY q.position, q.item_id
     `).all();
-    sendJson(response, 200, rows);
+    sendJson(response, 200, localizeCachedImages(rows));
     return;
   }
 
@@ -3254,6 +3271,8 @@ const server = createServer(async (request, response) => {
       if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || !database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(videoId)) {
         sendJson(response, 404, { error: 'Video not found in the local library.' }); return;
       }
+      const existing = database.prepare('SELECT item_id AS itemId, position, added_at AS addedAt FROM playback_queue WHERE video_id = ? ORDER BY position, item_id LIMIT 1').get(videoId);
+      if (existing) { sendJson(response, 200, { ...existing, alreadyQueued: true }); return; }
       const position = database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM playback_queue').get().position;
       const addedAt = new Date().toISOString();
       const result = database.prepare('INSERT INTO playback_queue (video_id, position, added_at) VALUES (?, ?, ?)').run(videoId, position, addedAt);
