@@ -6,7 +6,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <title>YourTube Player</title>
     <style>
-      :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #0f0f0f; color: #f1f1f1; }
+      :root { color-scheme: dark; font: 14px/1.45 Roboto, Arial, sans-serif; background: #0f0f0f; color: #f1f1f1; }
       * { box-sizing: border-box; }
       body { margin: 0; padding: 0; }
       a { color: inherit; text-decoration: none; }
@@ -28,12 +28,12 @@
       .watch-sidebar-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 5px; }
       .watch-sidebar-stat strong { color: #f1f1f1; font-variant-numeric: tabular-nums; }
       .watch-content { width: min(100%, 1740px); min-width: 0; margin: 0 auto; padding: 24px 34px 80px; }
-      .watch-header { position: sticky; top: 0; z-index: 20; display: grid; width: 100%; height: 56px; grid-template-columns: max-content minmax(0, 1fr) max-content; align-items: center; gap: 24px; padding: 0 24px; background: #0f0f0f; }
+      .watch-header { position: sticky; top: 0; z-index: 20; display: flex; width: 100%; height: 56px; align-items: center; gap: 26px; padding: 0 24px; background: #0f0f0f; }
       .header-value-ticker { position: absolute; top: 50%; z-index: 1; height: 36px; display: flex; align-items: center; overflow: hidden; transform: translateY(-50%); pointer-events: none; }
       .header-value-line { overflow: hidden; color: #ddd; font-size: 13px; font-weight: 550; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
       .header-value-line.is-animating { animation: header-value-cycle 5s ease both; }
       @keyframes header-value-cycle { 0%, 8% { opacity: 0; transform: translateY(8px); } 16%, 80% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-7px); } }
-      .header-mode-controls { grid-column: 3; justify-self: end; z-index: 6; display: flex; align-items: center; gap: 4px; }
+      .header-mode-controls { z-index: 6; display: flex; align-items: center; gap: 4px; margin-left: auto; }
       .network-mode-feedback { position: absolute; top: 100%; right: 16px; margin: 0; padding: 8px 12px; border-radius: 0 0 8px 8px; background: #302218; color: #ffd9a0; font-size: 12px; }
       .network-mode-toggle, .auto-delete-toggle { display: inline-flex; align-items: center; gap: 9px; padding: 6px 4px 6px 10px; border: 0; border-radius: 18px; background: transparent; color: #ddd; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
       .network-mode-switch { position: relative; width: 34px; height: 18px; border-radius: 12px; background: #555; transition: background .18s ease; }
@@ -43,7 +43,16 @@
       .auto-delete-toggle[aria-checked="true"] .network-mode-switch { background: #c23b47; }
       .auto-delete-toggle[aria-checked="true"] .network-mode-switch::after { transform: translateX(16px); background: #fff; }
       .network-mode-toggle:disabled, .auto-delete-toggle:disabled { opacity: .65; cursor: progress; }
-      .watch-header .brand { margin: 0; }
+      .watch-header .brand { margin: 0; color: inherit; text-decoration: none; font-size: 20px; font-weight: 700; letter-spacing: -.8px; white-space: nowrap; }
+      .background-status { display: flex; flex: 0 1 270px; min-width: 90px; align-items: center; gap: 8px; overflow: hidden; border: 0; padding: 0; background: transparent; color: #aaa; font: inherit; font-size: 11px; line-height: 1.25; text-align: left; cursor: pointer; }
+      .background-status-copy { overflow: hidden; text-overflow: ellipsis; }
+      .background-status:hover .background-status-copy { color: #eee; }
+      .background-status:focus-visible { outline: 1px solid #e7ae58; outline-offset: 4px; border-radius: 4px; }
+      .background-status-open { flex: 0 0 auto; color: #e7ae58; opacity: .72; font-size: 12px; }
+      .background-status-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: #666; }
+      .background-status-dot.active { background: #68c98a; box-shadow: 0 0 8px #68c98a80; }
+      .background-status-dot.switching { background: #e7ae58; animation: background-status-pulse 1s ease-in-out infinite; }
+      @keyframes background-status-pulse { 50% { opacity: .3; } }
       .watch-search { position: absolute; left: calc(50% + 120px); transform: translateX(-50%); width: min(120px, 24vw); height: 40px; display: flex; align-items: center; overflow: visible; border: 1px solid #303030; border-radius: 22px; background: #121212; transition: width .24s ease, border-color .2s ease, background .2s ease; z-index: 5; }
       .watch-search:hover, .watch-search:focus-within { width: min(560px, calc(100% - 300px)); border-color: #383838; background: #121212; }
       .watch-search:not(:hover):not(:focus-within)::before { position: absolute; left: 16px; color: #999; content: 'Search'; font-size: 13px; pointer-events: none; }
@@ -124,13 +133,15 @@
       .volume { width: 76px; accent-color: #f33; cursor: pointer; }
       .speed-select { max-width: 70px; padding: 5px 4px; border: 0; border-radius: 4px; background: transparent; color: white; font: inherit; cursor: pointer; }
       .speed-select option { background: #222; }
+      .repeat-toggle[aria-pressed="true"] { background: #f33; color: #fff; }
+      .repeat-toggle svg { display: block; width: 19px; height: 19px; fill: currentColor; }
       .player-title { position: absolute; top: 0; left: 0; z-index: 2; max-width: 80%; padding: 14px 18px; overflow: hidden; color: white; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; opacity: 0; transition: opacity .2s ease; text-shadow: 0 1px 4px #000; }
       .player-shell:not(.controls-hidden) .player-title { opacity: 1; }
       .watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; grid-template-areas: "main upnext" "comments upnext"; gap: 24px; align-items: start; }
       .watch-main { grid-area: main; min-width: 0; }
-      .downloads-panel { min-height: 55vh; padding: 22px; border-radius: 14px; background: #181818; }
+      .downloads-panel { min-height: 55vh; padding: 0; border-radius: 0; background: transparent; }
       .downloads-panel[hidden] { display: none; }
-      .downloads-heading { margin: 0 0 6px; font-size: 22px; }
+      .downloads-heading { margin: 0 0 6px; font-size: 21px; font-weight: 700; }
       .downloads-subtitle { margin: 0 0 20px; color: #aaa; }
       .queued-downloads-heading-row { margin: 30px 0 12px; padding-top: 20px; border-top: 1px solid #3a3a3a; }
       .queued-downloads-heading { margin: 0 0 6px; color: #aaa; font-size: 17px; }
@@ -203,10 +214,23 @@
       .recommendation-show-more { justify-self: start; padding: 5px 10px; border: 1px solid #454545; border-radius: 18px; background: #222; color: #eee; font: inherit; font-size: 12px; cursor: pointer; }
       .recommendation-show-more:hover { background: #333; }
       .recommendation-separator { height: 1px; margin: 4px 0 6px; background: #fff; opacity: .8; }
-      .recommendation { display: grid; grid-template-columns: 164px minmax(0, 1fr); gap: 10px; color: inherit; text-decoration: none; }
+      .recommendation { position: relative; display: grid; grid-template-columns: 164px minmax(0, 1fr); gap: 10px; min-width: 0; }
+      .recommendation-media { position: relative; min-width: 0; }
+      .recommendation-media-link { display: block; color: inherit; text-decoration: none; }
+      .recommendation-text-link { min-width: 0; color: inherit; text-decoration: none; }
       .recommendation:hover .recommendation-title { color: #fff; }
       .recommendation-thumb { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 8px; background: #222; }
       .recommendation-thumb img { width: 100%; height: 100%; object-fit: cover; }
+      .recommendation-download { --download-progress: 0%; position: absolute; top: 5px; right: 5px; z-index: 3; display: grid; width: 32px; height: 32px; padding: 2px; place-items: center; border: 0; border-radius: 50%; background: conic-gradient(#f33 var(--download-progress), #ffffff66 0); color: #fff; cursor: pointer; filter: drop-shadow(0 1px 3px #000b); }
+      .recommendation-download::before { position: absolute; inset: 3px; border-radius: 50%; background: #171717ed; content: ''; }
+      .recommendation-download:hover::before { background: #303030; }
+      .recommendation-download:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+      .recommendation-download .download-control-icon { position: relative; z-index: 1; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.1; }
+      .recommendation-download.is-downloading { cursor: progress; }
+      .recommendation-download.is-downloading .download-control-icon { animation: download-control-pulse 1.15s ease-in-out infinite; }
+      .recommendation-download.is-complete { background: conic-gradient(#3baa63 100%, #3baa63 0); color: #77e69b; cursor: default; }
+      .recommendation-download.is-error { background: conic-gradient(#e04444 100%, #e04444 0); color: #ff8585; }
+      @keyframes download-control-pulse { 50% { opacity: .62; } }
       .recommendation-progress-track { position: absolute; right: 0; bottom: 0; left: 0; z-index: 2; height: 2px; background: #ffffff70; }
       .recommendation-progress-fill { height: 100%; background: #f33; }
       .recommendation-duration { position: absolute; right: 4px; bottom: 4px; padding: 1px 4px; border-radius: 3px; background: #000c; font-size: 11px; }
@@ -234,10 +258,11 @@
       @media (max-width: 900px) { .watch-sidebar-stats { gap: 5px; padding: 9px 2px 3px; font-size: 9px; } .watch-sidebar-stats-title { display: none; } .watch-sidebar-stat { flex-direction: column; align-items: center; gap: 0; line-height: 1.15; } .watch-sidebar-stat span { color: #999; } .watch-sidebar-stat strong { font-size: 10px; } }
       @media (max-width: 980px) { .watch-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "comments" "upnext"; gap: 28px; } .watch-side { position: static; } .recommendation { grid-template-columns: minmax(140px, 28%) minmax(0, 1fr); } .watch-app.expanded { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "main main" "navigation upnext" "comments comments"; } .watch-app.expanded .watch-layout { display: contents; } }
       @media (max-width: 620px) { .watch-content { padding: 14px 12px 60px; } .watch-app:not(.expanded) { grid-template-columns: 58px minmax(0, 1fr); gap: 0; } .watch-navigation { padding: 10px 4px; } .watch-nav-link { min-height: 40px; } .watch-header .watch-search { left: calc(50% + 29px); } }
+      @media (max-width: 980px) { .watch-header { gap: 14px; } .background-status { flex-basis: 160px; } }
       @media (max-width: 560px) { .watch-app.expanded { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "navigation" "comments" "upnext"; } }
-      @media (max-width: 560px) { .watch-header { gap: 10px; padding: 0 10px; } .watch-header .brand { font-size: 17px; } .watch-header .watch-search { left: calc(50% + 29px); width: 88px; } .watch-search:hover, .watch-search:focus-within { width: min(100%, calc(100vw - 110px)); } .watch-search-toggle { gap: 4px; padding-inline: 5px; font-size: 9px; } .watch-search-switch { width: 24px; } .watch-search-toggle[aria-checked="true"] .watch-search-switch::after { transform: translateX(8px); } .search-dropdown { width: min(620px, calc(100vw - 86px)); } .search-dropdown-status { padding-inline: 12px; } .search-dropdown-results { padding: 12px; } .search-result { grid-template-columns: 120px minmax(0,1fr); gap: 10px; } .search-result-title { font-size: 13px; } .search-result-channel, .search-result-meta { font-size: 11px; } }
+      @media (max-width: 560px) { .watch-header { gap: 10px; padding: 0 10px; } .watch-header .brand { font-size: 17px; } .watch-header .watch-search { left: calc(50% + 29px); width: 88px; } .watch-search:hover, .watch-search:focus-within { width: min(100%, calc(100vw - 110px)); } .background-status { flex: 0 0 auto; min-width: 0; } .background-status-copy { display: none; } .background-status-open { display: none; } .header-mode-controls { gap: 0; } .watch-search-toggle { gap: 4px; padding-inline: 5px; font-size: 9px; } .watch-search-switch { width: 24px; } .watch-search-toggle[aria-checked="true"] .watch-search-switch::after { transform: translateX(8px); } .search-dropdown { width: min(620px, calc(100vw - 86px)); } .search-dropdown-status { padding-inline: 12px; } .search-dropdown-results { padding: 12px; } .search-result { grid-template-columns: 120px minmax(0,1fr); gap: 10px; } .search-result-title { font-size: 13px; } .search-result-channel, .search-result-meta { font-size: 11px; } }
       @media (max-width: 560px) { .player-controls { padding: 25px 8px 6px; } .control-row { gap: 4px; } .volume { width: 48px; } .time-display { font-size: 11px; } .control-button { min-width: 30px; } }
-      @media (max-width: 560px) { .downloads-panel { padding: 16px 12px; } .active-download { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; } .active-download-title { font-size: 13px; white-space: normal; } }
+      @media (max-width: 560px) { .downloads-panel { padding: 0; } .active-download { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; } .active-download-title { font-size: 13px; white-space: normal; } }
       @media (prefers-reduced-motion: reduce) { .header-value-line.is-animating { animation: none; opacity: 1; transform: none; } }
       h1 { margin: 18px 0 2px; font-size: 21px; }
       .channel, .muted { color: #aaa; }
@@ -258,6 +283,7 @@
         <button id="watch-search-toggle" class="watch-search-toggle" type="button" role="switch" aria-checked="true" aria-label="Search YouTube"><span class="mode-label">Local</span><span class="watch-search-switch" aria-hidden="true"></span><span class="mode-label active">YouTube</span></button>
         <div id="search-dropdown" class="search-dropdown" hidden><div id="search-dropdown-status" class="search-dropdown-status" aria-live="polite"></div><div id="search-dropdown-results" class="search-dropdown-results"></div></div>
       </form>
+      <button id="background-status" class="background-status" type="button" title="Open YourTube system status"><span id="background-status-dot" class="background-status-dot" aria-hidden="true"></span><span id="background-status-copy" class="background-status-copy">Checking background systems…</span><span class="background-status-open" aria-hidden="true">↗</span></button>
       <div class="header-mode-controls">
         <button id="auto-delete-toggle" class="auto-delete-toggle" type="button" role="switch" aria-checked="false" aria-label="Automatically delete media after 24 hours"><span>Auto-delete</span><span class="network-mode-switch" aria-hidden="true"></span></button>
         <button id="network-mode-toggle" class="network-mode-toggle" type="button" role="switch" aria-checked="true"><span id="network-mode-label">Online</span><span class="network-mode-switch" aria-hidden="true"></span></button>
@@ -342,11 +368,21 @@
     </div>
     <script>
       const isDownloadsView = location.pathname === '/downloads';
+      const navigateApp = path => location.assign(path);
       const videoId = isDownloadsView ? '' : location.pathname.split('/').pop();
-      const recommendationSearchId = new URLSearchParams(location.search).get('yourtubeSearchId') || '';
-      const queueItemId = new URLSearchParams(location.search).get('yourtubeQueueItem') || '';
-      const playlistId = new URLSearchParams(location.search).get('yourtubePlaylist') || '';
-      const requestedPlaylistPosition = Math.max(0, Number.parseInt(new URLSearchParams(location.search).get('yourtubePlaylistPosition') || '0', 10) || 0);
+      let activePlayerGlobalListeners = null;
+      const clearPlayerGlobalListeners = () => {
+        if (!activePlayerGlobalListeners) return;
+        document.removeEventListener('keydown', activePlayerGlobalListeners.keydown);
+        document.removeEventListener('fullscreenchange', activePlayerGlobalListeners.fullscreenchange);
+        window.removeEventListener('pagehide', activePlayerGlobalListeners.pagehide);
+        activePlayerGlobalListeners = null;
+      };
+      let recommendationSearchId = new URLSearchParams(location.search).get('yourtubeSearchId') || '';
+      let queueItemId = new URLSearchParams(location.search).get('yourtubeQueueItem') || '';
+      let playlistId = new URLSearchParams(location.search).get('yourtubePlaylist') || '';
+      let requestedPlaylistPosition = Math.max(0, Number.parseInt(new URLSearchParams(location.search).get('yourtubePlaylistPosition') || '0', 10) || 0);
+      let playlistLocalOnly = new URLSearchParams(location.search).get('yourtubePlaylistLocal') === '1';
       const watchApp = document.querySelector('#watch-app');
       const stage = document.querySelector('#stage');
       const title = document.querySelector('#title');
@@ -388,6 +424,10 @@
       const deletePausedDownloadsButton = document.querySelector('#delete-paused-downloads');
       let activeDownloadsTimer = null;
       let recommendationSearchTimer = null;
+      let networkModeTimer = null;
+      let autoDeleteTimer = null;
+      let sidebarStatsTimer = null;
+      let playerStartToken = 0;
       const searchForm = document.querySelector('#watch-search');
       const searchInput = document.querySelector('#watch-search-input');
       const searchToggle = document.querySelector('#watch-search-toggle');
@@ -398,11 +438,49 @@
       const networkModeLabel = document.querySelector('#network-mode-label');
       const networkModeFeedback = document.querySelector('#network-mode-feedback');
       const autoDeleteToggle = document.querySelector('#auto-delete-toggle');
+      const backgroundStatusButton = document.querySelector('#background-status');
+      const backgroundStatusCopy = document.querySelector('#background-status-copy');
+      const backgroundStatusDot = document.querySelector('#background-status-dot');
       let networkMode = 'online';
       let autoDeleteEnabled = false;
       let activeVideoChannelKey = '';
       let autoDeleteUpdatedAt = '';
       let offlinePreparation = { phase: 'comments', completed: 0, total: 0 };
+      let currentSidebarStats = {};
+      let commentsRequestToken = 0;
+      let playlistContextRequestToken = 0;
+      let recommendationsRequestToken = 0;
+      function updateBackgroundStatus(stats = currentSidebarStats) {
+        let message = 'Background queue idle · local library ready';
+        if (networkMode === 'preparing') {
+          const progress = Number(offlinePreparation.total) > 0 ? ` · ${Math.max(Number(offlinePreparation.completed) || 0, Number(offlinePreparation.current) || 0)}/${offlinePreparation.total}` : '';
+          const base = offlinePreparation.message || 'Preparing your local library';
+          message = progress && !/\b\d+\s*\/\s*\d+\b/.test(base) ? `${base}${progress}` : base;
+        } else if (offlinePreparation.status === 'paused') message = 'Preparation paused · resumes next time you switch Online';
+        else if (networkMode === 'online' && ['queued', 'running'].includes(offlinePreparation.status)) {
+          const progress = Number(offlinePreparation.total) > 0 ? ` · ${Math.max(Number(offlinePreparation.completed) || 0, Number(offlinePreparation.current) || 0)}/${offlinePreparation.total}` : '';
+          const base = offlinePreparation.message || `Preparing ${offlinePreparation.phase || 'your local library'} in the background`;
+          message = progress && !/\b\d+\s*\/\s*\d+\b/.test(base) ? `${base}${progress}` : base;
+        } else if (networkMode === 'offline' && Number(stats.activeChannelCaptures) > 0) message = `${stats.activeChannelCaptures} channel ${Number(stats.activeChannelCaptures) === 1 ? 'section is' : 'sections are'} paused until Online`;
+        else if (networkMode === 'offline' && Number(stats.queuedDownloads) > 0) message = `${stats.queuedDownloads} download ${Number(stats.queuedDownloads) === 1 ? 'retry is' : 'retries are'} paused until Online`;
+        else if (networkMode === 'offline' && Number(stats.downloadMetadata?.pending) > 0) message = `${stats.downloadMetadata.pending} downloaded video metadata ${Number(stats.downloadMetadata.pending) === 1 ? 'item is' : 'items are'} waiting for Online`;
+        else if (networkMode === 'offline') message = autoDeleteEnabled ? 'Offline · local library ready · 24-hour cleanup active' : 'Offline · local library ready';
+        else if (Number(stats.activeDownloads) > 0) message = `${stats.activeDownloads} media ${Number(stats.activeDownloads) === 1 ? 'download is' : 'downloads are'} active`;
+        else if (Number(stats.activeChannelCaptures) > 0) message = `Collecting ${stats.activeChannelCaptures} channel ${Number(stats.activeChannelCaptures) === 1 ? 'section' : 'sections'}`;
+        else if (stats.durationLookupActive) message = 'Preparing video lengths · one lookup in progress';
+        else if (stats.downloadMetadata?.active) message = stats.downloadMetadata.message || 'Preparing local media metadata';
+        else if (Number(stats.downloadMetadata?.pending) > 0) message = `Preparing local media metadata · ${stats.downloadMetadata.ready}/${stats.downloadMetadata.total}`;
+        else if (Number(stats.queuedDownloads) > 0) message = `${stats.queuedDownloads} media ${Number(stats.queuedDownloads) === 1 ? 'download is' : 'downloads are'} queued for retry`;
+        else if (Number(stats.pendingDurations) > 0) message = `Preparing video lengths · ${stats.pendingDurations} waiting`;
+        else if (autoDeleteEnabled) message = 'Monitoring local media · 24-hour cleanup active';
+        backgroundStatusCopy.textContent = message;
+        backgroundStatusButton.title = `Open system status · ${message}`;
+        backgroundStatusButton.setAttribute('aria-label', `Open YourTube system status. ${message}`);
+        const busy = networkMode === 'preparing' || (networkMode === 'online' && ['queued', 'running'].includes(offlinePreparation.status)) || Number(stats.activeDownloads) > 0 || Number(stats.queuedDownloads) > 0 || (networkMode === 'online' && Number(stats.activeChannelCaptures) > 0) || stats.durationLookupActive || Number(stats.downloadMetadata?.pending) > 0 || (networkMode === 'online' && Number(stats.pendingDurations) > 0);
+        backgroundStatusDot.classList.toggle('active', busy && networkMode !== 'preparing');
+        backgroundStatusDot.classList.toggle('switching', networkMode === 'preparing');
+      }
+      backgroundStatusButton.addEventListener('click', () => navigateApp('/?view=status'));
       function attachThumbnailFallback(image, video) {
         image.addEventListener('error', () => {
           const standard = video?.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : '';
@@ -422,6 +500,7 @@
           autoDeleteEnabled = Boolean(state.enabled);
           autoDeleteUpdatedAt = state.updatedAt || '';
           autoDeleteToggle.setAttribute('aria-checked', String(autoDeleteEnabled));
+          updateBackgroundStatus();
           if (previous !== autoDeleteEnabled) loadRecommendations();
         } catch {}
       }
@@ -433,6 +512,7 @@
           const previousMode = networkMode;
           networkMode = state.mode;
           offlinePreparation = state.preparation || offlinePreparation;
+          updateBackgroundStatus();
           networkModeFeedback.textContent = state.connectivityNotice || '';
           networkModeFeedback.hidden = !state.connectivityNotice;
           networkModeLabel.textContent = networkMode === 'preparing' ? `Preparing ${offlinePreparation.phase} ${offlinePreparation.completed}/${offlinePreparation.total}` : networkMode === 'offline' ? 'Offline' : 'Online';
@@ -483,10 +563,21 @@
           autoDeleteToggle.title = error.message;
         } finally { autoDeleteToggle.disabled = false; }
       });
-      refreshNetworkMode();
-      setInterval(refreshNetworkMode, 1500);
-      refreshAutoDelete();
-      setInterval(refreshAutoDelete, 3000);
+      function startPlayerPolling() {
+        refreshNetworkMode();
+        refreshAutoDelete();
+        refreshSidebarStats();
+        if (!networkModeTimer) networkModeTimer = setInterval(refreshNetworkMode, 1500);
+        if (!autoDeleteTimer) autoDeleteTimer = setInterval(refreshAutoDelete, 3000);
+        if (!sidebarStatsTimer) sidebarStatsTimer = setInterval(refreshSidebarStats, 3000);
+      }
+      function stopPlayerPolling() {
+        clearInterval(networkModeTimer);
+        clearInterval(autoDeleteTimer);
+        clearInterval(sidebarStatsTimer);
+        networkModeTimer = autoDeleteTimer = sidebarStatsTimer = null;
+      }
+      startPlayerPolling();
       let searchSource = 'youtube';
       let searchRequestToken = 0;
       let searchPollTimer = null;
@@ -571,6 +662,13 @@
           channelText.className = 'search-result-channel';
           channelText.textContent = video.channel || 'Channel unavailable';
           details.append(titleText, channelText);
+          const published = publishedLabel(video);
+          if (published) {
+            const age = document.createElement('div');
+            age.className = 'search-result-meta';
+            age.textContent = published;
+            details.append(age);
+          }
           if (video.meta) {
             const meta = document.createElement('div');
             meta.className = 'search-result-meta';
@@ -818,6 +916,8 @@
       let playlistContext = null;
       let playlistCurrentItemId = '';
       let playlistShuffleEnabled = false;
+      let recommendationsLoadCount = 0;
+      let advanceEndedPlayback = null;
       try { autoplayEnabled = localStorage.getItem('yourtube-autoplay') !== 'false'; } catch {}
       try { playlistShuffleEnabled = localStorage.getItem('yourtube-playlist-shuffle') === 'true'; } catch {}
 
@@ -849,6 +949,7 @@
         autoplayEnabled = !autoplayEnabled;
         try { localStorage.setItem('yourtube-autoplay', String(autoplayEnabled)); } catch {}
         updateAutoplayToggle();
+        if (autoplayEnabled) advanceEndedPlayback?.();
       });
       updateAutoplayToggle();
 
@@ -908,6 +1009,8 @@
           const response = await fetch(`/api/stats?refresh=${Date.now()}`, { cache: 'no-store' });
           if (!response.ok) return;
           const stats = await response.json();
+          currentSidebarStats = stats;
+          updateBackgroundStatus(stats);
           sidebarStats.localFiles.textContent = formatStatCount(stats.localFiles);
           sidebarStats.mediaBytes.textContent = formatStatBytes(stats.mediaBytes);
           sidebarStats.historicalViews.textContent = formatStatCount(stats.historicalViews);
@@ -925,9 +1028,6 @@
           brandLink.setAttribute('aria-label', activeDownloads ? `View ${activeDownloads} media downloads in progress` : pausedDownloads ? `View ${pausedDownloads} paused downloads` : 'YourTube home');
         } catch {}
       }
-      refreshSidebarStats();
-      setInterval(refreshSidebarStats, 3000);
-
       function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
       }
@@ -966,6 +1066,8 @@
       }
 
       function showError(message) {
+        clearPlayerGlobalListeners();
+        stage.classList.remove('playing');
         stage.innerHTML = '';
         const box = document.createElement('div');
         box.className = 'error';
@@ -983,11 +1085,15 @@
       }
 
       async function start(explicitRetry = false) {
+        const startToken = ++playerStartToken;
+        const activeVideoId = videoId;
+        const activeQueueItemId = queueItemId;
         startedAt = Date.now();
-        showProgress({ stage: 'Connecting to YouTube…' });
+        showProgress({ stage: 'Checking for a local copy…' });
         try {
-          const infoResponse = await fetch(`/api/videos/${videoId}`);
+          const infoResponse = await fetch(`/api/videos/${activeVideoId}`);
           const info = await infoResponse.json();
+          if (startToken !== playerStartToken) return;
           if (!infoResponse.ok) throw new Error(info.error || 'This video is not in the local feed.');
           title.textContent = info.title;
           activeVideoChannelKey = info.channelKey || '';
@@ -997,15 +1103,27 @@
           loadPlaylistContext();
           loadRecommendations();
 
-          let response = await fetch(`/api/downloads/${videoId}${explicitRetry ? '?retry=1' : ''}`, { method: 'POST' });
-          let result = await response.json();
-          if (!response.ok && response.status !== 202) throw new Error(result.error || 'Could not start the local acquisition.');
-          showProgress(result);
+          let result = {};
+          try {
+            const localStatus = await fetch(`/api/downloads/${activeVideoId}?refresh=${Date.now()}`, { cache: 'no-store' });
+            if (localStatus.ok) result = await localStatus.json();
+          } catch {}
+          if (startToken !== playerStartToken) return;
+          let response;
+          if (result.status !== 'ready') {
+            response = await fetch(`/api/downloads/${activeVideoId}${explicitRetry ? '?retry=1' : ''}`, { method: 'POST' });
+            result = await response.json();
+            if (startToken !== playerStartToken) return;
+            if (!response.ok && response.status !== 202) throw new Error(result.error || 'Could not start the local acquisition.');
+          }
+          if (result.status !== 'ready') showProgress(result);
           while (result.status === 'downloading') {
             await wait(1000);
-            response = await fetch(`/api/downloads/${videoId}`);
+            if (startToken !== playerStartToken) return;
+            response = await fetch(`/api/downloads/${activeVideoId}`);
             result = await response.json();
-            showProgress(result);
+            if (startToken !== playerStartToken) return;
+            if (result.status !== 'ready') showProgress(result);
           }
           while (result.status !== 'ready' && ['pending', 'running'].includes(result.retryStatus)) {
             const secondsLeft = result.retryAt ? Math.max(0, Math.ceil((Date.parse(result.retryAt) - Date.now()) / 1000)) : 0;
@@ -1018,23 +1136,32 @@
                   : result.stage || 'Waiting in the download queue…'
             });
             await wait(1000);
-            response = await fetch(`/api/downloads/${videoId}`);
+            if (startToken !== playerStartToken) return;
+            response = await fetch(`/api/downloads/${activeVideoId}`);
             result = await response.json();
+            if (startToken !== playerStartToken) return;
             if (result.status === 'downloading') showProgress(result);
           }
+          if (startToken !== playerStartToken) return;
           if (result.status !== 'ready') throw new Error(result.message || 'The local video could not be prepared.');
+          stage.classList.remove('playing');
+          stage.innerHTML = '<div class="loading" role="status" aria-live="polite"><div class="spinner" aria-hidden="true"></div><div>Local copy is ready · opening video…</div></div>';
 
-          if (queueItemId) {
-            try { await fetch(`/api/queue/${encodeURIComponent(queueItemId)}`, { method: 'DELETE' }); } catch {}
+          if (activeQueueItemId) {
+            try { await fetch(`/api/queue/${encodeURIComponent(activeQueueItemId)}`, { method: 'DELETE' }); } catch {}
           }
           let resumeAt = 0;
+          const progressAbort = new AbortController();
+          const progressTimeout = setTimeout(() => progressAbort.abort(), 2500);
           try {
-            const progressResponse = await fetch(`/api/progress/${videoId}?refresh=${Date.now()}`, { cache: 'no-store' });
+            const progressResponse = await fetch(`/api/progress/${activeVideoId}?refresh=${Date.now()}`, { cache: 'no-store', signal: progressAbort.signal });
             if (progressResponse.ok) resumeAt = Number((await progressResponse.json()).currentTime) || 0;
-          } catch {}
-          buildPlayer(`/media/${videoId}.webm`, info.title, resumeAt, result.mediaExtension || 'webm');
+          } catch {} finally { clearTimeout(progressTimeout); }
+          if (startToken !== playerStartToken) return;
+          const mediaExtension = String(result.mediaExtension || 'webm').toLowerCase() === 'mp4' ? 'mp4' : 'webm';
+          buildPlayer(`/media/${activeVideoId}.${mediaExtension}`, info.title, resumeAt, mediaExtension);
         } catch (error) {
-          showError(error.message);
+          if (startToken === playerStartToken) showError(error.message);
         }
       }
 
@@ -1312,21 +1439,27 @@
       }
 
       async function loadComments() {
+        const requestToken = ++commentsRequestToken;
+        const activeVideoId = videoId;
+        const isCurrent = () => requestToken === commentsRequestToken && activeVideoId === videoId;
         const state = document.querySelector('#comments-state');
         const list = document.querySelector('#comments-list');
         const count = document.querySelector('#comments-count');
         state.innerHTML = '<div class="comments-loading"><span class="small-spinner" aria-hidden="true"></span><span>Loading top comments…</span></div>';
         list.replaceChildren();
         try {
-          let response = await fetch(`/api/videos/${videoId}/comments`);
+          let response = await fetch(`/api/videos/${activeVideoId}/comments`);
           let data = await response.json();
+          if (!isCurrent()) return;
           if (!response.ok) throw new Error(data.error || 'Comments could not be loaded.');
           updateChannel(data);
-          pollChannel(data);
+          pollChannel(data, activeVideoId, requestToken);
           while (data.status === 'loading') {
             await wait(1500);
-            response = await fetch(`/api/videos/${videoId}/comments`);
+            if (!isCurrent()) return;
+            response = await fetch(`/api/videos/${activeVideoId}/comments`);
             data = await response.json();
+            if (!isCurrent()) return;
             if (!response.ok) throw new Error(data.error || 'Comments could not be loaded.');
             updateChannel(data);
           }
@@ -1373,7 +1506,7 @@
             list.append(article);
           }
         } catch (error) {
-          state.textContent = error.message || 'Comments could not be loaded.';
+          if (isCurrent()) state.textContent = error.message || 'Comments could not be loaded.';
         }
       }
 
@@ -1383,17 +1516,121 @@
         else channel.textContent = 'Channel unavailable';
       }
 
-      async function pollChannel(data) {
+      async function pollChannel(data, activeVideoId, requestToken) {
         let status = data.channelStatus;
-        while (!data.channel && status === 'loading') {
+        while (requestToken === commentsRequestToken && activeVideoId === videoId && !data.channel && status === 'loading') {
           await wait(1500);
+          if (requestToken !== commentsRequestToken || activeVideoId !== videoId) return;
           try {
-            const response = await fetch(`/api/videos/${videoId}/comments`);
+            const response = await fetch(`/api/videos/${activeVideoId}/comments`);
             if (!response.ok) break;
             data = await response.json();
+            if (requestToken !== commentsRequestToken || activeVideoId !== videoId) return;
             updateChannel(data);
             status = data.channelStatus;
           } catch { break; }
+        }
+      }
+
+      const sidebarDownloadStates = new Map();
+      const sidebarDownloadIcons = {
+        arrow: '<svg class="download-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 20h14" /></svg>',
+        check: '<svg class="download-control-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>'
+      };
+
+      function paintSidebarDownloadButton(button, videoId) {
+        const state = sidebarDownloadStates.get(videoId) || { status: 'idle', progress: 0 };
+        const active = ['starting', 'downloading'].includes(state.status);
+        button.disabled = active || state.status === 'complete';
+        button.classList.toggle('is-downloading', active);
+        button.classList.toggle('is-complete', state.status === 'complete');
+        button.classList.toggle('is-error', state.status === 'error');
+        button.style.setProperty('--download-progress', `${Math.max(0, Math.min(100, Number(state.progress) || 0))}%`);
+        button.innerHTML = state.status === 'complete' ? sidebarDownloadIcons.check : sidebarDownloadIcons.arrow;
+        const label = active
+          ? `${state.stage || 'Downloading'}${state.progress > 0 ? ` · ${Math.floor(state.progress)}%` : ''}`
+          : state.status === 'error'
+            ? state.message || 'Download failed; click to retry'
+            : state.status === 'complete'
+              ? 'Downloaded and added to Up next'
+              : 'Download this video';
+        button.title = label;
+        button.setAttribute('aria-label', label);
+      }
+
+      function syncSidebarDownloadButtons(videoId) {
+        document.querySelectorAll(`[data-download-video-id="${videoId}"]`).forEach(button => paintSidebarDownloadButton(button, videoId));
+      }
+
+      function createSidebarDownloadControl(video, media) {
+        const id = String(video?.id || '');
+        if (!/^[A-Za-z0-9_-]{11}$/.test(id) || video.downloaded || id === videoId) return null;
+        const button = document.createElement('button');
+        button.className = 'recommendation-download';
+        button.type = 'button';
+        button.dataset.downloadVideoId = id;
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (button.disabled) return;
+          acquireSidebarVideo(video);
+        });
+        paintSidebarDownloadButton(button, id);
+        media.append(button);
+        return button;
+      }
+
+      async function queueSidebarDownload(videoId) {
+        const response = await fetch(`/api/queue?refresh=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('The download finished, but the existing Up next order could not be checked.');
+        const queued = await response.json();
+        if (Array.isArray(queued) && queued.some(item => item.id === videoId)) return;
+        const added = await fetch('/api/queue', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ videoId })
+        });
+        const result = await added.json();
+        if (!added.ok) throw new Error(result.error || 'The local copy was saved, but could not be added to Up next.');
+      }
+
+      async function acquireSidebarVideo(video) {
+        const id = String(video.id);
+        const state = { status: 'starting', progress: 0, stage: 'Starting download…', message: '' };
+        sidebarDownloadStates.set(id, state);
+        syncSidebarDownloadButtons(id);
+        try {
+          let response = await fetch(`/api/downloads/${id}?retry=1`, { method: 'POST' });
+          let result = await response.json();
+          if (!response.ok && response.status !== 202) throw new Error(result.error || 'Could not start the download.');
+          while (result.status !== 'ready') {
+            state.status = 'downloading';
+            state.progress = Number(result.progress) || 0;
+            state.stage = result.stage || (result.retryStatus === 'pending' ? 'Queued for download…' : 'Preparing download…');
+            syncSidebarDownloadButtons(id);
+            const retryable = ['pending', 'running', 'waiting-live'].includes(result.retryStatus);
+            const active = ['downloading', 'pending', 'running', 'queued'].includes(result.status);
+            if (!retryable && !active) throw new Error(result.retryError || result.message || 'The local download did not complete.');
+            await wait(900);
+            response = await fetch(`/api/downloads/${id}?refresh=${Date.now()}`, { cache: 'no-store' });
+            if (!response.ok) throw new Error('Download status could not be read.');
+            result = await response.json();
+          }
+
+          state.status = 'complete';
+          state.progress = 100;
+          state.stage = 'Downloaded';
+          syncSidebarDownloadButtons(id);
+          await wait(900);
+          await queueSidebarDownload(id);
+          sidebarDownloadStates.delete(id);
+          await Promise.all([loadPlaylistContext(), loadRecommendations()]);
+          if (autoplayEnabled) advanceEndedPlayback?.();
+        } catch (error) {
+          state.status = 'error';
+          state.message = error.message || 'The local download failed.';
+          state.stage = '';
+          syncSidebarDownloadButtons(id);
         }
       }
 
@@ -1404,16 +1641,20 @@
           watchPlaylist.hidden = true;
           return;
         }
+        const items = playlist.items.filter(item => !playlistLocalOnly || Number(item.downloaded) === 1);
+        if (!items.length) {
+          watchPlaylist.hidden = true;
+          return;
+        }
         watchPlaylist.hidden = false;
-        watchPlaylistHeading.textContent = playlist.title || 'Playlist';
-        const items = [...playlist.items];
+        watchPlaylistHeading.textContent = playlistLocalOnly ? `${playlist.title || 'Playlist'} · Local copies` : playlist.title || 'Playlist';
         let currentIndex = items.findIndex(item => Number(item.position) === requestedPlaylistPosition);
         if (currentIndex < 0) currentIndex = items.findIndex(item => item.id === videoId);
         if (currentIndex < 0) currentIndex = 0;
         playlistCurrentItemId = String(items[currentIndex].itemId);
 
         let ordered = items;
-        const storageKey = `yourtube-playlist-order:${playlist.id}`;
+        const storageKey = `yourtube-playlist-order:${playlist.id}:${playlistLocalOnly ? 'local' : 'all'}`;
         if (playlistShuffleEnabled) {
           let savedOrder = [];
           try { savedOrder = JSON.parse(sessionStorage.getItem(storageKey) || '[]'); } catch {}
@@ -1435,14 +1676,20 @@
         const orderedCurrentIndex = ordered.findIndex(item => String(item.itemId) === playlistCurrentItemId);
         const queue = ordered.slice(Math.max(0, orderedCurrentIndex));
         queue.forEach((item, offset) => {
-          const link = document.createElement('a');
-          link.className = 'recommendation';
-          link.href = `/watch/${encodeURIComponent(item.id)}?yourtubePlaylist=${encodeURIComponent(playlist.id)}&yourtubePlaylistPosition=${encodeURIComponent(item.position)}`;
-          link.dataset.playlistItemId = String(item.itemId);
+          const localOnlyQuery = playlistLocalOnly ? '&yourtubePlaylistLocal=1' : '';
+          const href = `/watch/${encodeURIComponent(item.id)}?yourtubePlaylist=${encodeURIComponent(playlist.id)}&yourtubePlaylistPosition=${encodeURIComponent(item.position)}${localOnlyQuery}`;
+          const card = document.createElement('div');
+          card.className = 'recommendation';
           if (offset === 0) {
-            link.setAttribute('aria-current', 'true');
-            link.setAttribute('aria-label', `Now playing: ${item.title || 'Untitled video'}`);
+            card.setAttribute('aria-current', 'true');
           }
+          const media = document.createElement('div');
+          media.className = 'recommendation-media';
+          const mediaLink = document.createElement('a');
+          mediaLink.className = 'recommendation-media-link recommendation-link';
+          mediaLink.href = href;
+          mediaLink.dataset.playlistItemId = String(item.itemId);
+          if (offset === 0) { mediaLink.setAttribute('aria-current', 'true'); mediaLink.setAttribute('aria-label', `Now playing: ${item.title || 'Untitled video'}`); }
           const thumbnail = document.createElement('div');
           thumbnail.className = 'recommendation-thumb';
           const image = document.createElement('img');
@@ -1458,6 +1705,9 @@
             duration.textContent = cleanRepeatedLabel(item.duration);
             thumbnail.append(duration);
           }
+          mediaLink.append(thumbnail);
+          media.append(mediaLink);
+          createSidebarDownloadControl(item, media);
           const text = document.createElement('div');
           if (offset === 0) {
             const nowPlaying = document.createElement('div');
@@ -1473,8 +1723,14 @@
           if (item.channelKey) { itemChannel.setAttribute('role', 'link'); itemChannel.tabIndex = 0; itemChannel.dataset.channelKey = item.channelKey; }
           itemChannel.textContent = cleanRepeatedLabel(item.channel) || 'Channel unavailable';
           text.append(itemTitle, itemChannel);
-          link.append(thumbnail, text);
-          watchPlaylistItems.append(link);
+          const textLink = document.createElement('a');
+          textLink.className = 'recommendation-text-link recommendation-link';
+          textLink.href = href;
+          textLink.dataset.playlistItemId = String(item.itemId);
+          if (offset === 0) textLink.setAttribute('aria-current', 'true');
+          textLink.append(text);
+          card.append(media, textLink);
+          watchPlaylistItems.append(card);
         });
         if (queue.length <= 1) {
           const end = document.createElement('div');
@@ -1485,32 +1741,41 @@
       }
 
       async function loadPlaylistContext() {
-        if (!playlistId) return;
+        const requestToken = ++playlistContextRequestToken;
+        const activePlaylistId = playlistId;
+        if (!activePlaylistId) return;
         try {
-          const response = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`);
-          if (response.ok) renderPlaylistPanel(await response.json());
+          const response = await fetch(`/api/playlists/${encodeURIComponent(activePlaylistId)}`);
+          const data = response.ok ? await response.json() : null;
+          if (requestToken === playlistContextRequestToken && activePlaylistId === playlistId && data) renderPlaylistPanel(data);
         } catch {}
       }
 
       async function loadRecommendations() {
+        const requestToken = ++recommendationsRequestToken;
+        const activeVideoId = videoId;
         const list = document.querySelector('#recommendations');
+        recommendationsLoadCount += 1;
         try {
-          let recommendationId = videoId;
+          let recommendationId = activeVideoId;
           if (isDownloadsView) {
             const videosResponse = await fetch('/api/videos');
             const videos = videosResponse.ok ? await videosResponse.json() : [];
+            if (requestToken !== recommendationsRequestToken || activeVideoId !== videoId) return;
             recommendationId = videos[0]?.id || '';
           }
           if (!recommendationId) throw new Error('Save some videos from your homepage to populate Up next.');
           const response = await fetch(`/api/videos/${recommendationId}/recommendations`);
           const data = await response.json();
+          if (requestToken !== recommendationsRequestToken || activeVideoId !== videoId) return;
           if (!response.ok) throw new Error(data.error || 'Saved videos could not be loaded.');
-          list.replaceChildren();
           const queueResponse = await fetch(`/api/queue?refresh=${Date.now()}`, { cache: 'no-store' });
           const queueRows = queueResponse.ok ? await queueResponse.json() : [];
+          if (requestToken !== recommendationsRequestToken || activeVideoId !== videoId) return;
           const queuedVideos = (Array.isArray(queueRows) ? queueRows : [])
             .filter(item => networkMode !== 'offline' || item.downloaded)
             .map(item => ({ ...item, queueItemId: item.itemId }));
+          list.replaceChildren();
           const queuedIds = new Set(queuedVideos.map(item => item.id));
           const downloadedUnwatched = Array.isArray(data.downloadedUnwatched) ? data.downloadedUnwatched.filter(item => !queuedIds.has(item.id)).slice(0, 12) : [];
           const deletingSoon = Array.isArray(data.deletingSoon) ? data.deletingSoon.filter(item => !queuedIds.has(item.id)).slice(0, 12) : [];
@@ -1530,16 +1795,21 @@
           homepageRecommendationOrder.push(...newHomepageStubs.map(video => video.id));
           const homepageStubs = homepageRecommendationOrder.map(id => homepageById.get(id)).filter(Boolean);
           const appendRecommendation = (video, target) => {
-            const link = document.createElement('a');
-            link.className = 'recommendation';
-            link.href = `/watch/${encodeURIComponent(video.id)}`;
+            let href = `/watch/${encodeURIComponent(video.id)}`;
             if (video.queueItemId) {
-              const target = new URL(link.href, location.origin);
-              target.searchParams.set('yourtubeQueueItem', String(video.queueItemId));
-              link.href = `${target.pathname}${target.search}`;
+              const targetUrl = new URL(href, location.origin);
+              targetUrl.searchParams.set('yourtubeQueueItem', String(video.queueItemId));
+              href = `${targetUrl.pathname}${targetUrl.search}`;
             }
-            if (video.searchId) link.dataset.searchId = video.searchId;
-            if (video.queueItemId) link.dataset.queueItemId = String(video.queueItemId);
+            const card = document.createElement('div');
+            card.className = 'recommendation';
+            const media = document.createElement('div');
+            media.className = 'recommendation-media';
+            const mediaLink = document.createElement('a');
+            mediaLink.className = 'recommendation-media-link recommendation-link';
+            mediaLink.href = href;
+            if (video.searchId) mediaLink.dataset.searchId = video.searchId;
+            if (video.queueItemId) mediaLink.dataset.queueItemId = String(video.queueItemId);
             const thumbnail = document.createElement('div');
             thumbnail.className = 'recommendation-thumb';
             const fallbackThumbnail = video.thumbnail || '/image-placeholder.svg';
@@ -1572,6 +1842,9 @@
               duration.textContent = cleanRepeatedLabel(video.duration);
               thumbnail.append(duration);
             }
+            mediaLink.append(thumbnail);
+            media.append(mediaLink);
+            createSidebarDownloadControl(video, media);
             const text = document.createElement('div');
             if (video.searchQuery) {
               const reason = document.createElement('div');
@@ -1587,14 +1860,27 @@
             if (video.channelKey) { videoChannel.setAttribute('role', 'link'); videoChannel.tabIndex = 0; videoChannel.dataset.channelKey = video.channelKey; }
             videoChannel.textContent = cleanRepeatedLabel(video.channel) || 'Channel unavailable';
             text.append(videoTitle, videoChannel);
+            const published = publishedLabel(video);
+            if (published) {
+              const publishedText = document.createElement('div');
+              publishedText.className = 'recommendation-channel';
+              publishedText.textContent = published;
+              text.append(publishedText);
+            }
             if (video.viewCount > 0) {
               const views = document.createElement('div');
               views.className = 'recommendation-channel';
               views.textContent = viewedLabel(video.viewCount);
               text.append(views);
             }
-            link.append(thumbnail, text);
-            target.append(link);
+            const textLink = document.createElement('a');
+            textLink.className = 'recommendation-text-link recommendation-link';
+            textLink.href = href;
+            if (video.searchId) textLink.dataset.searchId = video.searchId;
+            if (video.queueItemId) textLink.dataset.queueItemId = String(video.queueItemId);
+            textLink.append(text);
+            card.append(media, textLink);
+            target.append(card);
           };
           if (queuedVideos.length) {
             const queuedSection = document.createElement('section');
@@ -1704,11 +1990,14 @@
             list.append(sectionRoot);
           });
         } catch (error) {
+          if (requestToken !== recommendationsRequestToken || activeVideoId !== videoId) return;
           list.innerHTML = '';
           const message = document.createElement('div');
           message.className = 'recommendations-state';
           message.textContent = error.message || 'Saved videos could not be loaded.';
           list.append(message);
+        } finally {
+          recommendationsLoadCount = Math.max(0, recommendationsLoadCount - 1);
         }
       }
 
@@ -1760,7 +2049,7 @@
 
       recommendationsList.addEventListener('click', async event => {
         if (event.target.closest('[data-channel-key]')) return;
-        const link = event.target.closest('a.recommendation');
+        const link = event.target.closest('a.recommendation-link');
         if (!link || event.defaultPrevented || event.button !== 0) return;
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
           recordSearchRecommendationClick(link);
@@ -1772,7 +2061,7 @@
       recommendationsList.addEventListener('auxclick', event => {
         if (event.target.closest('[data-channel-key]')) return;
         if (event.button !== 1) return;
-        const link = event.target.closest('a.recommendation');
+        const link = event.target.closest('a.recommendation-link');
         if (link) recordSearchRecommendationClick(link);
       });
       watchApp.addEventListener('click', event => {
@@ -1780,14 +2069,14 @@
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
-        location.assign(localChannelUrl(target.dataset.channelKey));
+        navigateApp(localChannelUrl(target.dataset.channelKey));
       });
       watchApp.addEventListener('keydown', event => {
         const target = event.target.closest('[data-channel-key]');
         if (!target || !['Enter', ' '].includes(event.key)) return;
         event.preventDefault();
         event.stopPropagation();
-        location.assign(localChannelUrl(target.dataset.channelKey));
+        navigateApp(localChannelUrl(target.dataset.channelKey));
       });
 
       function formatTime(seconds) {
@@ -1802,6 +2091,24 @@
       function viewedLabel(count) {
         const value = Number(count) || 0;
         return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`;
+      }
+
+      function publishedLabel(video, now = Date.now()) {
+        const raw = String(video?.publishedAt || '');
+        const precision = video?.publishedAtPrecision || (/T/.test(raw) ? 'exact' : 'date');
+        const exactTime = precision === 'exact' ? Date.parse(raw) : NaN;
+        if (Number.isFinite(exactTime) && exactTime <= now) {
+          const elapsed = now - exactTime;
+          if (elapsed < 86_400_000) {
+            const minutes = Math.max(1, Math.floor(elapsed / 60_000));
+            return `First published on YouTube ${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ago`;
+          }
+          return `First published on YouTube ${new Date(exactTime).toLocaleString()}`;
+        }
+        const age = video?.publishedAge || video?.meta?.match(/\b(?:\d+\s+)?(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b/i)?.[0] || '';
+        if (age) return `First published on YouTube ${age}`;
+        if (precision === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return `First published on YouTube ${new Date(`${raw}T00:00:00`).toLocaleDateString()}`;
+        return '';
       }
 
       function setChannelContent(element, name, channelKey = '') {
@@ -1835,6 +2142,9 @@
       }
 
       function buildPlayer(source, videoTitle, resumeAt = 0, mediaExtension = 'webm') {
+        clearPlayerGlobalListeners();
+        const activeVideoId = videoId;
+        const activePlaylistId = playlistId;
         const shell = document.createElement('div');
         shell.className = 'player-shell';
         shell.tabIndex = 0;
@@ -1856,12 +2166,14 @@
               <select class="speed-select" aria-label="Playback speed" title="Playback speed">
                 <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option><option value="2">2×</option>
               </select>
+              <button class="control-button repeat-toggle" type="button" aria-label="Repeat video off" aria-pressed="false" title="Repeat video off"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11.2l-2.1-2.1L17.5 3.5 22 8l-4.5 4.5-1.4-1.4L18.2 9H7a3 3 0 0 0-3 3v1H2v-1a5 5 0 0 1 5-5Zm10 10H5.8l2.1 2.1-1.4 1.4L2 16l4.5-4.5 1.4 1.4L5.8 15H17a3 3 0 0 0 3-3v-1h2v1a5 5 0 0 1-5 5Z"/></svg></button>
               <a class="control-button download-link" aria-label="Download local video" title="Download video">⇩</a>
               <button class="control-button expand-toggle" type="button" aria-label="Expand video layout" aria-pressed="false" title="Expand video layout">▭</button>
               <button class="control-button fullscreen-toggle" type="button" aria-label="Full screen" title="Full screen">⛶</button>
             </div>
           </div>`;
         const video = shell.querySelector('video');
+        const isCurrentPlayer = () => video.isConnected && stage.contains(video) && videoId === activeVideoId;
         const playButtons = [shell.querySelector('.center-play'), shell.querySelector('.play-toggle')];
         const seek = shell.querySelector('.seek');
         const volume = shell.querySelector('.volume');
@@ -1876,7 +2188,7 @@
         let finished = false;
         const downloadLink = shell.querySelector('.download-link');
         downloadLink.href = source;
-        const filename = videoTitle.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || videoId;
+        const filename = videoTitle.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || activeVideoId;
         downloadLink.download = `${filename}.${mediaExtension}`;
         // The autoplay switch controls whether Up Next advances after a video ends.
         // Opening a video from any view should always start its local playback.
@@ -1885,7 +2197,6 @@
         shell.querySelector('.player-title').textContent = videoTitle;
         stage.classList.add('playing');
         stage.replaceChildren(shell);
-
         const updatePlayState = () => {
           shell.classList.toggle('is-playing', !video.paused);
           shell.querySelector('.play-toggle').textContent = video.paused ? '▶' : '❚❚';
@@ -1909,10 +2220,10 @@
           if (viewRecorded) return;
           viewRecorded = true;
           try {
-            const response = await fetch(`/api/views/${videoId}`, { method: 'POST' });
+            const response = await fetch(`/api/views/${activeVideoId}`, { method: 'POST' });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'Could not record local view.');
-            viewCount.textContent = viewedLabel(result.viewCount);
+            if (videoId === activeVideoId) viewCount.textContent = viewedLabel(result.viewCount);
           } catch {
             viewRecorded = false;
           }
@@ -1922,49 +2233,88 @@
           const currentTime = Math.max(0, Number(position) || 0);
           if (!durationValue) return;
           progressSavedAt = Date.now();
-          fetch(`/api/progress/${videoId}`, {
+          fetch(`/api/progress/${activeVideoId}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ currentTime: Math.min(currentTime, durationValue), duration: durationValue, completed, playing: !video.paused && !video.ended }),
             keepalive
           }).catch(() => {});
         };
+        let advancingAfterEnd = false;
+        const advanceAfterEnd = async () => {
+          if (!autoplayEnabled || !video.ended || advancingAfterEnd) return;
+          advancingAfterEnd = true;
+          try {
+            if (activePlaylistId) {
+              await loadPlaylistContext();
+              const nextPlaylistItem = watchPlaylistItems.querySelector('.recommendation-link:not([aria-current="true"])');
+              if (nextPlaylistItem) {
+                await navigateToRecommendation(nextPlaylistItem);
+                return;
+              }
+            }
+
+            const deadline = Date.now() + 5000;
+            while (recommendationsLoadCount > 0 && Date.now() < deadline) await wait(100);
+            let nextVideo = document.querySelector('#recommendations .recommendation-link');
+            if (!nextVideo) {
+              await loadRecommendations();
+              nextVideo = document.querySelector('#recommendations .recommendation-link');
+            }
+            if (nextVideo) await navigateToRecommendation(nextVideo);
+          } finally {
+            advancingAfterEnd = false;
+          }
+        };
+        advanceEndedPlayback = advanceAfterEnd;
         playButtons.forEach(button => button.addEventListener('click', event => { event.stopPropagation(); togglePlayback(); }));
         video.addEventListener('click', togglePlayback);
         video.addEventListener('play', () => { updatePlayState(); showControls(); recordView(); });
         video.addEventListener('pause', () => { updatePlayState(); showControls(); if (!finished) saveProgress(); });
+        video.addEventListener('error', () => {
+          if (!isCurrentPlayer()) return;
+          video.pause();
+          const mediaError = video.error;
+          const message = mediaError?.code === MediaError.MEDIA_ERR_DECODE || mediaError?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+            ? 'The local file could not be decoded as video. Its audio may be present, but the browser could not render its video stream.'
+            : 'The local media file could not be read. Check that the downloaded file is still present and try again.';
+          showError(message);
+        }, { once: true });
         video.addEventListener('ended', () => {
+          if (!isCurrentPlayer()) return;
           finished = true;
           saveProgress(0, true, true);
           updatePlayState();
           showControls();
-          if (!autoplayEnabled) return;
-          if (playlistId && playlistContext) {
-            const nextPlaylistItem = watchPlaylistItems.querySelector('.recommendation:not([aria-current="true"])');
-            if (nextPlaylistItem) {
-              navigateToRecommendation(nextPlaylistItem);
-              return;
-            }
-          }
-          const nextVideo = document.querySelector('#recommendations .recommendation');
-          if (nextVideo) navigateToRecommendation(nextVideo);
+          advanceEndedPlayback?.();
         });
         video.addEventListener('timeupdate', () => {
+          if (!isCurrentPlayer()) return;
           updateSeek();
           if (Date.now() - progressSavedAt >= 5000) saveProgress();
         });
         video.addEventListener('loadedmetadata', () => {
+          if (!isCurrentPlayer()) return;
           duration.textContent = formatTime(video.duration);
           const startAt = resumeAt > 5 && resumeAt < video.duration - 5 ? resumeAt : 0;
           if (startAt) video.currentTime = startAt;
           updateSeek();
+        });
+        video.addEventListener('loadeddata', () => {
+          if (!isCurrentPlayer()) return;
+          if (video.videoWidth <= 0 || video.videoHeight <= 0) {
+            video.pause();
+            showError('This local file has no renderable video frames. Playback was stopped so it does not continue as audio only.');
+            return;
+          }
           video.play().catch(error => {
             if (error?.name === 'NotAllowedError') {
               shell.querySelector('.center-play').title = 'Your browser blocked autoplay. Click to play.';
             }
           });
         });
-        window.addEventListener('pagehide', () => { if (!finished) saveProgress(video.currentTime, true); }, { once: true });
+        const onPageHide = () => { if (!finished) saveProgress(video.currentTime, true); };
+        window.addEventListener('pagehide', onPageHide);
         shell.addEventListener('mousemove', showControls);
         shell.addEventListener('touchstart', showControls, { passive: true });
         controls.addEventListener('mousemove', event => event.stopPropagation());
@@ -1988,6 +2338,18 @@
           mute.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute');
         });
         shell.querySelector('.speed-select').addEventListener('change', event => { video.playbackRate = Number(event.target.value); });
+        const repeatToggle = shell.querySelector('.repeat-toggle');
+        repeatToggle.addEventListener('click', () => {
+          video.loop = !video.loop;
+          const label = `Repeat video ${video.loop ? 'on' : 'off'}`;
+          repeatToggle.setAttribute('aria-pressed', String(video.loop));
+          repeatToggle.setAttribute('aria-label', label);
+          repeatToggle.title = label;
+          if (video.loop && video.ended) {
+            video.currentTime = 0;
+            video.play().catch(() => {});
+          }
+        });
         shell.querySelector('.expand-toggle').addEventListener('click', () => {
           const animated = [shell, document.querySelector('.watch-navigation'), document.querySelector('.comments'), document.querySelector('.watch-side')].filter(element => element?.isConnected);
           const before = new Map(animated.map(element => [element, element.getBoundingClientRect()]));
@@ -2019,13 +2381,14 @@
             else await shell.requestFullscreen();
           } catch {}
         });
-        document.addEventListener('fullscreenchange', () => {
+        const onFullscreenChange = () => {
           const button = shell.querySelector('.fullscreen-toggle');
           const isFullscreen = document.fullscreenElement === shell;
           button.textContent = isFullscreen ? '⤢' : '⛶';
           button.setAttribute('aria-label', isFullscreen ? 'Exit full screen' : 'Full screen');
-        });
-        document.addEventListener('keydown', event => {
+        };
+        const onDocumentKeydown = event => {
+          if (!isCurrentPlayer()) return;
           if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
           if (event.target instanceof Element && event.target.closest('input, select, textarea, [contenteditable="true"]')) return;
           const key = event.key.toLowerCase();
@@ -2055,7 +2418,10 @@
             return;
           }
           showControls();
-        });
+        };
+        activePlayerGlobalListeners = { keydown: onDocumentKeydown, fullscreenchange: onFullscreenChange, pagehide: onPageHide };
+        document.addEventListener('fullscreenchange', onFullscreenChange);
+        document.addEventListener('keydown', onDocumentKeydown);
         updatePlayState();
       }
 

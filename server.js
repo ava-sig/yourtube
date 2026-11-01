@@ -12,6 +12,7 @@ const dataDirectory = process.env.YOURTUBE_DATA_DIR || path.join(root, 'data');
 const mediaDirectory = path.join(dataDirectory, 'media');
 const imageCacheDirectory = path.join(dataDirectory, 'images');
 const mediaContentTypes = Object.freeze({ webm: 'video/webm', mp4: 'video/mp4' });
+const backgroundCaptureStaleMs = 5 * 60_000;
 await mkdir(dataDirectory, { recursive: true });
 await mkdir(mediaDirectory, { recursive: true });
 await mkdir(imageCacheDirectory, { recursive: true });
@@ -66,7 +67,10 @@ database.exec(`
     topic TEXT NOT NULL,
     position INTEGER NOT NULL,
     first_seen TEXT NOT NULL,
-    last_seen TEXT NOT NULL
+    last_seen TEXT NOT NULL,
+    published_at TEXT NOT NULL DEFAULT '',
+    published_at_precision TEXT NOT NULL DEFAULT '',
+    published_age TEXT NOT NULL DEFAULT ''
   );
   CREATE TABLE IF NOT EXISTS subscriptions (
     channel_key TEXT PRIMARY KEY,
@@ -223,6 +227,16 @@ database.exec(`
     last_seen TEXT NOT NULL,
     PRIMARY KEY (video_id, category)
   );
+  CREATE TABLE IF NOT EXISTS acquisition_exclusions (
+    video_id TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    excluded_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS excluded_acquisition_metadata (
+    video_id TEXT PRIMARY KEY,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    saved_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS extension_duration_baseline (
     extension_version TEXT NOT NULL,
     video_id TEXT NOT NULL,
@@ -266,6 +280,9 @@ database.exec(`
     PRIMARY KEY (search_id, video_id)
   );
 `);
+// Older builds treated permanently unavailable live recordings like paid-content exclusions.
+// Keep those entries eligible for metadata recapture; only paid/movie content is blocklisted.
+database.prepare("DELETE FROM acquisition_exclusions WHERE reason = 'unavailable-source'").run();
 database.prepare(`INSERT OR IGNORE INTO download_metadata (video_id, status, phase, attempts, next_attempt_at, message, updated_at)
   SELECT video_id, 'pending', 'queued', 0, '', 'Preparing local metadata for this media.', updated_at
   FROM downloads WHERE status = 'ready'`).run();
@@ -278,12 +295,23 @@ for (const [column, definition] of [['channel_key', "TEXT NOT NULL DEFAULT ''"],
   try { database.exec(`ALTER TABLE videos ADD COLUMN ${column} ${definition}`); }
   catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
 }
-database.exec(`CREATE TRIGGER IF NOT EXISTS enqueue_download_metadata_after_video_update
-  AFTER UPDATE OF title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta ON videos
+for (const [column, definition] of [
+  ['published_at', "TEXT NOT NULL DEFAULT ''"],
+  ['published_at_precision', "TEXT NOT NULL DEFAULT ''"],
+  ['published_age', "TEXT NOT NULL DEFAULT ''"]
+]) {
+  try { database.exec(`ALTER TABLE videos ADD COLUMN ${column} ${definition}`); }
+  catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
+}
+database.exec(`DROP TRIGGER IF EXISTS enqueue_download_metadata_after_video_update;
+  CREATE TRIGGER enqueue_download_metadata_after_video_update
+  AFTER UPDATE OF title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta, published_at, published_at_precision, published_age ON videos
   WHEN EXISTS (SELECT 1 FROM downloads WHERE video_id = NEW.video_id AND status = 'ready')
     AND (OLD.title <> NEW.title OR OLD.channel <> NEW.channel OR OLD.channel_key <> NEW.channel_key
       OR OLD.channel_url <> NEW.channel_url OR OLD.thumbnail <> NEW.thumbnail OR OLD.avatar <> NEW.avatar
-      OR OLD.duration <> NEW.duration OR OLD.meta <> NEW.meta)
+      OR OLD.duration <> NEW.duration OR OLD.meta <> NEW.meta
+      OR OLD.published_at <> NEW.published_at OR OLD.published_at_precision <> NEW.published_at_precision
+      OR OLD.published_age <> NEW.published_age)
   BEGIN
     INSERT INTO download_metadata (video_id, status, phase, attempts, next_attempt_at, message, updated_at)
       VALUES (NEW.video_id, 'pending', 'queued', 0, '', 'Video metadata changed; refreshing locally stored assets.', CURRENT_TIMESTAMP)
@@ -401,7 +429,9 @@ const upsertVideo = database.prepare(`
   INSERT INTO videos (video_id, url, title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta, kind, section, topic, position, first_seen, last_seen)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(video_id) DO UPDATE SET
-    url = excluded.url, title = excluded.title, channel = excluded.channel,
+    url = excluded.url, title = excluded.title,
+    channel = CASE WHEN trim(excluded.channel) <> '' THEN excluded.channel
+      WHEN lower(trim(videos.channel)) IN ('youtube', 'channel unavailable') THEN '' ELSE videos.channel END,
     channel_key = CASE WHEN excluded.channel_key <> '' THEN excluded.channel_key ELSE videos.channel_key END,
     channel_url = CASE WHEN excluded.channel_url <> '' THEN excluded.channel_url ELSE videos.channel_url END,
     thumbnail = excluded.thumbnail, avatar = excluded.avatar,
@@ -413,13 +443,17 @@ const upsertSubscription = database.prepare(`
   INSERT INTO subscriptions (channel_key, name, avatar, position, last_seen)
   VALUES (?, ?, ?, ?, ?)
   ON CONFLICT(channel_key) DO UPDATE SET
-    name = excluded.name, avatar = excluded.avatar, position = excluded.position, last_seen = excluded.last_seen
+    name = excluded.name,
+    avatar = CASE WHEN trim(excluded.avatar) <> '' THEN excluded.avatar ELSE subscriptions.avatar END,
+    position = excluded.position, last_seen = excluded.last_seen
 `);
 const upsertPlaylistVideo = database.prepare(`
   INSERT INTO videos (video_id, url, title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta, kind, section, topic, position, first_seen, last_seen)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'playlist', '', ?, ?, ?)
   ON CONFLICT(video_id) DO UPDATE SET
-    url = excluded.url, title = excluded.title, channel = excluded.channel,
+    url = excluded.url, title = excluded.title,
+    channel = CASE WHEN trim(excluded.channel) <> '' THEN excluded.channel
+      WHEN lower(trim(videos.channel)) IN ('youtube', 'channel unavailable') THEN '' ELSE videos.channel END,
     channel_key = CASE WHEN excluded.channel_key <> '' THEN excluded.channel_key ELSE videos.channel_key END,
     channel_url = CASE WHEN excluded.channel_url <> '' THEN excluded.channel_url ELSE videos.channel_url END,
     thumbnail = CASE WHEN excluded.thumbnail <> '' THEN excluded.thumbnail ELSE videos.thumbnail END,
@@ -434,6 +468,53 @@ function safeImage(input) {
     const image = new URL(input);
     return image.protocol === 'https:' ? image.href.slice(0, 2048) : '';
   } catch { return ''; }
+}
+
+function cleanPublishedAt(value, precision = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return { publishedAt: '', precision: '' };
+  const dateOnly = /^\d{8}$/.test(raw)
+    ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+    : raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) {
+    const parsed = Date.parse(`${dateOnly}T00:00:00Z`);
+    if (!Number.isFinite(parsed) || parsed > Date.now() + 5 * 60_000) return { publishedAt: '', precision: '' };
+    return { publishedAt: dateOnly, precision: 'date' };
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed) || parsed > Date.now() + 5 * 60_000) return { publishedAt: '', precision: '' };
+  const requestedPrecision = precision === 'date' ? 'date' : 'exact';
+  return { publishedAt: requestedPrecision === 'date' ? new Date(parsed).toISOString().slice(0, 10) : new Date(parsed).toISOString(), precision: requestedPrecision };
+}
+
+function publicationFromInfo(info) {
+  const direct = cleanPublishedAt(info?.published_at || info?.publishedAt, info?.published_at_precision || info?.publishedAtPrecision);
+  if (direct.publishedAt) return { ...direct, publishedAge: String(info?.published_age || info?.publishedAge || '').trim().slice(0, 100) };
+  const timestamp = Number(info?.timestamp);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    const parsed = cleanPublishedAt(new Date(timestamp > 1e12 ? timestamp : timestamp * 1000).toISOString(), 'exact');
+    if (parsed.publishedAt) return { ...parsed, publishedAge: String(info?.published_age || info?.publishedAge || '').trim().slice(0, 100) };
+  }
+  for (const value of [info?.upload_date, info?.release_date]) {
+    const parsed = cleanPublishedAt(value, 'date');
+    if (parsed.publishedAt) return { ...parsed, publishedAge: String(info?.published_age || info?.publishedAge || '').trim().slice(0, 100) };
+  }
+  return { publishedAt: '', precision: '', publishedAge: String(info?.published_age || info?.publishedAge || '').trim().slice(0, 100) };
+}
+
+function saveVideoPublication(id, value) {
+  const publication = value && typeof value === 'object' && 'publishedAt' in value
+    ? { ...cleanPublishedAt(value.publishedAt, value.publishedAtPrecision), publishedAge: String(value.publishedAge || '').trim().slice(0, 100) }
+    : publicationFromInfo(value);
+  database.prepare(`UPDATE videos SET
+    published_at = CASE WHEN ? <> '' THEN ? ELSE published_at END,
+    published_at_precision = CASE WHEN ? <> '' THEN ? ELSE published_at_precision END,
+    published_age = CASE WHEN ? <> '' THEN ? ELSE published_age END
+    WHERE video_id = ?`).run(
+      publication.publishedAt, publication.publishedAt,
+      publication.precision, publication.precision,
+      publication.publishedAge, publication.publishedAge, id
+    );
 }
 
 function cleanRepeatedLabel(input) {
@@ -473,6 +554,18 @@ function cleanChannelKey(input) {
   return '';
 }
 
+function cleanChannelName(input) {
+  const name = cleanRepeatedLabel(input).slice(0, 200);
+  return /^(?:youtube|channel unavailable)$/i.test(name) ? '' : name;
+}
+
+function knownChannelName(channelKey) {
+  if (!channelKey) return '';
+  const row = database.prepare(`SELECT name FROM channels WHERE channel_key = ? AND trim(name) <> ''
+    UNION ALL SELECT name FROM subscriptions WHERE channel_key = ? AND trim(name) <> '' LIMIT 1`).get(channelKey, channelKey);
+  return cleanChannelName(row?.name);
+}
+
 function channelUrlForKey(channelKey, tab = 'videos') {
   const key = cleanChannelKey(channelKey);
   if (!key) return '';
@@ -492,6 +585,75 @@ function formatDurationSeconds(input) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
+const acquisitionExclusionReasons = new Set(['movie-listing', 'paid-content']);
+function normalizeAcquisitionExclusionReason(value) {
+  const reason = String(value?.acquisitionExclusionReason || value?.exclusionReason || '').trim();
+  return acquisitionExclusionReasons.has(reason) ? reason : '';
+}
+
+function isAcquisitionExcluded(id) {
+  return Boolean(database.prepare('SELECT 1 FROM acquisition_exclusions WHERE video_id = ?').get(id));
+}
+
+function finalizeStalledCaptures() {
+  const now = new Date().toISOString();
+  const staleBefore = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
+  const channelMessage = 'Capture timed out after five minutes without extension progress. Captured videos remain saved; revisit the channel to retry.';
+  const searchMessage = 'Search capture timed out after five minutes without new results. Captured results remain saved; run the search again to continue.';
+  const stalledSections = database.prepare(`UPDATE channel_captures
+    SET status = 'stale', phase = 'stalled', message = ?, updated_at = ?
+    WHERE status IN ('opening', 'collecting') AND updated_at <= ?`).run(channelMessage, now, staleBefore).changes;
+  const orphanedSections = database.prepare(`UPDATE channel_captures AS queued
+    SET status = 'stale', phase = 'stalled', message = ?, updated_at = ?
+    WHERE status = 'queued' AND updated_at <= ? AND NOT EXISTS (
+      SELECT 1 FROM channel_captures AS active
+      WHERE active.channel_key = queued.channel_key
+        AND active.status IN ('opening', 'collecting') AND active.updated_at > ?
+    )`).run(channelMessage, now, staleBefore, staleBefore).changes;
+  const stalledSearches = database.prepare(`UPDATE search_sessions
+    SET status = 'stale', updated_at = ? WHERE status = 'collecting' AND updated_at <= ?`).run(now, staleBefore).changes;
+  return { channel: stalledSections + orphanedSections, searches: stalledSearches };
+}
+
+function excludeAcquisitionVideo(id, reason) {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || '')) || !acquisitionExclusionReasons.has(reason)) return false;
+  const now = new Date().toISOString();
+  database.prepare(`INSERT INTO acquisition_exclusions (video_id, reason, excluded_at) VALUES (?, ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET reason = excluded.reason, excluded_at = MIN(acquisition_exclusions.excluded_at, excluded.excluded_at)`)
+    .run(id, reason, now);
+
+  const activeJob = jobs.get(id);
+  if (activeJob?.process && activeJob.process.exitCode === null && activeJob.process.signalCode === null) {
+    activeJob.acquisitionExclusionReason = reason;
+    activeJob.discardRequested = true;
+    activeJob.process.kill('SIGTERM');
+    return true;
+  }
+
+  const dependentTables = [
+    'channel_items', 'playlist_items', 'playback_queue', 'search_results',
+    'search_history_results', 'search_history_clicks', 'video_provisions',
+    'video_duration_lookups', 'video_metadata', 'video_comments', 'video_progress',
+    'video_views', 'video_preferences', 'download_metadata', 'download_retry_queue',
+    'extension_duration_baseline', 'downloads'
+  ];
+  const existingSnapshot = database.prepare('SELECT metadata_json FROM excluded_acquisition_metadata WHERE video_id = ?').get(id);
+  const hasActiveMetadata = Boolean(database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(id));
+  if (hasActiveMetadata && (!existingSnapshot || existingSnapshot.metadata_json === '{}')) {
+    const snapshot = {
+      video: database.prepare('SELECT * FROM videos WHERE video_id = ?').get(id) || null,
+      related: Object.fromEntries(dependentTables.map(table => [table, database.prepare(`SELECT * FROM ${table} WHERE video_id = ?`).all(id)]))
+    };
+    database.prepare(`INSERT INTO excluded_acquisition_metadata (video_id, metadata_json, saved_at) VALUES (?, ?, ?)
+      ON CONFLICT(video_id) DO UPDATE SET metadata_json = excluded.metadata_json, saved_at = excluded.saved_at`)
+      .run(id, JSON.stringify(snapshot), now);
+  }
+  for (const table of dependentTables) database.prepare(`DELETE FROM ${table} WHERE video_id = ?`).run(id);
+  database.prepare('DELETE FROM videos WHERE video_id = ?').run(id);
+  void discardDownloadFiles(id).catch(error => console.error(`Could not clear excluded media for ${id}:`, error));
+  return true;
+}
+
 function cleanVideo(value, position) {
   if (!value || typeof value !== 'object') return null;
   try {
@@ -500,20 +662,30 @@ function cleanVideo(value, position) {
     if (url.protocol !== 'https:' || !['youtube.com', 'm.youtube.com', 'youtu.be'].includes(host)) return null;
     const id = host === 'youtu.be' ? url.pathname.slice(1) : url.searchParams.get('v');
     if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) return null;
+    const exclusionReason = normalizeAcquisitionExclusionReason(value);
+    if (exclusionReason) {
+      excludeAcquisitionVideo(id, exclusionReason);
+      return null;
+    }
+    if (isAcquisitionExcluded(id)) return null;
     const title = String(value.title || '').trim().slice(0, 500);
     if (!title || /^watch$/i.test(title)) return null;
     const channelKey = cleanChannelKey(value.channelKey || value.channelUrl);
+    const channel = cleanChannelName(value.channel) || knownChannelName(channelKey);
     return {
       id,
       url: `https://www.youtube.com/watch?v=${id}`,
       title,
-      channel: cleanRepeatedLabel(value.channel).slice(0, 200),
+      channel,
       channelKey,
       channelUrl: channelKey ? `https://www.youtube.com/${channelKey}` : '',
       thumbnail: safeImage(value.thumbnail),
       avatar: safeImage(value.avatar),
       duration: cleanDurationLabel(value.duration),
       meta: String(value.meta || '').slice(0, 200),
+      publishedAt: cleanPublishedAt(value.publishedAt, value.publishedAtPrecision).publishedAt,
+      publishedAtPrecision: cleanPublishedAt(value.publishedAt, value.publishedAtPrecision).precision,
+      publishedAge: String(value.publishedAge || '').trim().slice(0, 100),
       kind: value.kind === 'short' ? 'short' : 'normal',
       section: value.section === 'news' ? 'news' : value.section === 'search' ? 'search' : value.section === 'playlist' ? 'playlist' : value.section === 'channel' ? 'channel' : 'home',
       topic: String(value.topic || '').slice(0, 80),
@@ -1083,7 +1255,8 @@ async function prepareOfflineCache({ backgroundOnly = false } = {}) {
 function saveDownload(id, status, message = '', progress = 0, stage = '') {
   const now = new Date().toISOString();
   const nowMs = Date.parse(now);
-  const previous = database.prepare('SELECT acquired_at AS acquiredAt, started_at AS startedAt, expires_at AS expiresAt, expiry_paused_ms AS pausedMs FROM downloads WHERE video_id = ?').get(id) || null;
+  const savedDownload = database.prepare('SELECT status, acquired_at AS acquiredAt, started_at AS startedAt, expires_at AS expiresAt, expiry_paused_ms AS pausedMs FROM downloads WHERE video_id = ?').get(id) || null;
+  const previous = savedDownload && ['deleted', 'expired'].includes(savedDownload.status) ? null : savedDownload;
   const acquiredAt = status === 'ready' ? previous?.acquiredAt || now : '';
   const startedAt = previous?.startedAt || (status === 'downloading' ? now : '');
   let expiresAt = '';
@@ -1103,10 +1276,14 @@ function saveDownload(id, status, message = '', progress = 0, stage = '') {
     INSERT INTO downloads (video_id, status, message, progress, stage, updated_at, acquired_at, expires_at, expiry_paused_ms, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(video_id) DO UPDATE SET status = excluded.status, message = excluded.message,
       progress = excluded.progress, stage = excluded.stage, updated_at = excluded.updated_at,
-      acquired_at = CASE WHEN downloads.acquired_at = '' AND excluded.status = 'ready' THEN excluded.acquired_at ELSE downloads.acquired_at END,
-      expires_at = CASE WHEN excluded.status = 'ready' THEN excluded.expires_at ELSE downloads.expires_at END,
-      expiry_paused_ms = CASE WHEN excluded.status = 'ready' THEN excluded.expiry_paused_ms ELSE downloads.expiry_paused_ms END,
-      started_at = CASE WHEN downloads.started_at = '' AND excluded.started_at <> '' THEN excluded.started_at ELSE downloads.started_at END
+      acquired_at = CASE WHEN downloads.status IN ('deleted', 'expired') AND excluded.status IN ('downloading', 'ready') THEN excluded.acquired_at
+        WHEN downloads.acquired_at = '' AND excluded.status = 'ready' THEN excluded.acquired_at ELSE downloads.acquired_at END,
+      expires_at = CASE WHEN downloads.status IN ('deleted', 'expired') AND excluded.status IN ('downloading', 'ready') THEN excluded.expires_at
+        WHEN excluded.status = 'ready' THEN excluded.expires_at ELSE downloads.expires_at END,
+      expiry_paused_ms = CASE WHEN downloads.status IN ('deleted', 'expired') AND excluded.status IN ('downloading', 'ready') THEN excluded.expiry_paused_ms
+        WHEN excluded.status = 'ready' THEN excluded.expiry_paused_ms ELSE downloads.expiry_paused_ms END,
+      started_at = CASE WHEN downloads.status IN ('deleted', 'expired') AND excluded.status IN ('downloading', 'ready') THEN excluded.started_at
+        WHEN downloads.started_at = '' AND excluded.started_at <> '' THEN excluded.started_at ELSE downloads.started_at END
   `).run(id, status, message, progress, stage, now, acquiredAt, expiresAt, pausedMs, startedAt);
   if (status === 'ready') {
     database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
@@ -1156,6 +1333,9 @@ function startYoutubeDownloadCooldown() {
 function explainDownloadFailure(rawMessage) {
   const raw = String(rawMessage || '').replace(/https?:\/\/\S+/g, '').trim();
   const normalized = raw.replace(/^ERROR:\s*/i, '');
+  if (/this video requires payment to watch|requires a payment|paid content|purchase this video|members[- ]only|only available to (?:paid )?members|requires (?:a )?(?:youtube )?premium|available only with (?:youtube )?premium|included with (?:youtube )?premium/i.test(raw)) {
+    return { retryable: false, acquisitionExclusionReason: 'paid-content', message: 'YouTube marks this as paid content; YourTube removed it from acquisition.' };
+  }
   if (/requested format is not available|requested format not available|no video formats found|did not offer a compatible (?:webm|mp4) format/i.test(raw)) {
     return { retryable: false, message: 'YouTube did not offer a compatible WebM or MP4 format for this video. The download is paused because repeating the same format request will not help. Choose Retry later if YouTube makes another format available.' };
   }
@@ -1230,6 +1410,7 @@ function recordDownloadFailure(id, message) {
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(video_id) DO UPDATE SET attempts = excluded.attempts,
     status = excluded.status, next_retry_at = excluded.next_retry_at, last_error = excluded.last_error, updated_at = excluded.updated_at`)
     .run(id, attempts, paused ? 'paused' : pausedOffline ? 'paused-offline' : 'pending', nextRetryAt, storedMessage, now.toISOString());
+  if (explanation.acquisitionExclusionReason) excludeAcquisitionVideo(id, explanation.acquisitionExclusionReason);
   if (requiresSignIn && downloadProtectionMode !== 'off') startYoutubeDownloadCooldown();
 }
 
@@ -1316,6 +1497,8 @@ function stableExtractorMetadata(value, key = '', depth = 0) {
 
 function saveVideoMetadataFromInfo(id, info) {
   if (!info || typeof info !== 'object') return;
+  saveVideoPublication(id, info);
+  const publication = publicationFromInfo(info);
   const channel = String(info.channel || info.uploader || '').trim().slice(0, 200);
   const channelId = String(info.channel_id || info.uploader_id || '').trim();
   const channelKey = cleanChannelKey(info.channel_url || info.uploader_url || (/^UC[A-Za-z0-9_-]{20,32}$/.test(channelId) ? `channel/${channelId}` : ''));
@@ -1351,6 +1534,7 @@ function saveVideoMetadataFromInfo(id, info) {
     uploader: text(info.uploader, 500), uploader_id: text(info.uploader_id, 300), uploader_url: text(info.uploader_url, 2_000),
     channel: text(info.channel, 500), channel_id: text(info.channel_id, 300), channel_url: text(info.channel_url, 2_000), channel_follower_count: Number(info.channel_follower_count) || null,
     duration_string: text(info.duration_string, 80), upload_date: text(info.upload_date, 40), release_date: text(info.release_date, 40), modified_date: text(info.modified_date, 40),
+    publishedAt: publication.publishedAt, publishedAtPrecision: publication.precision, publishedAge: publication.publishedAge,
     live_status: text(info.live_status, 80), availability: text(info.availability, 80), language: text(info.language, 80), license: text(info.license, 200),
     release_year: Number(info.release_year) || null, artist: text(info.artist, 500), album: text(info.album, 500), track: text(info.track, 500),
     series: text(info.series, 500), season_number: Number(info.season_number) || null, episode_number: Number(info.episode_number) || null, episode: text(info.episode, 500),
@@ -1373,7 +1557,8 @@ function saveVideoMetadataFromInfo(id, info) {
 
 function saveLocalVideoMetadataSnapshot(id, localAssets = []) {
   const video = database.prepare(`SELECT video_id AS id, url, title, channel, channel_key AS channelKey, channel_url AS channelUrl,
-    thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
+    thumbnail, avatar, duration, meta, kind, section, topic, published_at AS publishedAt,
+    published_at_precision AS publishedAtPrecision, published_age AS publishedAge FROM videos WHERE video_id = ?`).get(id);
   if (!video) return;
   const prior = database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value;
   let metadata = {};
@@ -1408,6 +1593,10 @@ const ageConfirmationPattern = /sign in to confirm your age|confirm your age|age
 function classifyDurationFailure(reason, referenceAt = Date.now()) {
   const raw = String(reason || '').replace(/\s+/g, ' ').trim();
   const human = raw.replace(/^ERROR:\s*/i, '').replace(/^\[youtube\]\s*[A-Za-z0-9_-]+:\s*/i, '').trim();
+  const humanFailure = human
+    .replace(/\s+No duration lookup will be retried automatically[\s\S]*$/i, '')
+    .replace(/[.!?]+$/, '')
+    .trim();
   const upcoming = raw.match(/(?:this live event will begin|premieres?)\s+in\s+(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?|days?|weeks?)\b/i);
   if (upcoming) {
     const amount = Number(upcoming[1]);
@@ -1422,22 +1611,26 @@ function classifyDurationFailure(reason, referenceAt = Date.now()) {
       message: `${human ? `${human.replace(/[.!?]+$/, '')}.` : 'This live event or premiere is not available yet.'} Video length will be checked again shortly after it begins.`
     };
   }
-  if (/this video requires payment to watch|requires a payment|paid content|purchase this video/i.test(raw)) {
+  if (/this video requires payment to watch|requires a payment|paid content|purchase this video|members[- ]only|only available to (?:paid )?members|requires (?:a )?(?:youtube )?premium|available only with (?:youtube )?premium|included with (?:youtube )?premium/i.test(raw)) {
     return {
-      status: 'unavailable', nextAttemptAt: 'never',
-      message: `${human || 'This video requires payment to watch.'} No duration lookup will be retried automatically.`
+      status: 'unavailable', nextAttemptAt: 'never', acquisitionExclusionReason: 'paid-content',
+      message: `${humanFailure || 'This video requires payment to watch'} No duration lookup will be retried automatically.`
     };
   }
   if (/this live stream recording is not available|live stream recording.*(?:unavailable|not available)/i.test(raw)) {
     return {
       status: 'unavailable', nextAttemptAt: 'never',
-      message: `${human || 'This live stream recording is not available.'} No duration lookup will be retried automatically.`
+      message: `${humanFailure || 'This live stream recording is not available'} No duration lookup will be retried automatically.`
     };
   }
   return null;
 }
 
 function saveClassifiedDurationFailure(id, classification) {
+  if (classification.acquisitionExclusionReason) {
+    excludeAcquisitionVideo(id, classification.acquisitionExclusionReason);
+    return;
+  }
   if (classification.status === 'upcoming') {
     database.prepare("UPDATE videos SET duration = 'UPCOMING' WHERE video_id = ? AND (trim(duration) = '' OR upper(trim(duration)) = 'UPCOMING')").run(id);
     setDurationLookup(id, 'upcoming', classification.message, classification.nextAttemptAt);
@@ -1772,6 +1965,36 @@ function metadataThumbnailCandidates(video) {
   return [...new Set([video?.thumbnail, storedMetadata.thumbnail, ...variants, ...defaults].filter(value => typeof value === 'string' && value.startsWith('https://')))];
 }
 
+const viewedThumbnailRetryAt = new Map();
+async function cacheNextViewedStubThumbnail() {
+  if (networkMode !== 'online' || offlinePreparationRequested || connectivityStatus.available === false) return false;
+  const now = Date.now();
+  const rows = database.prepare(`SELECT v.video_id AS id, v.thumbnail, w.view_count AS viewCount
+    FROM videos v JOIN video_views w ON w.video_id = v.video_id
+    WHERE w.view_count > 0
+      AND NOT EXISTS (SELECT 1 FROM cached_images ci WHERE ci.source_url = v.thumbnail)
+    ORDER BY w.view_count DESC, w.updated_at DESC, v.video_id LIMIT 250`).all();
+  for (const video of rows) {
+    if ((viewedThumbnailRetryAt.get(video.id) || 0) > now) continue;
+    const candidates = metadataThumbnailCandidates(video);
+    const cached = candidates.find(source => existingCachedImage(source));
+    if (cached) {
+      if (video.thumbnail !== cached) database.prepare('UPDATE videos SET thumbnail = ? WHERE video_id = ?').run(cached, video.id);
+      viewedThumbnailRetryAt.delete(video.id);
+      continue;
+    }
+    for (const source of candidates) {
+      if (!await cacheRemoteImage(source)) continue;
+      if (video.thumbnail !== source) database.prepare('UPDATE videos SET thumbnail = ? WHERE video_id = ?').run(source, video.id);
+      viewedThumbnailRetryAt.delete(video.id);
+      return true;
+    }
+    viewedThumbnailRetryAt.set(video.id, now + 15 * 60_000);
+    return false;
+  }
+  return false;
+}
+
 function downloadedMetadataGaps(id) {
   const video = database.prepare(`SELECT video_id AS id, title, channel, channel_key AS channelKey, thumbnail, avatar, duration
     FROM videos WHERE video_id = ?`).get(id);
@@ -1920,7 +2143,13 @@ async function runDownloadedMetadataQueue() {
     WHERE d.status = 'ready' AND (m.video_id IS NULL OR m.status IN ('pending', 'retry'))
       AND (COALESCE(m.next_attempt_at, '') = '' OR m.next_attempt_at <= ?)
     ORDER BY d.acquired_at ASC LIMIT 1`).get(now);
-  if (!item) return;
+  if (!item) {
+    downloadedMetadataWorkerRunning = true;
+    try { await cacheNextViewedStubThumbnail(); }
+    catch (error) { console.warn('[stub-thumbnail-cache]', error.message || error); }
+    finally { downloadedMetadataWorkerRunning = false; }
+    return;
+  }
 
   downloadedMetadataWorkerRunning = true;
   const attempts = Number(item.attempts) || 0;
@@ -1953,6 +2182,7 @@ async function beginDownload(id) {
     return { status: 'ready', message: '', progress: 100, stage: 'Ready to play', mediaExtension: getStoredMediaExtension(id) };
   }
 
+  if (isAcquisitionExcluded(id)) return null;
   if (jobs.has(id)) return getDownload(id) || { status: 'downloading', message: '' };
   const video = database.prepare('SELECT url, duration FROM videos WHERE video_id = ?').get(id);
   if (!video) return null;
@@ -2032,6 +2262,12 @@ async function beginDownload(id) {
   });
   downloadProcess.on('close', async code => {
     if (!jobs.has(id)) return;
+    if (job.acquisitionExclusionReason) {
+      try { await discardDownloadFiles(id); } catch (error) { console.error(`Could not clear excluded media fragments for ${id}:`, error); }
+      jobs.delete(id);
+      excludeAcquisitionVideo(id, job.acquisitionExclusionReason);
+      return;
+    }
     for (const stream of ['stdout', 'stderr']) {
       if (progressBuffers[stream]) consumeProgress(stream, '\n');
     }
@@ -2183,9 +2419,11 @@ async function cleanupExpiredMedia() {
         try { unlinkSync(mediaPath); }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
-      const deleted = database.prepare("DELETE FROM downloads WHERE video_id = ? AND status = 'ready' AND expires_at = ?").run(item.id, item.expiresAt);
+      const deleted = database.prepare(`UPDATE downloads SET status = 'expired', message = 'The local media copy expired; saved video metadata was retained.',
+        progress = 0, stage = 'Expired', updated_at = ? WHERE video_id = ? AND status = 'ready' AND expires_at = ?`)
+        .run(new Date().toISOString(), item.id, item.expiresAt);
       database.exec('COMMIT');
-      if (deleted.changes) console.log(`Auto-deleted expired local video ${item.id}`);
+      if (deleted.changes) console.log(`Auto-deleted expired local media ${item.id}; retained its metadata.`);
     } catch (error) {
       try { database.exec('ROLLBACK'); } catch {}
       console.error(`Could not auto-delete expired local video ${item.id}:`, error);
@@ -2459,6 +2697,11 @@ const server = createServer(async (request, response) => {
 
   const origin = request.headers.origin || '';
   const extensionOrigin = origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
+  const remoteAddress = request.socket.remoteAddress || '';
+  const loopbackAddress = remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1';
+  // Some Chromium extension service-worker requests reach loopback without an Origin header.
+  // Keep these local-only while preserving the normal extension-origin CORS checks.
+  const localExtensionRequest = extensionOrigin || (!origin && loopbackAddress);
   const extensionOnlyRoute = ['/api/extension/metadata-capture-jobs', '/api/extension/video-metadata', '/api/extension/diagnostics'].includes(url.pathname);
   if (extensionOrigin && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
     response.setHeader('Access-Control-Allow-Origin', origin);
@@ -2657,7 +2900,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const mediaMatch = /^\/media\/([A-Za-z0-9_-]{11})\.webm$/.exec(url.pathname);
+  const mediaMatch = /^\/media\/([A-Za-z0-9_-]{11})(?:\.(?:webm|mp4))?$/.exec(url.pathname);
   if (mediaMatch && ['GET', 'HEAD'].includes(request.method)) {
     await serveMedia(request, response, mediaMatch[1]);
     return;
@@ -2665,7 +2908,7 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/videos') {
     const rows = database.prepare(`
-      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.position, v.last_seen AS seenAt, d.acquired_at AS acquiredAt,
+      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.position, v.last_seen AS seenAt, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt,
         (SELECT vp.category FROM video_provisions vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, vp.category LIMIT 1) AS sourceProvisionCategory,
         (SELECT vp.last_seen FROM video_provisions vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, vp.category LIMIT 1) AS sourceProvisionSeenAt,
         (SELECT ci.channel_key FROM channel_items ci WHERE ci.video_id = v.video_id ORDER BY ci.added_at DESC, ci.channel_key LIMIT 1) AS sourceChannelKey,
@@ -2706,6 +2949,7 @@ const server = createServer(async (request, response) => {
     const videos = database.prepare(`
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl,
         v.thumbnail, v.avatar, v.duration, v.meta, v.kind, ci.position, ci.added_at AS seenAt, ci.added_at AS sourceSeenAt,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END AS downloaded,
         COALESCE(w.view_count, 0) AS viewCount
       FROM channel_items ci JOIN videos v ON v.video_id = ci.video_id
@@ -2717,20 +2961,40 @@ const server = createServer(async (request, response) => {
     `).all(channelKey, tab);
     const sourceTabLabel = ({ home: 'Home', videos: 'Videos', shorts: 'Shorts', streams: 'Live', playlists: 'Playlists', community: 'Community' })[tab];
     for (const video of videos) video.sourceLabel = `From ${channelKey} · ${sourceTabLabel}`;
-    const captures = database.prepare(`SELECT capture_id AS captureId, tab_key AS tab, status, phase, message,
+    const captureRows = database.prepare(`SELECT capture_id AS captureId, tab_key AS tab, status, phase, message,
         video_count AS videoCount, created_at AS createdAt, updated_at AS updatedAt
       FROM channel_captures c WHERE channel_key = ? AND NOT EXISTS (
         SELECT 1 FROM channel_captures newer WHERE newer.channel_key = c.channel_key
           AND newer.tab_key = c.tab_key AND newer.created_at > c.created_at
       ) ORDER BY tab_key`).all(channelKey);
+    const captureNow = Date.now();
+    const hasFreshActiveCapture = captureRows.some(item => ['opening', 'collecting'].includes(item.status) &&
+      Number.isFinite(Date.parse(item.updatedAt || '')) && captureNow - Date.parse(item.updatedAt) <= backgroundCaptureStaleMs);
+    const presentCapture = item => {
+      if (!item) return item;
+      const updatedAt = Date.parse(item.updatedAt || '');
+      const ageMs = Number.isFinite(updatedAt) ? captureNow - updatedAt : 0;
+      const staleActive = ['opening', 'collecting'].includes(item.status) && ageMs > backgroundCaptureStaleMs;
+      const orphanedQueue = item.status === 'queued' && reportedNetworkMode() === 'online' && !hasFreshActiveCapture && ageMs > backgroundCaptureStaleMs;
+      if (!staleActive && !orphanedQueue) return item;
+      return {
+        ...item,
+        status: 'stale',
+        phase: 'stalled',
+        message: orphanedQueue
+          ? 'This section has waited more than five minutes without an active channel capture. Saved videos remain available; revisit this channel if prefetch has stopped.'
+          : 'No extension progress for five minutes. Captured videos remain saved; revisit this channel if capture has stopped.'
+      };
+    };
+    const captures = captureRows.map(presentCapture);
     const captureId = String(url.searchParams.get('captureId') || '');
-    const capture = /^[a-f0-9-]{36}$/i.test(captureId)
+    const capture = presentCapture(/^[a-f0-9-]{36}$/i.test(captureId)
       ? database.prepare(`SELECT capture_id AS captureId, tab_key AS tab, status, phase, message,
           video_count AS videoCount, created_at AS createdAt, updated_at AS updatedAt
           FROM channel_captures WHERE capture_id = ? AND channel_key = ?`).get(captureId, channelKey) || null
       : database.prepare(`SELECT capture_id AS captureId, tab_key AS tab, status, phase, message,
           video_count AS videoCount, created_at AS createdAt, updated_at AS updatedAt
-          FROM channel_captures WHERE channel_key = ? AND tab_key = ? ORDER BY created_at DESC LIMIT 1`).get(channelKey, tab) || null;
+          FROM channel_captures WHERE channel_key = ? AND tab_key = ? ORDER BY created_at DESC LIMIT 1`).get(channelKey, tab) || null);
     sendJson(response, 200, { channel, tab, videos, capture, captures });
     return;
   }
@@ -2781,19 +3045,21 @@ const server = createServer(async (request, response) => {
       if (mediaDiscoveryPaused()) { sendJson(response, 409, { error: 'Channel capture requires Online mode.', mode: reportedNetworkMode() }); return; }
       const now = new Date().toISOString();
       const activeSince = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recentProgressSince = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
       const channelUrl = `https://www.youtube.com/${channelKey}`;
       database.prepare(`INSERT INTO channels (channel_key, channel_url, created_at, updated_at) VALUES (?, ?, ?, ?)
         ON CONFLICT(channel_key) DO UPDATE SET channel_url = excluded.channel_url, updated_at = excluded.updated_at`)
         .run(channelKey, channelUrl, now, now);
       const findActive = database.prepare(`SELECT capture_id AS captureId, tab_key AS tab, status, phase, message
         FROM channel_captures WHERE channel_key = ? AND tab_key = ? AND created_at >= ?
-          AND status IN ('opening', 'collecting', 'queued', 'paused')
+          AND (status = 'paused' OR (status = 'queued' AND updated_at >= ?)
+            OR (status IN ('opening', 'collecting') AND updated_at >= ?))
         ORDER BY created_at DESC LIMIT 1`);
       const insert = database.prepare(`INSERT INTO channel_captures
         (capture_id, channel_key, tab_key, status, phase, video_count, message, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)`);
       const result = captures.map((job, index) => {
-        const active = findActive.get(channelKey, job.tab, activeSince);
+        const active = findActive.get(channelKey, job.tab, activeSince, recentProgressSince, recentProgressSince);
         if (active) return { ...active, reused: true };
         const status = index === 0 ? 'opening' : 'queued';
         const phase = index === 0 ? 'opening' : 'prefetch';
@@ -2829,20 +3095,24 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/search') {
     const query = String(url.searchParams.get('q') || '').trim().slice(0, 200);
-    const source = mediaDiscoveryPaused() || url.searchParams.get('source') === 'local' ? 'local' : 'youtube';
+    const offlineSearch = mediaDiscoveryPaused();
+    const source = offlineSearch || url.searchParams.get('source') === 'local' ? 'local' : 'youtube';
     const requestedLimit = Number.parseInt(url.searchParams.get('limit') || '5', 10);
     const requestedOffset = Number.parseInt(url.searchParams.get('offset') || '0', 10);
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(20, requestedLimit)) : 5;
     const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.min(1000000, requestedOffset)) : 0;
     if (!query) { sendJson(response, 200, { videos: [], total: 0, localTotal: 0, localVideos: [], offset, limit, hasMore: false }); return; }
     const searchable = "lower(v.title || ' ' || v.channel || ' ' || v.meta)";
-    const sourceFilter = source === 'local' ? ' AND d.video_id IS NOT NULL' : ' AND d.video_id IS NULL';
+    const sourceFilter = source === 'local'
+      ? offlineSearch ? '' : ' AND d.video_id IS NOT NULL'
+      : ' AND d.video_id IS NULL';
     const matching = `instr(${searchable}, lower(?)) > 0${sourceFilter}`;
     const matchTotal = database.prepare(`SELECT COUNT(*) AS total FROM videos v LEFT JOIN downloads d ON d.video_id = v.video_id AND d.status = 'ready' WHERE ${matching}`).get(query).total;
     const localMatching = `instr(${searchable}, lower(?)) > 0 AND d.video_id IS NOT NULL`;
     const localTotal = database.prepare(`SELECT COUNT(*) AS total FROM videos v LEFT JOIN downloads d ON d.video_id = v.video_id AND d.status = 'ready' WHERE ${localMatching}`).get(query).total;
     const localVideos = database.prepare(`
-      SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration
+      SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge
       FROM videos v JOIN downloads d ON d.video_id = v.video_id AND d.status = 'ready'
       WHERE instr(${searchable}, lower(?)) > 0
       ORDER BY CASE WHEN instr(lower(v.title), lower(?)) > 0 THEN 0 ELSE 1 END,
@@ -2850,16 +3120,21 @@ const server = createServer(async (request, response) => {
     `).all(query, query);
     const videos = database.prepare(`
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic,
-        v.last_seen AS seenAt, d.acquired_at AS acquiredAt,
+        v.last_seen AS seenAt, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt,
         CASE WHEN d.video_id IS NULL THEN 0 ELSE 1 END AS downloaded, COALESCE(w.view_count, 0) AS viewCount
       FROM videos v LEFT JOIN downloads d ON d.video_id = v.video_id AND d.status = 'ready'
       LEFT JOIN video_views w ON w.video_id = v.video_id
       WHERE ${matching}
-      ORDER BY CASE WHEN instr(lower(v.title), lower(?)) > 0 THEN 0 ELSE 1 END,
+      ORDER BY CASE WHEN d.video_id IS NULL THEN 1 ELSE 0 END,
+        CASE WHEN instr(lower(v.title), lower(?)) > 0 THEN 0 ELSE 1 END,
         v.last_seen DESC, v.position ASC, v.video_id
       LIMIT ? OFFSET ?
     `).all(query, query, limit, offset);
-    sendJson(response, 200, { videos, total: matchTotal, localTotal, localVideos, offset, limit, hasMore: offset + videos.length < matchTotal });
+    sendJson(response, 200, {
+      videos: localizeCachedImages(videos), total: matchTotal, localTotal,
+      localVideos: localizeCachedImages(localVideos), offset, limit,
+      hasMore: offset + videos.length < matchTotal
+    });
     return;
   }
 
@@ -2935,8 +3210,24 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/subscriptions') {
+    database.prepare(`
+      UPDATE subscriptions
+      SET avatar = COALESCE(
+        (SELECT c.avatar FROM channels c
+          WHERE trim(c.channel_key, '/') = trim(subscriptions.channel_key, '/') AND trim(c.avatar) <> '' LIMIT 1),
+        (SELECT v.avatar FROM videos v
+          WHERE trim(v.channel_key, '/') = trim(subscriptions.channel_key, '/') AND trim(v.avatar) <> ''
+          ORDER BY v.last_seen DESC LIMIT 1)
+      )
+      WHERE trim(avatar) = '' AND (
+        EXISTS (SELECT 1 FROM channels c
+          WHERE trim(c.channel_key, '/') = trim(subscriptions.channel_key, '/') AND trim(c.avatar) <> '')
+        OR EXISTS (SELECT 1 FROM videos v
+          WHERE trim(v.channel_key, '/') = trim(subscriptions.channel_key, '/') AND trim(v.avatar) <> '')
+      )
+    `).run();
     const rows = database.prepare('SELECT channel_key AS key, name, avatar, position FROM subscriptions ORDER BY position').all();
-    sendJson(response, 200, rows);
+    sendJson(response, 200, localizeCachedImages(rows));
     return;
   }
 
@@ -3022,6 +3313,206 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/daily-mix') {
+    try {
+      const dateParts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(new Date());
+      const dateKey = `${dateParts.find(part => part.type === 'year')?.value}-${dateParts.find(part => part.type === 'month')?.value}-${dateParts.find(part => part.type === 'day')?.value}`;
+      const playlistId = `daily-mix-${dateKey}`;
+      let playlist = database.prepare(`SELECT playlist_id AS id, title, source, kind, thumbnail, created_at AS createdAt, updated_at AS updatedAt
+        FROM playlists WHERE playlist_id = ? AND kind = 'daily-mix'`).get(playlistId);
+
+      if (!playlist) {
+        const now = new Date().toISOString();
+        const recentCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+        const priorMixCutoff = new Date(Date.now() - 7 * 86_400_000).toISOString();
+        const allowNewStubs = reportedNetworkMode() === 'online';
+        const musicPattern = /\b(?:music|song|official audio|official music video|lyrics?|vevo|concert|live performance|album|single|remix|cover|acoustic|karaoke|instrumental|soundtrack|dj set|mix)\b/i;
+        const styleRules = [
+          ['rock', /\b(?:rock|metal|punk|grunge|alternative rock|hard rock|classic rock|indie rock|post[- ]rock)\b/i],
+          ['metal', /\b(?:metal|heavy metal|thrash|death metal|black metal|metalcore|doom metal)\b/i],
+          ['hip-hop', /\b(?:hip[- ]hop|rap|trap)\b/i],
+          ['r-and-b', /\b(?:r\s*&\s*b|rnb|rhythm and blues)\b/i],
+          ['soul', /\b(?:soul|neo[- ]soul|motown)\b/i],
+          ['pop', /\b(?:pop|synth[- ]pop|electropop|dance[- ]pop)\b/i],
+          ['electronic', /\b(?:electronic|techno|house|trance|drum and bass|dnb|ambient|electronica)\b/i],
+          ['jazz', /\b(?:jazz|bebop|swing|big band)\b/i],
+          ['classical', /\b(?:classical|orchestra|symphony|opera|baroque)\b/i],
+          ['country', /\b(?:country|bluegrass|americana)\b/i],
+          ['folk', /\b(?:folk|singer[- ]songwriter|traditional music)\b/i],
+          ['reggae', /\b(?:reggae|dancehall|ska)\b/i],
+          ['latin', /\b(?:latin|salsa|bachata|reggaeton|cumbia|bossa nova)\b/i]
+        ];
+        const styleTagsFor = value => styleRules.filter(([, pattern]) => pattern.test(String(value || ''))).map(([tag]) => tag);
+        const ignoredTokens = new Set(['official', 'video', 'audio', 'music', 'song', 'songs', 'lyrics', 'lyric', 'vevo', 'live', 'album', 'single', 'remix', 'cover', 'acoustic', 'karaoke', 'instrumental', 'soundtrack', 'mix', 'full', 'hd', '4k', 'feat', 'featuring', 'with', 'from', 'the', 'and', 'for', 'you', 'that', 'this', 'version', 'visualizer', 'records', 'record', 'channel']);
+        const normalizeArtist = value => String(value || '').toLowerCase().replace(/\b(?:official|vevo|records|recordings|music|topic)\b/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+        const artistFor = row => {
+          const channelArtist = normalizeArtist(row.channel || row.channelKey);
+          if (channelArtist && !['channel unavailable', 'youtube', 'unknown'].includes(channelArtist) && !/^uc[a-z0-9_-]{20,32}$/i.test(channelArtist.replaceAll(' ', ''))) return channelArtist;
+          const titleParts = String(row.title || '').split(/\s[-–—|:]\s/).map(part => part.trim()).filter(Boolean);
+          if (/^(?:mix|live|official|music)$/i.test(titleParts[0] || '')) titleParts.shift();
+          return normalizeArtist(titleParts[0] || '');
+        };
+        const tokensFor = value => [...new Set((String(value || '').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter(token => !ignoredTokens.has(token)))];
+        const watchedRows = database.prepare(`
+          SELECT v.title, v.channel, v.channel_key AS channelKey, v.topic, v.section, COALESCE(ch.description, '') AS channelDescription,
+            COALESCE(w.view_count, 0) AS viewCount, COALESCE(p.current_time, 0) AS currentTime,
+            COALESCE(p.duration, 0) AS progressDuration, COALESCE(p.completed, 0) AS completed,
+            EXISTS (SELECT 1 FROM playlist_items i JOIN playlists pl ON pl.playlist_id = i.playlist_id
+              WHERE i.video_id = v.video_id AND (pl.kind = 'mix' OR lower(pl.title) LIKE '%music%' OR lower(pl.title) LIKE 'mix -%')) AS inMusicPlaylist,
+            COALESCE((SELECT group_concat(pl.title, ' ') FROM playlist_items i JOIN playlists pl ON pl.playlist_id = i.playlist_id WHERE i.video_id = v.video_id), '') AS playlistContext
+          FROM videos v LEFT JOIN video_views w ON w.video_id = v.video_id
+          LEFT JOIN video_progress p ON p.video_id = v.video_id
+          LEFT JOIN video_preferences f ON f.video_id = v.video_id
+          LEFT JOIN channels ch ON ch.channel_key = v.channel_key
+          WHERE COALESCE(f.not_interested, 0) = 0
+            AND (COALESCE(w.view_count, 0) > 0 OR COALESCE(p.current_time, 0) > 0 OR COALESCE(p.completed, 0) = 1)
+        `).all();
+        const artistAffinity = new Map();
+        const tokenAffinity = new Map();
+        const styleAffinity = new Map();
+        for (const row of watchedRows) {
+          const text = `${row.title || ''} ${row.channel || ''} ${row.topic || ''} ${row.section || ''} ${row.channelDescription || ''} ${row.playlistContext || ''}`;
+          const styleTags = styleTagsFor(text);
+          if (!row.inMusicPlaylist && !musicPattern.test(text) && !styleTags.length) continue;
+          const ratio = Number(row.progressDuration) > 0 ? Math.min(1, Number(row.currentTime) / Number(row.progressDuration)) : 0;
+          const starts = Math.min(6, Number(row.viewCount) || 0);
+          const completionSignal = Number(row.completed) ? 2.4 : ratio >= 0.8 ? 1.8 : ratio >= 0.5 ? 1.05 : ratio >= 0.15 ? 0.45 : 0;
+          const signal = completionSignal + starts * 0.18 * (completionSignal > 0 ? 1 : 0.15);
+          if (signal <= 0.25) continue;
+          const artist = artistFor(row);
+          if (artist && artist !== 'channel unavailable') artistAffinity.set(artist, (artistAffinity.get(artist) || 0) + signal);
+          for (const token of tokensFor(`${row.title || ''} ${row.channel || ''}`)) tokenAffinity.set(token, (tokenAffinity.get(token) || 0) + signal);
+          for (const tag of styleTags) styleAffinity.set(tag, (styleAffinity.get(tag) || 0) + signal);
+        }
+
+        const candidates = database.prepare(`
+          SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.thumbnail, v.avatar, v.duration,
+            v.kind, v.section, v.topic, COALESCE(ch.description, '') AS channelDescription,
+            COALESCE((SELECT MIN(vp.first_seen) FROM video_provisions vp WHERE vp.video_id = v.video_id), v.first_seen) AS acquiredAt,
+            CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END AS downloaded,
+            EXISTS (SELECT 1 FROM playlist_items i JOIN playlists pl ON pl.playlist_id = i.playlist_id
+              WHERE i.video_id = v.video_id AND (pl.kind = 'mix' OR lower(pl.title) LIKE '%music%' OR lower(pl.title) LIKE 'mix -%')) AS inMusicPlaylist,
+            COALESCE((SELECT group_concat(pl.title, ' ') FROM playlist_items i JOIN playlists pl ON pl.playlist_id = i.playlist_id WHERE i.video_id = v.video_id), '') AS playlistContext,
+            COALESCE(w.view_count, 0) AS viewCount
+          FROM videos v LEFT JOIN downloads d ON d.video_id = v.video_id
+          LEFT JOIN video_views w ON w.video_id = v.video_id
+          LEFT JOIN channels ch ON ch.channel_key = v.channel_key
+          WHERE v.kind != 'short' AND v.duration != '' AND NOT EXISTS (SELECT 1 FROM acquisition_exclusions x WHERE x.video_id = v.video_id)
+            AND NOT EXISTS (SELECT 1 FROM video_preferences f WHERE f.video_id = v.video_id AND f.not_interested = 1)
+            AND NOT EXISTS (SELECT 1 FROM blocked_channels b WHERE lower(b.channel_key) = lower(v.channel_key) OR lower(b.channel_key) = lower(v.channel))
+            AND (d.status = 'ready' OR (? = 1 AND COALESCE((SELECT MIN(vp.first_seen) FROM video_provisions vp WHERE vp.video_id = v.video_id), v.first_seen) >= ?))
+        `).all(allowNewStubs ? 1 : 0, recentCutoff);
+        const maxArtistAffinity = Math.max(0, ...artistAffinity.values());
+        const maxTokenAffinity = Math.max(0, ...tokenAffinity.values());
+        const maxStyleAffinity = Math.max(0, ...styleAffinity.values());
+        const candidatesById = new Map();
+        for (const candidate of candidates) {
+          const text = `${candidate.title || ''} ${candidate.channel || ''} ${candidate.topic || ''} ${candidate.section || ''} ${candidate.channelDescription || ''} ${candidate.playlistContext || ''}`;
+          const styleTags = styleTagsFor(text);
+          if (!hasFiniteVideoDuration(candidate.duration) || !candidate.inMusicPlaylist && !musicPattern.test(text) && !styleTags.length) continue;
+          const artist = artistFor(candidate);
+          const tokens = tokensFor(`${candidate.title || ''} ${candidate.channel || ''}`);
+          const artistScore = maxArtistAffinity && artist ? (artistAffinity.get(artist) || 0) / maxArtistAffinity : 0;
+          const tokenScore = maxTokenAffinity && tokens.length
+            ? tokens.reduce((sum, token) => sum + (tokenAffinity.get(token) || 0) / maxTokenAffinity, 0) / Math.sqrt(tokens.length)
+            : 0;
+          const styleScore = maxStyleAffinity && styleTags.length
+            ? styleTags.reduce((sum, tag) => sum + (styleAffinity.get(tag) || 0) / maxStyleAffinity, 0) / Math.sqrt(styleTags.length)
+            : 0;
+          const ageDays = Math.max(0, (Date.now() - (Date.parse(candidate.acquiredAt) || Date.now())) / 86_400_000);
+          const freshnessScore = Math.max(0, 1 - ageDays / 30);
+          const stableNoise = parseInt(createHash('sha256').update(`${dateKey}:${candidate.id}`).digest('hex').slice(0, 8), 16) / 0xffffffff;
+          candidate.artistKey = artist || candidate.id;
+          candidate.baseScore = artistScore * 3.2 + Math.min(1.5, tokenScore) * 1.25 + Math.min(1.8, styleScore) * 1.9 + freshnessScore * 0.55 + (candidate.downloaded ? 0.22 : 0.35) + stableNoise * 0.18;
+          candidatesById.set(candidate.id, candidate);
+        }
+        const priorMixItems = database.prepare(`SELECT pi.video_id AS id, COUNT(*) AS uses
+          FROM playlist_items pi JOIN playlists p ON p.playlist_id = pi.playlist_id
+          WHERE p.kind = 'daily-mix' AND p.created_at >= ? AND p.playlist_id != ? GROUP BY pi.video_id`).all(priorMixCutoff, playlistId);
+        const recentUses = new Map(priorMixItems.map(row => [row.id, Number(row.uses) || 0]));
+        const selected = [];
+        const selectedIds = new Set();
+        const artistUses = new Map();
+        const targetLocal = Math.ceil(12 * 0.65);
+        let localCount = 0;
+        let stubCount = 0;
+        const selectBest = pool => {
+          let best = null;
+          let bestScore = -Infinity;
+          for (const candidate of pool) {
+            if (selectedIds.has(candidate.id)) continue;
+            const score = candidate.baseScore
+              - (recentUses.get(candidate.id) || 0) * 1.05
+              - (artistUses.get(candidate.artistKey) || 0) * 1.1;
+            if (score > bestScore || score === bestScore && candidate.id < (best?.id || '\uffff')) {
+              best = candidate;
+              bestScore = score;
+            }
+          }
+          return best;
+        };
+        while (selected.length < 12 && selected.length < candidatesById.size) {
+          const localPool = [...candidatesById.values()].filter(candidate => candidate.downloaded && !selectedIds.has(candidate.id));
+          const stubPool = [...candidatesById.values()].filter(candidate => !candidate.downloaded && !selectedIds.has(candidate.id));
+          let choice = null;
+          if (localCount < targetLocal && localPool.length) choice = selectBest(localPool);
+          else if (stubCount < 12 - targetLocal && stubPool.length) choice = selectBest(stubPool);
+          else choice = selectBest([...localPool, ...stubPool]);
+          if (!choice) break;
+          selected.push(choice);
+          selectedIds.add(choice.id);
+          if (choice.downloaded) localCount += 1; else stubCount += 1;
+          artistUses.set(choice.artistKey, (artistUses.get(choice.artistKey) || 0) + 1);
+        }
+
+        if (selected.length) {
+          database.exec('BEGIN IMMEDIATE');
+          try {
+            playlist = database.prepare(`SELECT playlist_id AS id, title, source, kind, thumbnail, created_at AS createdAt, updated_at AS updatedAt
+              FROM playlists WHERE playlist_id = ? AND kind = 'daily-mix'`).get(playlistId);
+            if (!playlist) {
+              const title = `Your Daily Mix · ${dateKey}`;
+              database.prepare(`INSERT INTO playlists (playlist_id, title, source, kind, thumbnail, declared_item_count, is_complete, created_at, updated_at)
+                VALUES (?, ?, 'local', 'daily-mix', ?, ?, 1, ?, ?)`).run(playlistId, title, selected[0].thumbnail || '', selected.length, now, now);
+              const insertItem = database.prepare(`INSERT INTO playlist_items (playlist_id, video_id, position, source_key, added_at)
+                VALUES (?, ?, ?, ?, ?)`);
+              selected.forEach((video, position) => insertItem.run(playlistId, video.id, position, `daily-mix:${dateKey}:${video.id}`, now));
+              playlist = { id: playlistId, title, source: 'local', kind: 'daily-mix', thumbnail: selected[0].thumbnail || '', createdAt: now, updatedAt: now };
+            }
+            database.prepare(`DELETE FROM playlist_items WHERE playlist_id IN (
+              SELECT playlist_id FROM playlists WHERE kind = 'daily-mix' AND playlist_id != ? AND created_at < ?
+            )`).run(playlistId, new Date(Date.now() - 30 * 86_400_000).toISOString());
+            database.prepare(`DELETE FROM playlists WHERE kind = 'daily-mix' AND playlist_id != ? AND created_at < ?`).run(playlistId, new Date(Date.now() - 30 * 86_400_000).toISOString());
+            database.exec('COMMIT');
+          } catch (error) { database.exec('ROLLBACK'); throw error; }
+        }
+      }
+
+      if (!playlist) {
+        sendJson(response, 200, { id: '', title: 'Your Daily Mix', kind: 'daily-mix', items: [], message: 'No eligible music videos are available yet.' });
+        return;
+      }
+      const items = database.prepare(`
+        SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl,
+          v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.published_at AS publishedAt,
+          v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
+          i.item_id AS itemId, i.position, i.added_at AS addedAt, d.acquired_at AS acquiredAt,
+          CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END AS downloaded,
+          COALESCE(w.view_count, 0) AS viewCount
+        FROM playlist_items i JOIN videos v ON v.video_id = i.video_id
+        LEFT JOIN downloads d ON d.video_id = v.video_id LEFT JOIN video_views w ON w.video_id = v.video_id
+        WHERE i.playlist_id = ? ORDER BY i.position ASC
+      `).all(playlist.id);
+      sendJson(response, 200, { ...playlist, items, declaredItemCount: items.length, isComplete: true, localCount: items.filter(item => item.downloaded).length, generatedFor: playlist.id.slice('daily-mix-'.length) });
+    } catch (error) {
+      console.error('[daily-mix] Could not create or read daily mix:', error);
+      sendJson(response, 500, { error: 'Your Daily Mix could not be prepared.' });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/playlists') {
     const rows = database.prepare(`
       SELECT p.playlist_id AS id, p.title, p.source, p.kind, p.source_url AS sourceUrl, p.channel,
@@ -3066,6 +3557,7 @@ const server = createServer(async (request, response) => {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
       const items = database.prepare(`
         SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind,
+          v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
           i.item_id AS itemId, i.position, i.added_at AS addedAt, d.acquired_at AS acquiredAt,
           CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END AS downloaded,
           COALESCE(w.view_count, 0) AS viewCount
@@ -3080,7 +3572,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'PATCH' && !action) {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
-      if (playlist.source !== 'local' || playlist.kind === 'watch-later') { sendJson(response, 409, { error: 'This playlist cannot be renamed.' }); return; }
+      if (playlist.source !== 'local' || ['watch-later', 'daily-mix'].includes(playlist.kind)) { sendJson(response, 409, { error: 'This playlist cannot be renamed.' }); return; }
       try {
         const body = await readBody(request);
         const title = cleanRepeatedLabel(body.title).slice(0, 120);
@@ -3097,7 +3589,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'DELETE' && !action) {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
-      if (playlist.source !== 'local' || playlist.kind === 'watch-later') { sendJson(response, 409, { error: 'This playlist cannot be deleted.' }); return; }
+      if (playlist.source !== 'local' || ['watch-later', 'daily-mix'].includes(playlist.kind)) { sendJson(response, 409, { error: 'This playlist cannot be deleted.' }); return; }
       database.exec('BEGIN IMMEDIATE');
       try {
         database.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(playlistId);
@@ -3110,7 +3602,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && itemRoute && !itemVideoId) {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
-      if (playlist.source !== 'local') { sendJson(response, 409, { error: 'YouTube playlists are read-only in YourTube.' }); return; }
+      if (playlist.source !== 'local' || playlist.kind === 'daily-mix') { sendJson(response, 409, { error: 'This playlist is read-only in YourTube.' }); return; }
       try {
         const body = await readBody(request);
         const videoId = String(body.videoId || '');
@@ -3132,7 +3624,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'DELETE' && itemRoute && itemVideoId) {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
-      if (playlist.source !== 'local') { sendJson(response, 409, { error: 'YouTube playlists are read-only in YourTube.' }); return; }
+      if (playlist.source !== 'local' || playlist.kind === 'daily-mix') { sendJson(response, 409, { error: 'This playlist is read-only in YourTube.' }); return; }
       const now = new Date().toISOString();
       database.exec('BEGIN IMMEDIATE');
       try {
@@ -3149,7 +3641,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && action === 'reorder') {
       if (!playlist) { sendJson(response, 404, { error: 'Playlist not found.' }); return; }
-      if (playlist.source !== 'local') { sendJson(response, 409, { error: 'YouTube playlists are read-only in YourTube.' }); return; }
+      if (playlist.source !== 'local' || playlist.kind === 'daily-mix') { sendJson(response, 409, { error: 'This playlist is read-only in YourTube.' }); return; }
       try {
         const body = await readBody(request);
         const ids = Array.isArray(body.itemIds) ? body.itemIds.slice(0, 10000).map(item => Number(item)) : [];
@@ -3226,7 +3718,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/extension/diagnostics' && extensionOrigin) {
+  if (request.method === 'GET' && url.pathname === '/api/extension/diagnostics' && localExtensionRequest) {
     const durationCounts = database.prepare(`SELECT COUNT(*) AS missing,
       COALESCE(SUM(CASE WHEN l.video_id IS NULL OR l.status IN ('pending', 'running') THEN 1 ELSE 0 END), 0) AS queued,
       COALESCE(SUM(CASE WHEN l.status = 'extension' THEN 1 ELSE 0 END), 0) AS waitingExtension,
@@ -3267,18 +3759,20 @@ const server = createServer(async (request, response) => {
       LEFT JOIN downloads d ON d.video_id = q.video_id
       WHERE q.status IN ('pending', 'waiting-live', 'paused', 'paused-offline', 'paused-limit', 'exhausted')
       ORDER BY CASE q.status WHEN 'pending' THEN 0 WHEN 'waiting-live' THEN 1 ELSE 2 END, q.next_retry_at, q.updated_at DESC LIMIT 4`).all();
-    const staleChannelBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    const staleChannelBefore = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
     const channelCounts = database.prepare(`SELECT
       COALESCE(SUM(CASE WHEN status IN ('opening', 'collecting') AND updated_at > ? THEN 1 ELSE 0 END), 0) AS active,
-      COALESCE(SUM(CASE WHEN status IN ('opening', 'collecting') AND updated_at <= ? THEN 1 ELSE 0 END), 0) AS stale,
+      COALESCE(SUM(CASE WHEN status = 'stale' OR (status IN ('opening', 'collecting') AND updated_at <= ?) THEN 1 ELSE 0 END), 0) AS stale,
       COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
       COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS errors
       FROM channel_captures`).get(staleChannelBefore, staleChannelBefore);
+    const recentChannelErrorsSince = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
     const channelSamples = database.prepare(`SELECT channel_key AS channel, tab_key AS tab, status, phase, message, updated_at AS updatedAt
       FROM channel_captures WHERE status IN ('opening', 'collecting', 'queued', 'error')
+        AND (status <> 'error' OR updated_at >= ?)
       ORDER BY CASE WHEN status IN ('opening', 'collecting') AND updated_at > ? THEN 0
         WHEN status IN ('opening', 'collecting') THEN 1 WHEN status = 'queued' THEN 2 ELSE 3 END,
-        updated_at DESC LIMIT 4`).all(staleChannelBefore);
+        updated_at DESC LIMIT 4`).all(recentChannelErrorsSince, staleChannelBefore);
     const localMetadataCounts = database.prepare(`SELECT
       COALESCE(SUM(CASE WHEN m.status = 'running' THEN 1 ELSE 0 END), 0) AS active,
       COALESCE(SUM(CASE WHEN m.status = 'waiting-extension' THEN 1 ELSE 0 END), 0) AS waitingExtension,
@@ -3296,13 +3790,15 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'GET' && url.pathname === '/api/extension/metadata-capture-jobs' && extensionOrigin) {
+  if (request.method === 'GET' && url.pathname === '/api/extension/metadata-capture-jobs' && localExtensionRequest) {
     if (reportedNetworkMode() !== 'online' || connectivityStatus.available === false) {
       sendJson(response, 200, { job: null, mode: reportedNetworkMode() });
       return;
     }
     const now = new Date().toISOString();
-    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
+    // Browser captures can pause for a user-solved CAPTCHA or age check.
+    // Match the extension's ten-minute grace period before re-queuing the stub.
+    const staleBefore = new Date(Date.now() - 10 * 60_000).toISOString();
     database.prepare("UPDATE video_duration_lookups SET status = 'extension-retry', message = 'The extension capture tab did not finish; it will retry automatically.', updated_at = ? WHERE status = 'capturing' AND updated_at <= ?")
       .run(now, staleBefore);
     const exhausted = database.prepare("SELECT video_id AS id FROM video_duration_lookups WHERE status IN ('extension', 'extension-retry') AND extension_attempts >= 3").all();
@@ -3329,7 +3825,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && url.pathname === '/api/extension/video-metadata' && extensionOrigin) {
+  if (request.method === 'POST' && url.pathname === '/api/extension/video-metadata' && localExtensionRequest) {
     try {
       const parsed = await readBody(request);
       const id = String(parsed.videoId || '');
@@ -3341,7 +3837,7 @@ const server = createServer(async (request, response) => {
       if (!current || !['capturing', 'extension', 'extension-retry'].includes(current.status)) {
         sendJson(response, 409, { error: 'This extension metadata capture is no longer queued.' }); return;
       }
-      const hasPageData = Boolean(parsed.title || parsed.channel || parsed.thumbnail || parsed.avatar || Number(parsed.durationSeconds) > 0 || parsed.commentsCaptured === true);
+      const hasPageData = Boolean(parsed.title || parsed.channel || parsed.thumbnail || parsed.avatar || Number(parsed.durationSeconds) > 0 || parsed.commentsCaptured === true || parsed.publishedAt || parsed.publishedAge);
       if (parsed.failed === true && !hasPageData) {
         const message = String(parsed.message || 'YouTube did not expose the requested metadata in the browser page.').replace(/\s+/g, ' ').slice(0, 400);
         const attempts = Number(database.prepare('SELECT extension_attempts AS attempts FROM video_duration_lookups WHERE video_id = ?').get(id)?.attempts) || 0;
@@ -3370,9 +3866,11 @@ const server = createServer(async (request, response) => {
       const description = String(parsed.description || '').slice(0, 20_000);
       const viewCount = Number.isFinite(Number(parsed.viewCount)) ? Number(parsed.viewCount) : null;
       const tags = Array.isArray(parsed.tags) ? parsed.tags.slice(0, 100).map(value => String(value).slice(0, 200)) : [];
+      const publication = cleanPublishedAt(parsed.publishedAt, parsed.publishedAtPrecision);
       const info = {
         id, title, fulltitle: title, channel, uploader: channel, channel_id: channelId, channel_url: channelUrl,
         uploader_url: channelUrl, duration: durationSeconds, duration_string: duration,
+        published_at: publication.publishedAt, published_at_precision: publication.precision, published_age: String(parsed.publishedAge || '').slice(0, 100),
         thumbnail, channel_thumbnail: avatar, description, view_count: viewCount, tags,
         webpage_url: video.url, extractor: 'youtube-page', extractor_key: 'YoutubePage',
         metadata_source: 'youtube-page', extractorMetadataCaptured: false
@@ -3423,6 +3921,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/background-queue') {
+    const staleChannelBefore = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
     const activeMedia = database.prepare(`SELECT d.video_id AS videoId, v.title, v.channel, d.status,
       d.stage AS phase, d.message, d.progress, d.updated_at AS updatedAt
       FROM downloads d LEFT JOIN videos v ON v.video_id = d.video_id
@@ -3470,12 +3969,31 @@ const server = createServer(async (request, response) => {
       'Comments' AS phase, c.message, c.updated_at AS updatedAt
       FROM video_comments c JOIN videos v ON v.video_id = c.video_id
       WHERE c.status = 'loading' ORDER BY c.updated_at DESC`).all();
-    const channelCaptures = database.prepare(`SELECT capture_id AS id, channel_key AS channel,
+    const channelCaptureRows = database.prepare(`SELECT capture_id AS id, channel_key AS channel,
       tab_key AS tab, status, phase, message, video_count AS videoCount, created_at AS createdAt,
       updated_at AS updatedAt
       FROM channel_captures WHERE status IN ('opening', 'queued', 'collecting')
-      ORDER BY CASE status WHEN 'collecting' THEN 0 WHEN 'opening' THEN 1 ELSE 2 END, updated_at DESC`).all()
-      .map(item => ({ ...item, title: `${item.channel} · ${item.tab}` }));
+      ORDER BY CASE WHEN status IN ('opening', 'collecting') AND updated_at > ? THEN 0
+        WHEN status = 'queued' THEN 1 ELSE 2 END, updated_at DESC`).all(staleChannelBefore);
+    const freshActiveChannelKeys = new Set(channelCaptureRows
+      .filter(item => ['opening', 'collecting'].includes(item.status) && Date.now() - Date.parse(item.updatedAt) <= backgroundCaptureStaleMs)
+      .map(item => item.channel));
+    const canAdvanceChannelCaptures = reportedNetworkMode() === 'online' && connectivityStatus.available !== false;
+    const channelCaptures = channelCaptureRows.map(item => {
+        const ageMs = Date.now() - Date.parse(item.updatedAt);
+        const stale = ['opening', 'collecting'].includes(item.status) && ageMs > backgroundCaptureStaleMs;
+        const orphanedQueue = item.status === 'queued' && canAdvanceChannelCaptures && !freshActiveChannelKeys.has(item.channel) && ageMs > backgroundCaptureStaleMs;
+        return {
+          ...item,
+          ...(stale || orphanedQueue ? {
+            status: 'stale', phase: 'stalled',
+            message: orphanedQueue
+              ? 'This section has waited more than five minutes without an active channel capture. Saved videos remain available; revisit this channel if prefetch has stopped.'
+              : 'No extension progress for five minutes. Captured videos remain saved; revisit this channel if capture has stopped.'
+          } : {}),
+          title: `${item.channel} · ${item.tab}`
+        };
+      });
     const channelMetadata = [...channelLookups.entries()]
       .filter(([, lookup]) => lookup.status === 'loading')
       .map(([videoId, lookup]) => {
@@ -3487,7 +4005,16 @@ const server = createServer(async (request, response) => {
       (SELECT COUNT(*) FROM search_results r WHERE r.search_id = s.search_id) AS resultCount,
       s.updated_at AS updatedAt
       FROM search_sessions s WHERE s.status = 'collecting' ORDER BY s.updated_at DESC`).all()
-      .map(item => ({ ...item, message: `${item.resultCount} results stored so far.` }));
+      .map(item => {
+        const stale = Date.now() - Date.parse(item.updatedAt) > backgroundCaptureStaleMs;
+        return {
+          ...item,
+          status: stale ? 'stale' : item.status,
+          message: stale
+            ? `No new results for five minutes. ${item.resultCount} captured results remain saved; run the search again if you need more.`
+            : `${item.resultCount} results stored so far.`
+        };
+      });
     const preparation = ['queued', 'running', 'paused'].includes(offlinePreparation.status)
       ? [{ id: 'offline-preparation', title: 'Offline library preparation', status: offlinePreparation.status,
           phase: offlinePreparation.phase, message: offlinePreparation.message,
@@ -3499,7 +4026,7 @@ const server = createServer(async (request, response) => {
       { key: 'queued-media', label: 'Queued download attempts', items: queuedMedia },
       { key: 'held-media', label: 'Paused or held downloads', items: heldMedia },
       { key: 'local-metadata', label: 'Downloaded video metadata', items: localMetadata },
-      { key: 'video-lengths', label: 'Video lengths', items: durationRows },
+      { key: 'video-lengths', label: 'Video lengths', description: 'Metadata only; no media is downloading. Server yt-dlp lookups are paced at about one item every five minutes; the extension is used when yt-dlp cannot provide a length. Server lookups pause Offline and during active download or comment work.', items: durationRows },
       { key: 'video-length-limits', label: 'Known video-length limits', items: durationLimits },
       { key: 'comments', label: 'Comment collection', items: comments },
       { key: 'channel-captures', label: 'Channel section captures', items: channelCaptures },
@@ -3535,9 +4062,13 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && searchSessionMatch) {
     const session = database.prepare('SELECT search_id AS searchId, query, status, updated_at AS updatedAt FROM search_sessions WHERE search_id = ?').get(searchSessionMatch[1]);
     if (!session) { sendJson(response, 404, { error: 'Search session not found.' }); return; }
+    if (session.status === 'collecting' && Date.now() - Date.parse(session.updatedAt) > backgroundCaptureStaleMs) {
+      session.status = 'stale';
+      session.message = 'No new results arrived for five minutes. Existing captured results are still available.';
+    } else if (session.status === 'stale') session.message = 'No new results arrived for five minutes. Existing captured results are still available.';
     const videos = database.prepare(`
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic,
-        sr.position, d.acquired_at AS acquiredAt,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, sr.position, d.acquired_at AS acquiredAt,
         CASE WHEN d.video_id IS NULL THEN 0 ELSE 1 END AS downloaded, COALESCE(w.view_count, 0) AS viewCount
       FROM search_results sr JOIN videos v ON v.video_id = sr.video_id
       LEFT JOIN downloads d ON d.video_id = v.video_id AND d.status = 'ready'
@@ -3583,6 +4114,7 @@ const server = createServer(async (request, response) => {
               duration = CASE WHEN trim(excluded.duration) <> '' THEN excluded.duration ELSE videos.duration END,
               meta = excluded.meta, last_seen = excluded.last_seen`)
             .run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar, video.duration, video.meta, video.kind, video.position, now, now);
+          saveVideoPublication(video.id, video);
           database.prepare(`INSERT INTO search_results (search_id, video_id, position) VALUES (?, ?, ?)
             ON CONFLICT(search_id, video_id) DO UPDATE SET position = excluded.position`).run(searchId, video.id, video.position);
           database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, 'search', ?, ?)
@@ -3603,7 +4135,7 @@ const server = createServer(async (request, response) => {
           }
         }
         if (parsed.complete === true) database.prepare("UPDATE search_sessions SET status = 'ready', updated_at = ? WHERE search_id = ?").run(now, searchId);
-        else database.prepare("UPDATE search_sessions SET updated_at = ? WHERE search_id = ? AND status = 'collecting'").run(now, searchId);
+        else database.prepare("UPDATE search_sessions SET status = 'collecting', updated_at = ? WHERE search_id = ? AND status IN ('collecting', 'stale')").run(now, searchId);
         database.exec('COMMIT');
       } catch (error) {
         database.exec('ROLLBACK');
@@ -3632,13 +4164,14 @@ const server = createServer(async (request, response) => {
       }
       const now = new Date().toISOString();
       const channel = parsed.channel && typeof parsed.channel === 'object' ? parsed.channel : {};
-      const name = cleanRepeatedLabel(channel.name).slice(0, 200);
+      const name = cleanChannelName(channel.name);
       const description = String(channel.description || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
       const avatar = safeImage(channel.avatar);
       const banner = safeImage(channel.banner);
       const subscriberCount = cleanRepeatedLabel(channel.subscriberCount).slice(0, 80);
       const videoCount = cleanRepeatedLabel(channel.videoCount).slice(0, 80);
       const channelUrl = `https://www.youtube.com/${channelKey}`;
+      const channelOwnsVideoTab = ['videos', 'shorts', 'streams'].includes(session.tab);
       const incomingVideos = Array.isArray(parsed.videos) ? parsed.videos.slice(0, 500) : [];
       let acceptedVideos = 0;
       let phase = '';
@@ -3660,8 +4193,10 @@ const server = createServer(async (request, response) => {
           (video_id, url, title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta, kind, section, topic, position, first_seen, last_seen)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'channel', '', ?, ?, ?)
           ON CONFLICT(video_id) DO UPDATE SET title = excluded.title,
-            channel = CASE WHEN excluded.channel <> '' THEN excluded.channel ELSE videos.channel END,
-            channel_key = excluded.channel_key, channel_url = excluded.channel_url,
+            channel = CASE WHEN trim(excluded.channel) <> '' THEN excluded.channel
+              WHEN lower(trim(videos.channel)) IN ('youtube', 'channel unavailable') THEN '' ELSE videos.channel END,
+            channel_key = CASE WHEN excluded.channel_key <> '' THEN excluded.channel_key ELSE videos.channel_key END,
+            channel_url = CASE WHEN excluded.channel_url <> '' THEN excluded.channel_url ELSE videos.channel_url END,
             section = CASE WHEN videos.section = 'channel' THEN excluded.section ELSE videos.section END,
             thumbnail = CASE WHEN excluded.thumbnail <> '' THEN excluded.thumbnail ELSE videos.thumbnail END,
             avatar = CASE WHEN excluded.avatar <> '' THEN excluded.avatar ELSE videos.avatar END,
@@ -3673,11 +4208,18 @@ const server = createServer(async (request, response) => {
         const saveItem = database.prepare(`INSERT INTO channel_items (channel_key, video_id, tab_key, position, added_at)
           VALUES (?, ?, ?, ?, ?) ON CONFLICT(channel_key, video_id, tab_key) DO UPDATE SET position = excluded.position, added_at = excluded.added_at`);
         incomingVideos.forEach((raw, position) => {
-          const video = cleanVideo({ ...raw, channel: raw.channel || name, channelKey, channelUrl }, position);
+          const channelName = cleanChannelName(raw.channel) || (channelOwnsVideoTab ? name : '');
+          const video = cleanVideo({
+            ...raw,
+            channel: channelName,
+            channelKey: raw.channelKey || (channelOwnsVideoTab ? channelKey : ''),
+            channelUrl: raw.channelUrl || (channelOwnsVideoTab ? channelUrl : '')
+          }, position);
           if (!video) return;
           recordExtensionDuration(parsed.extensionVersion, video, 'channel', now);
-          upsertChannelVideo.run(video.id, video.url, video.title, video.channel, channelKey, channelUrl,
+          upsertChannelVideo.run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl,
             video.thumbnail, video.avatar || avatar, video.duration, video.meta, video.kind, video.position, now, now);
+          saveVideoPublication(video.id, video);
           saveItem.run(channelKey, video.id, session.tab, video.position, now);
           const savedDuration = database.prepare('SELECT duration FROM videos WHERE video_id = ?').get(video.id)?.duration || '';
           if (/^UPCOMING$/i.test(String(savedDuration).trim())) {
@@ -3691,6 +4233,13 @@ const server = createServer(async (request, response) => {
           }
           acceptedVideos += 1;
         });
+        if (name && channelOwnsVideoTab) {
+          database.prepare(`UPDATE videos SET channel = ?
+            WHERE (channel_key = ? OR video_id IN (
+              SELECT video_id FROM channel_items WHERE channel_key = ? AND tab_key IN ('videos', 'shorts', 'streams')
+            )) AND (trim(channel) = '' OR lower(trim(channel)) IN ('youtube', 'channel unavailable'))`)
+            .run(name, channelKey, channelKey);
+        }
         const complete = parsed.complete === true;
         const finalFailure = parsed.final === true && !complete;
         const capturedVideoCount = database.prepare('SELECT COUNT(*) AS count FROM channel_items WHERE channel_key = ? AND tab_key = ?').get(channelKey, session.tab).count;
@@ -3725,6 +4274,7 @@ const server = createServer(async (request, response) => {
     if (!current) { sendJson(response, 404, { error: 'Video is not in the local feed.' }); return; }
     let downloadedUnwatched = database.prepare(`
       SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration, v.kind, v.topic,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, COALESCE(p.current_time, 0) AS currentTime,
         COALESCE(p.duration, 0) AS progressDuration, COALESCE(p.completed, 0) AS completed,
         1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount
@@ -3737,6 +4287,7 @@ const server = createServer(async (request, response) => {
     `).all(recommendationsMatch[1]);
     const deletingSoon = autoDeleteEnabled ? database.prepare(`
       SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration, v.kind, v.topic,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         d.expires_at AS expiresAt, d.acquired_at AS acquiredAt,
         COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.duration, 0) AS progressDuration,
         COALESCE(p.completed, 0) AS completed, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount
@@ -3752,6 +4303,7 @@ const server = createServer(async (request, response) => {
     const recentSearches = database.prepare('SELECT search_id AS searchId, query, selected_video_id AS selectedVideoId FROM search_history ORDER BY searched_at DESC LIMIT 100').all();
     const searchCandidates = database.prepare(`
       SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration, v.kind, v.topic,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         COALESCE(d.status, '') = 'ready' AS downloaded,
         CASE WHEN d.status = 'ready' THEN d.acquired_at ELSE v.last_seen END AS acquiredAt,
         COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.duration, 0) AS progressDuration,
@@ -3780,6 +4332,7 @@ const server = createServer(async (request, response) => {
     }
     const homepageStubs = database.prepare(`
       SELECT v.video_id AS id, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.duration, v.kind, v.topic,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         CASE WHEN d.status = 'ready' THEN d.acquired_at ELSE v.last_seen END AS acquiredAt,
         COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.duration, 0) AS progressDuration,
         COALESCE(p.completed, 0) AS completed,
@@ -4066,9 +4619,10 @@ const server = createServer(async (request, response) => {
     if (!download || download.status !== 'ready') { sendJson(response, 404, { error: 'This video is not in your downloaded library.' }); return; }
     try {
       await discardDownloadFiles(id);
-      database.prepare("DELETE FROM downloads WHERE video_id = ? AND status = 'ready'").run(id);
+      database.prepare(`UPDATE downloads SET status = 'deleted', message = 'The local media copy was deleted; saved video metadata was retained.',
+        progress = 0, stage = 'Deleted locally', updated_at = ? WHERE video_id = ? AND status = 'ready'`).run(new Date().toISOString(), id);
       database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
-      sendJson(response, 200, { deleted: true, id });
+      sendJson(response, 200, { deleted: true, id, metadataRetained: true });
     } catch (error) {
       console.error(`Could not delete local media ${id}:`, error);
       sendJson(response, 500, { error: 'The local media file could not be deleted.' });
@@ -4076,9 +4630,16 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/downloads/available') {
+    const rows = database.prepare("SELECT video_id AS id FROM downloads WHERE status = 'ready'").all();
+    const ids = rows.filter(row => Boolean(getStoredMediaPath(row.id))).map(row => row.id);
+    sendJson(response, 200, { ids });
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/downloads') {
     const rows = database.prepare(`
-      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount,
+      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount,
         m.status AS metadataStatus, m.phase AS metadataPhase, m.message AS metadataMessage
       FROM downloads d JOIN videos v ON v.video_id = d.video_id LEFT JOIN video_views w ON w.video_id = v.video_id
       LEFT JOIN download_metadata m ON m.video_id = d.video_id
@@ -4091,6 +4652,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/history') {
     const rows = database.prepare(`
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind,
+        v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge,
         w.view_count AS viewCount, w.updated_at AS lastViewedAt,
         CASE WHEN d.status = 'ready' THEN 1 ELSE 0 END AS downloaded,
         d.acquired_at AS acquiredAt, d.expires_at AS expiresAt,
@@ -4162,6 +4724,7 @@ const server = createServer(async (request, response) => {
           if (!video) return;
           recordExtensionDuration(extensionVersion, video, provisionCategory, now);
           upsertVideo.run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar, video.duration, video.meta, video.kind, video.section, video.topic, video.position, now, now);
+          saveVideoPublication(video.id, video);
           database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, ?, ?, ?)
             ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(video.id, provisionCategory, now, now);
           const sourceChannelKey = cleanChannelKey(raw.sourceChannelKey);
@@ -4216,6 +4779,7 @@ const server = createServer(async (request, response) => {
             recordExtensionDuration(extensionVersion, video, 'playlist', now);
             upsertPlaylistVideo.run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar,
               video.duration, video.meta, video.kind, position, now, now);
+            saveVideoPublication(video.id, video);
             database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen)
               VALUES (?, 'playlist', ?, ?) ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`)
               .run(video.id, now, now);
@@ -4274,6 +4838,10 @@ for (const failed of database.prepare("SELECT video_id AS id, message FROM downl
   recordDownloadFailure(failed.id, failed.message);
 }
 if (networkMode === 'offline' || offlinePreparationRequested) pauseRetryQueueForOffline();
+const finalizedStartupCaptures = finalizeStalledCaptures();
+if (finalizedStartupCaptures.channel || finalizedStartupCaptures.searches) {
+  console.log(`Finalized stale captures: ${finalizedStartupCaptures.channel} channel sections, ${finalizedStartupCaptures.searches} searches.`);
+}
 const downloadRetryTimer = setInterval(() => { runDownloadRetries().catch(error => console.error('Download retry queue:', error)); }, 1_000);
 downloadRetryTimer.unref();
 const finishRecoveryTimer = setInterval(() => { resumePendingFinishRecoveries(); }, 1_000);
@@ -4285,6 +4853,11 @@ const connectivityMonitorTimer = setInterval(() => { monitorInternetConnectivity
 connectivityMonitorTimer.unref();
 const backgroundDurationLookupTimer = setInterval(() => scheduleBackgroundDurationLookup(), 30_000);
 backgroundDurationLookupTimer.unref();
+const staleCaptureTimer = setInterval(() => {
+  try { finalizeStalledCaptures(); }
+  catch (error) { console.error('Stale capture finalization:', error); }
+}, 60_000);
+staleCaptureTimer.unref();
 const downloadedMetadataTimer = setInterval(() => runDownloadedMetadataQueue().catch(error => console.error('Downloaded metadata preparation:', error)), 5_000);
 downloadedMetadataTimer.unref();
 

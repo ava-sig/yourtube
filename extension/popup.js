@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 let currentMode = 'preparing';
 let refreshing = false;
+let currentCaptureSettings = { paused: false, maxTabs: 2 };
 
 function sendMessage(message, timeoutMs = 7000) {
   return new Promise((resolve, reject) => {
@@ -60,12 +61,14 @@ function timeUntil(value) {
 
 function setNotice(selector, message) {
   const element = $(selector);
+  if (!element) return;
   element.textContent = message || '';
   element.classList.toggle('hidden', !message);
 }
 
 function setWorkerNotice(message, isError = false) {
   const element = $('#worker-note');
+  if (!element) return;
   element.textContent = message || '';
   element.classList.toggle('hidden', !message);
   element.classList.toggle('notice-error', isError && Boolean(message));
@@ -105,6 +108,7 @@ function appendItem(container, { title, status = '', message = '', meta = '' }) 
 
 function renderList(selector, rows, emptyMessage, renderRow) {
   const container = $(selector);
+  if (!container) return;
   container.replaceChildren();
   if (!rows?.length) {
     const empty = document.createElement('div');
@@ -118,8 +122,18 @@ function renderList(selector, rows, emptyMessage, renderRow) {
 
 function render(data) {
   currentMode = data.server?.mode || data.extensionMode || 'preparing';
+  currentCaptureSettings = data.captureSettings || currentCaptureSettings;
   $('#version').textContent = `v${data.extensionVersion || chrome.runtime.getManifest().version}`;
   $('#page-badge').textContent = data.currentPage || '—';
+  const captureLimit = Math.max(1, Math.min(4, Number(currentCaptureSettings.maxTabs) || 2));
+  $('#capture-toggle').textContent = currentCaptureSettings.paused ? 'Resume' : 'Pause';
+  $('#capture-toggle').title = currentCaptureSettings.paused ? 'Resume opening video-length capture tabs' : 'Pause opening new video-length capture tabs';
+  $('#capture-limit').value = String(captureLimit);
+  $('#capture-toggle').disabled = Boolean(data.workerUnavailable);
+  $('#capture-limit').disabled = Boolean(data.workerUnavailable);
+  $('#capture-control-note').textContent = currentCaptureSettings.paused
+    ? `New video-length tabs paused · ${data.captures?.length || 0} existing tab${data.captures?.length === 1 ? '' : 's'} continue.`
+    : `Video-length captures · up to ${captureLimit} tabs · current tabs stay open if YouTube asks for verification.`;
   const connection = $('#connection');
   const server = data.server;
   if (!data.serverReachable) {
@@ -135,8 +149,8 @@ function render(data) {
     setWorkerNotice('');
     $('#length-total').textContent = '—';
     $('#length-breakdown').textContent = 'Queue counts unavailable';
-    $('#capture-count').textContent = data.workerUnavailable ? '—/2' : `${data.captures?.length || 0}/2`;
-    $('#capture-detail').textContent = data.workerUnavailable ? 'Extension worker unavailable' : 'Active browser tabs';
+    $('#capture-count').textContent = data.workerUnavailable ? `—/${captureLimit}` : `${data.captures?.length || 0}/${captureLimit}`;
+    $('#capture-detail').textContent = data.workerUnavailable ? 'Extension worker unavailable' : currentCaptureSettings.paused ? 'New captures paused' : 'Video-length capture tabs';
     $('#media-active').textContent = '—';
     $('#media-detail').textContent = 'Local server unavailable';
     $('#sync-count').textContent = data.workerUnavailable ? '—' : number(data.syncRetries?.length);
@@ -171,13 +185,15 @@ function render(data) {
     $('#length-breakdown').textContent = data.diagnosticsPartial
       ? 'Detailed queue endpoint unavailable'
       : `${number(lengths.waitingExtension)} waiting for extension · ${number(lengths.capturing)} in browser · ${number(lengths.queued)} queued · ${number(lengths.retrying)} retrying · ${number(lengths.unavailable)} unavailable`;
-    $('#capture-count').textContent = data.workerUnavailable ? '—/2' : `${data.captures?.length || 0}/2`;
+    $('#capture-count').textContent = data.workerUnavailable ? `—/${captureLimit}` : `${data.captures?.length || 0}/${captureLimit}`;
     $('#capture-detail').textContent = data.workerUnavailable
       ? 'Extension worker unavailable'
       : data.captures?.length
-      ? data.captures.map(capture => capture.tabStatus).join(' · ')
+      ? data.captures.map(capture => capture.challenge ? 'Waiting for YouTube verification' : capture.redirected ? 'YouTube redirected · waiting' : capture.tabStatus).join(' · ')
       : data.metadataQueueBusy
         ? `Queue worker checking for ${data.metadataQueueBusyForSeconds || 0}s · ${data.metadataQueueState?.message || 'reading queue'}`
+        : currentCaptureSettings.paused
+        ? 'Paused · no new tabs will open'
         : mode === 'online'
         ? `${data.metadataQueueState?.message || 'No capture tab is currently open'} · checked ${timeAgo(data.metadataQueueState?.checkedAt)}`
         : 'Capture slots paused';
@@ -221,17 +237,19 @@ function render(data) {
         : `Last queue check ${timeAgo(workerState?.checkedAt)}: ${workerState?.message || 'No capture tab is active.'}`
       : '';
     setWorkerNotice(workerNote, workerState?.status === 'error' || Boolean(data.metadataQueueBusy && (data.metadataQueueBusyForSeconds || 0) > 45));
-    $('#nudge').disabled = mode !== 'online' || data.metadataQueueBusy || !lengths.waitingExtension || Boolean(data.workerUnavailable);
+    $('#nudge').disabled = mode !== 'online' || data.metadataQueueBusy || !lengths.waitingExtension || Boolean(data.workerUnavailable) || currentCaptureSettings.paused;
     $('#channel-summary').textContent = data.diagnosticsPartial
       ? 'Details unavailable'
-      : `${number(server.channelCaptures?.active)} active · ${number(server.channelCaptures?.queued)} queued · ${number(server.channelCaptures?.stale)} stale`;
+      : `${number(server.channelCaptures?.active)} active · ${number(server.channelCaptures?.queued)} queued${Number(server.channelCaptures?.stale) ? ` · ${number(server.channelCaptures.stale)} historical stalls` : ''}`;
   }
 
   renderList('#capture-list', data.captures, data.workerUnavailable ? 'Extension worker did not respond; active tabs cannot be read.' : 'No browser captures are active.', (container, item) => {
     appendItem(container, {
       title: item.title,
       status: item.tabStatus,
-      message: `Video ${item.videoId} · running for ${item.ageSeconds}s`,
+      message: item.challengeMessage || (item.redirected
+        ? `YouTube changed this capture URL; keeping the tab open · ${item.videoId} · ${item.ageSeconds}s`
+        : `Video ${item.videoId} · running for ${item.ageSeconds}s`),
       meta: 'Background YouTube tab'
     });
   });
@@ -252,8 +270,8 @@ function render(data) {
     if (container.querySelector('.empty-state')) container.replaceChildren();
     channelRows.slice(0, 2).forEach(item => appendItem(container, {
       title: `${item.channel} · ${item.tab}`,
-      status: ['opening', 'collecting'].includes(item.status) && Date.now() - new Date(item.updatedAt).getTime() > 120_000 ? 'stale' : item.status,
-      message: item.message || (Date.now() - new Date(item.updatedAt).getTime() > 120_000 ? 'No progress update; this channel capture may be stuck.' : 'Channel section is being captured.'),
+      status: ['opening', 'collecting'].includes(item.status) && Date.now() - new Date(item.updatedAt).getTime() > 5 * 60_000 ? 'stale' : item.status,
+      message: item.message || (Date.now() - new Date(item.updatedAt).getTime() > 5 * 60_000 ? 'No progress update for five minutes; this channel capture may have stopped.' : 'Channel section is being captured.'),
       meta: `${item.phase || 'Channel capture'} · updated ${timeAgo(item.updatedAt)}`
     }));
   }
@@ -279,6 +297,8 @@ function render(data) {
   renderList('#last-events', data.events, data.workerUnavailable ? 'Extension worker did not respond; local activity history cannot be read.' : 'No extension capture errors or events have been recorded yet.', (container, event) => {
     appendItem(container, {
       title: event.kind === 'error' ? 'Capture issue'
+        : event.kind === 'capture-challenge' ? 'YouTube verification needed'
+          : event.kind === 'capture-redirect' ? 'Capture page redirected'
         : event.kind === 'sync-error' ? 'Sync retry queued'
           : event.kind === 'capture-started' ? 'Capture started' : 'Capture completed',
       status: event.kind,
@@ -294,33 +314,44 @@ async function refreshDiagnostics() {
   refreshing = true;
   $('#refresh').disabled = true;
   try {
-    const data = await sendMessage({ type: 'yourtube:get-diagnostics' });
-    if (data.serverReachable) render(data);
-    else {
-      try {
-        const server = await readServerDiagnosticsDirectly();
-        render({ ...data, server, serverReachable: true, diagnosticsPartial: Boolean(server.diagnosticsUnavailable) });
-      } catch { render({ ...data, extensionVersion: data.extensionVersion || chrome.runtime.getManifest().version }); }
+    let data = null;
+    let workerError = null;
+    try { data = await sendMessage({ type: 'yourtube:get-diagnostics' }); }
+    catch (error) { workerError = error; }
+    if (!workerError && data?.serverReachable) {
+      render(data);
+      return;
     }
-  } catch (error) {
+    let server;
     try {
-      const server = await readServerDiagnosticsDirectly();
-      render({
-        extensionVersion: chrome.runtime.getManifest().version,
-        extensionMode: server.mode, currentPage: 'Extension worker offline',
-        serverReachable: true, server, captures: [], syncRetries: [], events: [],
-        diagnosticsPartial: Boolean(server.diagnosticsUnavailable),
-        workerUnavailable: true, workerError: error.message,
-        metadataQueueState: { status: 'error', message: error.message, checkedAt: new Date().toISOString() }
-      });
+      server = await readServerDiagnosticsDirectly();
     } catch (serverError) {
       render({
-        extensionVersion: chrome.runtime.getManifest().version,
-        extensionMode: currentMode, serverReachable: false,
-        serverError: `${serverError.message} Extension worker: ${error.message}`,
-        captures: [], syncRetries: [], events: [], workerUnavailable: true
+        ...data,
+        extensionVersion: data?.extensionVersion || chrome.runtime.getManifest().version,
+        extensionMode: data?.extensionMode || currentMode,
+        serverReachable: false,
+        serverError: `${serverError.message}${workerError ? ` Extension worker: ${workerError.message}` : ''}`,
+        workerUnavailable: Boolean(workerError),
+        captures: data?.captures || [], syncRetries: data?.syncRetries || [], events: data?.events || []
       });
+      return;
     }
+    render({
+      ...data,
+      extensionVersion: data?.extensionVersion || chrome.runtime.getManifest().version,
+      extensionMode: server.mode || data?.extensionMode || currentMode,
+      currentPage: data?.currentPage || (workerError ? 'Extension worker offline' : 'YourTube'),
+      serverReachable: true,
+      server,
+      diagnosticsPartial: Boolean(server.diagnosticsUnavailable),
+      workerUnavailable: Boolean(workerError || data?.workerUnavailable),
+      workerError: workerError?.message || data?.workerError,
+      captures: data?.captures || [], syncRetries: data?.syncRetries || [], events: data?.events || [],
+      metadataQueueState: data?.metadataQueueState || (workerError
+        ? { status: 'error', message: workerError.message, checkedAt: new Date().toISOString() }
+        : { status: 'idle', message: '', checkedAt: '' })
+    });
   } finally {
     refreshing = false;
     $('#refresh').disabled = false;
@@ -329,6 +360,28 @@ async function refreshDiagnostics() {
 
 $('#version').textContent = `v${chrome.runtime.getManifest().version}`;
 $('#refresh').addEventListener('click', refreshDiagnostics);
+async function saveCaptureSettings(settings) {
+  $('#capture-toggle').disabled = true;
+  $('#capture-limit').disabled = true;
+  try {
+    const result = await sendMessage({ type: 'yourtube:set-metadata-capture-settings', ...settings });
+    if (!result.ok) throw new Error(result.error || 'Capture settings could not be saved.');
+    currentCaptureSettings = result.settings || currentCaptureSettings;
+    setNotice('#action-feedback', currentCaptureSettings.paused
+      ? 'New video-length capture tabs paused. Any open tabs will continue.'
+      : `Video-length captures resumed, with up to ${currentCaptureSettings.maxTabs} tabs.`);
+  } catch (error) {
+    setNotice('#action-feedback', error.message);
+  }
+  await refreshDiagnostics();
+}
+
+$('#capture-toggle').addEventListener('click', () => {
+  void saveCaptureSettings({ paused: !currentCaptureSettings.paused });
+});
+$('#capture-limit').addEventListener('change', event => {
+  void saveCaptureSettings({ maxTabs: Number(event.currentTarget.value) });
+});
 $('#mode').addEventListener('click', async () => {
   if (currentMode === 'preparing') return;
   const next = currentMode === 'online' ? 'offline' : 'online';

@@ -104,7 +104,7 @@ These notes capture the current choices and their practical consequences. They d
 
 **Reason:** Homepage/search/channel playlist cards are meaningful content, not just a user's personal playlist list. Structural cues and list IDs are more stable than title-string rules, and a shared sync path prevents a surface-specific capture from being silently skipped.
 
-**Consequence:** The extension imports what YouTube has rendered; it does not change the user's YouTube playlists or guarantee hidden/unloaded entries are captured. Playlist records discovered from tiles can initially have no entries; opening their YouTube playlist page captures the visible entry list and updates the same record.
+**Consequence:** The extension imports what YouTube has rendered; it does not change the user's YouTube playlists or guarantee hidden/unloaded entries are captured. Playlist records discovered from tiles can initially have no entries; opening an incomplete playlist in YourTube asks the extension to open an inactive acquisition tab, scroll and capture the playlist container, and update the same record while the detail view polls for new entries.
 
 ## Keep local metadata bounded and useful
 
@@ -121,6 +121,14 @@ These notes capture the current choices and their practical consequences. They d
 **Reason:** A local corpus could support personal analysis without depending on a remote profile, but any content-level AI needs timestamped transcripts and a source-linked editing manifest.
 
 **Consequence:** The recent database analysis was a read-only assistant analysis of current local records, not a built-in YourTube AI feature. Since playback history is aggregated, precise historical watch-session timelines are not available yet.
+
+## Generate a deterministic Daily Mix from local viewing behavior
+
+**Decision:** Build one immutable Daily Mix playlist per Europe/Berlin calendar day, using a deterministic weighted score over saved playback and metadata. Use repeat starts and completion/progress as implicit preference evidence; favor artist matches and shared style tags, then apply recency, local availability, and diversity rules. Recompute tomorrow from the updated database.
+
+**Reason:** A reproducible ranking can make an explainable daily selection without sending viewing history to a service or requiring users to manually rate every artist.
+
+**Consequence:** Artist affinity is inferred from channel identity and title prefixes; style affinity is limited to tags discoverable in stored titles, channel descriptions, topic/section fields, and playlist names. It is not an audio fingerprint or a promise that a never-heard artist is similar. Missing tags mean the candidate receives freshness/variety consideration but no invented style affinity.
 
 ## Repository and commit boundary
 

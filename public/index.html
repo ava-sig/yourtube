@@ -97,6 +97,16 @@
       .playlist-tile-title { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 16px; font-weight: 700; line-height: 1.4; }
       .playlist-tile-type { display: block; margin-top: 3px; color: #aaa; font-size: 14px; }
       .playlist-tile-meta { display: block; margin-top: 4px; color: #777; font-size: 12px; line-height: 1.4; }
+      .daily-mix-feature { margin: 12px 0 40px; padding: 24px; overflow: hidden; border: 1px solid #51434c; border-radius: 18px; background: radial-gradient(ellipse at 8% 0%, #57304488 0, transparent 45%), linear-gradient(125deg, #21191f 0%, #191b20 54%, #172625 100%); }
+      .daily-mix-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+      .daily-mix-kicker { margin: 0 0 8px; color: #e6a0bd; font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+      .daily-mix-feature h2 { margin: 0; font-size: 24px; }
+      .daily-mix-description { max-width: 680px; margin: 8px 0 0; color: #b8b4b9; font-size: 14px; line-height: 1.55; }
+      .daily-mix-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+      .daily-mix-track-grid { display: flex; gap: 16px; margin-top: 22px; overflow-x: auto; overscroll-behavior-x: contain; padding: 0 0 12px; scroll-snap-type: x mandatory; scrollbar-color: #76616d #29252b; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+      .daily-mix-track-grid .video-card { flex: 0 0 clamp(230px, 23vw, 330px); min-width: 0; scroll-snap-align: start; }
+      @media (max-width: 900px) { .daily-mix-feature { padding: 18px; } .daily-mix-track-grid .video-card { flex-basis: 31vw; } }
+      @media (max-width: 620px) { .daily-mix-topline { flex-direction: column; } .daily-mix-actions { width: 100%; } .daily-mix-track-grid { gap: 12px; } .daily-mix-track-grid .video-card { flex-basis: 76vw; } }
       .playlist-items { display: grid; gap: 8px; max-width: 960px; }
       .playlist-item { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px; border-radius: 10px; background: #181818; }
       .playlist-item:hover { background: #222; }
@@ -241,6 +251,7 @@
       .background-queue-group-head { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #252a2e; }
       .background-queue-group-head h3 { margin: 0; color: #d8dcdf; font-size: 11px; font-weight: 620; }
       .background-queue-group-head span { flex: 0 0 auto; color: #7d8990; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .background-queue-group-description { margin: 0; padding: 0 12px 10px; color: #879198; font-size: 10px; line-height: 1.45; }
       .background-queue-empty { padding: 11px 12px; color: #68737a; font-size: 10px; }
       .background-queue-items { padding: 0 12px; }
       .background-queue-item { padding: 11px 0; }
@@ -251,6 +262,7 @@
       .background-queue-badge.running, .background-queue-badge.downloading, .background-queue-badge.collecting { border-color: #665438; background: #30291f; color: #efcc85; }
       .background-queue-badge.ready, .background-queue-badge.complete { border-color: #375844; background: #1c2a20; color: #9bd8a9; }
       .background-queue-badge.retry, .background-queue-badge.error, .background-queue-badge.exhausted { border-color: #633b3d; background: #2a1c1e; color: #e4a2a5; }
+      .background-queue-badge.stale { border-color: #5a4b31; background: #272219; color: #d9bd81; }
       .background-queue-item-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 5px; color: #78838a; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
       .background-queue-item-message { margin: 6px 0 0; color: #9aa4aa; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
       @media (prefers-reduced-motion: reduce) { .header-value-line.is-animating { animation: none; opacity: 1; transform: none; } }
@@ -263,6 +275,14 @@
       .local-search-teaser-label { color: #f1f1f1; font-size: 15px; font-weight: 650; line-height: 1.3; }
       .video-card { position: relative; min-width: 0; }
       .video-card-link { display: block; color: inherit; text-decoration: none; }
+      .video-card.is-offline-stub .thumb-wrap img { filter: grayscale(1) brightness(.58); }
+      .video-card.is-offline-stub .card-info { opacity: .72; }
+      .video-card-thumb { position: relative; }
+      .offline-stub-overlay { position: absolute; inset: 0; z-index: 2; display: flex; width: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 10px; border: 0; background: #080808a8; color: #fff; text-align: center; cursor: pointer; }
+      .offline-stub-overlay span { color: #dedede; font-size: 11px; font-weight: 650; text-shadow: 0 1px 3px #000; }
+      .offline-stub-overlay strong { max-width: 100%; padding: 6px 12px; border: 1px solid #ffffff55; border-radius: 18px; background: #f1f1f1; color: #111; font-size: 11px; font-weight: 750; }
+      .offline-stub-overlay small { color: #dedede; font-size: 10px; }
+      .offline-stub-overlay:disabled { opacity: .8; cursor: progress; }
       .delete-media { position: absolute; top: 8px; right: 8px; z-index: 2; padding: 6px 9px; border: 1px solid #ffffff30; border-radius: 7px; background: #111e; color: #fff; font: inherit; font-size: 12px; cursor: pointer; }
       .delete-media:hover { background: #b3261e; }
       .video-card.menu-open { z-index: 6; }
@@ -306,6 +326,7 @@
       .shorts-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
       .shorts-grid .thumb-wrap { aspect-ratio: 9 / 16; }
       .notice { padding: 52px 16px; color: #aaa; text-align: center; }
+      .playlist-capture-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; text-align: left; }
       .spinner { width: 34px; height: 34px; border: 3px solid #444; border-top-color: #f33; border-radius: 50%; animation: spin .8s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .notice strong { display: block; margin-bottom: 8px; color: #f1f1f1; font-size: 18px; }
@@ -324,7 +345,7 @@
       <header class="topbar">
         <a class="brand" :href="stats.activeDownloads || stats.pausedDownloads ? '/downloads' : '/'" :aria-label="stats.activeDownloads ? `View ${stats.activeDownloads} media downloads in progress` : stats.pausedDownloads ? `View ${stats.pausedDownloads} paused downloads` : 'YourTube home'"><span class="logo-cycle" :class="{ 'is-downloading': stats.activeDownloads > 0 }" aria-hidden="true"><span class="brand-mark">▶</span><span class="brand-download-count">{{ stats.activeDownloads || stats.pausedDownloads }}</span></span>YourTube</a>
         <div id="header-value-ticker" class="header-value-ticker" aria-live="off"><span class="header-value-line"></span></div>
-        <form class="search" @submit.prevent><input v-model="query" @input="onSearchInput" maxlength="200" :placeholder="searchSource === 'local' ? 'Search downloaded videos' : 'Search YouTube stubs'" aria-label="Search videos" /><button class="search-mode-toggle" type="button" role="switch" :disabled="networkMode !== 'online'" :aria-checked="String(networkMode === 'online' && searchSource === 'youtube')" :aria-label="`Search ${searchSource === 'local' ? 'local downloads' : 'YouTube stubs'}`" @click="toggleSearchSource"><span class="mode-label" :class="{ active: searchSource === 'local' }">Local</span><span class="search-mode-switch" aria-hidden="true"></span><span class="mode-label" :class="{ active: networkMode === 'online' && searchSource === 'youtube' }">YouTube</span></button></form>
+        <form class="search" @submit.prevent><input v-model="query" @input="onSearchInput" maxlength="200" :placeholder="networkMode !== 'online' ? 'Search local library' : searchSource === 'local' ? 'Search downloaded videos' : 'Search YouTube stubs'" aria-label="Search videos" /><button class="search-mode-toggle" type="button" role="switch" :disabled="networkMode !== 'online'" :aria-checked="String(networkMode === 'online' && searchSource === 'youtube')" :aria-label="`Search ${searchSource === 'local' ? 'local downloads' : 'YouTube stubs'}`" @click="toggleSearchSource"><span class="mode-label" :class="{ active: searchSource === 'local' }">Local</span><span class="search-mode-switch" aria-hidden="true"></span><span class="mode-label" :class="{ active: networkMode === 'online' && searchSource === 'youtube' }">YouTube</span></button></form>
         <button class="background-status" type="button" :title="`Open system status · ${backgroundStatus}`" :aria-label="`Open YourTube system status. ${backgroundStatus}`" @click="setCurrentView('status')"><span class="background-status-dot" :class="{ active: backgroundWorkActive, switching: modeTransitionActive }" aria-hidden="true"></span><span class="background-status-copy">{{ backgroundStatus }}</span><span class="background-status-open" aria-hidden="true">↗</span></button>
         <button class="auto-delete-toggle" type="button" role="switch" :aria-checked="String(autoDeleteEnabled)" :disabled="autoDeleteUpdating" aria-label="Automatically delete media after 24 hours" @click="toggleAutoDelete"><span>Auto-delete</span><span class="network-switch" aria-hidden="true"></span></button>
         <button class="network-toggle" :class="{ 'is-transitioning': modeTransitionActive, 'is-transitioning-to-online': modeTransitionTarget === 'online', 'is-transitioning-to-offline': offlineTransitionActive }" type="button" role="switch" :aria-checked="String(networkMode === 'online' && !modeTransitionActive)" :aria-busy="String(modeTransitionActive)" :disabled="networkModeUpdating" :aria-label="offlineTransitionActive && modeTransitionTarget !== 'online' ? 'Cancel switching to Offline mode' : modeTransitionActive ? `Switching ${modeTransitionTarget || 'Offline'} mode` : `Switch ${networkMode === 'offline' ? 'Online' : 'Offline'}`" @click="toggleNetworkMode"><span>{{ modeTransitionActive ? `Going ${modeTransitionTarget || 'offline'}` : networkMode === 'offline' ? 'Offline' : 'Online' }}</span><span class="network-switch" aria-hidden="true"></span></button>
@@ -342,7 +363,7 @@
           <button class="nav-link sub-link show-more-nav" @click="subscriptionsExpanded = !subscriptionsExpanded">{{ subscriptionsExpanded ? '⌃  Show less' : '⌄  Show more' }}</button>
           <hr class="divider" />
           <div class="nav-heading">You ›</div>
-          <button v-for="item in youLinks" :key="item" class="nav-link" :class="{ selected: (item === 'History' && currentView === 'history') || (item === 'Playlists' && currentView === 'playlists' && selectedPlaylistId !== 'watch-later') || (item === 'Watch later' && currentView === 'playlists' && selectedPlaylistId === 'watch-later') }" @click="openSidebarItem(item)"><span class="nav-icon">{{ iconFor(item) }}</span>{{ item }}</button>
+          <button v-for="item in youLinks" :key="item" class="nav-link" :class="{ selected: (item === 'History' && currentView === 'history') || (item === 'Playlists' && currentView === 'playlists' && selectedPlaylistId !== 'watch-later' && selectedPlaylist?.kind !== 'daily-mix') || (item === 'Daily Mix' && currentView === 'playlists' && selectedPlaylist?.kind === 'daily-mix') || (item === 'Watch later' && currentView === 'playlists' && selectedPlaylistId === 'watch-later') }" @click="openSidebarItem(item)"><span class="nav-icon">{{ iconFor(item) }}</span>{{ item }}</button>
           <button class="nav-link show-more-nav" @click="clipsVisible = !clipsVisible">{{ clipsVisible ? '⌃  Show less' : '⌄  Show more' }}</button>
           <button v-if="clipsVisible" class="nav-link"><span class="nav-icon">▣</span>Clips</button>
           <hr class="divider" />
@@ -362,8 +383,8 @@
             <button v-for="chip in chips" :key="chip" class="chip" :class="{ active: activeChip === chip }" @click="activeChip = chip">{{ chip }}</button>
           </div>
           <section v-if="currentView === 'search'" class="feed-section">
-            <div class="section-head"><h2>{{ activeSearchSource === 'youtube' ? 'Search results from YouTube' : 'Downloaded search results' }}</h2></div>
-            <p class="meta">{{ activeSearchSource === 'youtube' ? 'Collected YouTube video stubs' : 'Local downloads' }} · “{{ searchTerm }}”<span v-if="searchTotal"> · {{ searchTotal }} matches</span></p>
+            <div class="section-head"><h2>{{ networkMode !== 'online' ? 'Offline search results' : activeSearchSource === 'youtube' ? 'Search results from YouTube' : 'Downloaded search results' }}</h2></div>
+            <p class="meta">{{ networkMode !== 'online' ? 'Local media and saved video stubs · stubs need Online to download and play' : activeSearchSource === 'youtube' ? 'Collected YouTube video stubs' : 'Local downloads' }} · “{{ searchTerm }}”<span v-if="searchTotal"> · {{ searchTotal }} matches</span></p>
             <div v-if="searchLoading && !searchResultsReady" class="notice"><div class="spinner" style="margin:0 auto 14px"></div><strong>Gathering the first results</strong>{{ activeSearchSource === 'youtube' ? 'Waiting for matching video stubs from your YouTube feed.' : 'Searching your downloaded videos.' }}</div>
             <div v-if="searchError" class="notice error">{{ searchError }}</div>
             <div v-if="visibleSearchVideos.length || (activeSearchSource === 'youtube' && localSearchTotal > 0)" class="video-grid">
@@ -371,7 +392,7 @@
                 <span class="local-search-stack"><span v-for="(video, index) in localSearchPreview" :key="video.id" class="local-search-thumb" :style="{ left: `${index * 11}px`, top: `${index * 6}px`, zIndex: localSearchPreview.length - index }"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" @error="thumbnailError($event, video)" /><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></span></span>
                 <span class="local-search-teaser-label">{{ localSearchTotal }} {{ localSearchTotal === 1 ? 'result' : 'results' }} locally</span>
               </button>
-              <video-card v-for="video in visibleSearchVideos" :key="video.id" :video="video" :source="activeSearchSource === 'youtube' ? 'YouTube search' : 'Downloaded'" @click="recordSearchSelection(video.id, $event)" />
+              <video-card v-for="video in visibleSearchVideos" :key="video.id" :video="video" :source="activeSearchSource === 'youtube' ? 'YouTube search' : 'Downloaded'" :offline-stub="networkMode !== 'online' && !video.downloaded" />
             </div>
             <div v-if="searchLoading && searchResultsReady" class="meta" style="padding:18px 0;text-align:center">Loading the next batch…</div>
             <button v-else-if="searchHasMore && searchResultsReady" id="search-load-trigger" class="quiet-button search-more-button" type="button" @click="loadMoreSearch">Show 12 more results</button>
@@ -414,7 +435,7 @@
                   <div class="system-telemetry-grid">
                     <div class="system-telemetry-cell"><span>Local files</span><strong>{{ formatCount(stats.localFiles) }}</strong><small>Playable media on this server</small></div>
                     <div class="system-telemetry-cell"><span>Library size</span><strong>{{ formatBytes(stats.mediaBytes) }}</strong><small>Disk space in use</small></div>
-                    <div class="system-telemetry-cell"><span>Video lengths</span><strong>{{ formatCount(stats.pendingDurations) }}</strong><small>Still missing a saved length</small></div>
+                    <div class="system-telemetry-cell"><span>Video lengths missing</span><strong>{{ formatCount(stats.pendingDurations) }}</strong><small>{{ durationTelemetryDetail }}</small></div>
                     <div class="system-telemetry-cell"><span>Local metadata</span><strong>{{ formatCount(stats.downloadMetadata?.ready) }}/{{ formatCount(stats.downloadMetadata?.total) }}</strong><small>Videos with comments and referenced images cached</small></div>
                     <div class="system-telemetry-cell"><span>Active transfers</span><strong>{{ formatCount(stats.activeDownloads) }}</strong><small>Allowed to finish before Offline</small></div>
                   </div>
@@ -445,6 +466,7 @@
                 <div class="background-queue-groups">
                   <section v-for="group in backgroundQueue.groups" :key="group.key" class="background-queue-group">
                     <div class="background-queue-group-head"><h3>{{ group.label }}</h3><span>{{ group.count }} {{ group.count === 1 ? 'item' : 'items' }}</span></div>
+                    <p v-if="group.description" class="background-queue-group-description">{{ group.description }}</p>
                     <div v-if="!group.items.length" class="background-queue-empty">Nothing in this queue.</div>
                     <div v-else class="background-queue-items">
                       <article v-for="item in group.items" :key="item.videoId || item.id || group.key + '-' + item.title" class="background-queue-item">
@@ -493,14 +515,19 @@
               <div v-if="showPlaylistCreate && !selectedPlaylist" class="playlist-create-panel"><input v-model="newPlaylistTitle" maxlength="120" placeholder="Playlist name" aria-label="Playlist name" @keyup.enter="createPlaylist" /><button class="quiet-button" :disabled="!newPlaylistTitle.trim()" @click="createPlaylist">Create</button></div>
               <div v-if="playlistLoading" class="notice"><div class="spinner" style="margin:0 auto 14px"></div><strong>Loading playlists</strong></div>
               <template v-else-if="selectedPlaylist">
-                <p class="meta">{{ selectedPlaylist.source === 'youtube' ? 'Captured from YouTube' : 'Your playlist' }} · {{ selectedPlaylist.items.length }} {{ selectedPlaylist.items.length === 1 ? 'video' : 'videos' }}<span v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.declaredItemCount > selectedPlaylist.items.length"> of {{ selectedPlaylist.declaredItemCount }} detected so far</span><span v-if="selectedPlaylist.channel"> · {{ selectedPlaylist.channel }}</span></p>
-                <div class="section-tools" style="justify-content:flex-start;margin:16px 0"><button v-if="selectedPlaylist.items.length" class="quiet-button" @click="playPlaylist(0)">Play all</button><button v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'watch-later'" class="quiet-button" @click="renamePlaylist">Rename</button><button v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'watch-later'" class="quiet-button" @click="deletePlaylist">Delete playlist</button><a v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.sourceUrl" class="quiet-button" :href="selectedPlaylist.sourceUrl" target="_blank" rel="noreferrer">Open on YouTube</a></div>
-                <div v-if="!selectedPlaylist.items.length" class="notice"><strong>No videos captured yet</strong>Open this playlist on YouTube and scroll through its videos with the YourTube extension enabled.</div>
+                <p class="meta">{{ selectedPlaylist.kind === 'daily-mix' ? 'Generated daily from artist affinity, completed listens, and variety' : selectedPlaylist.source === 'youtube' ? 'Captured from YouTube' : 'Your playlist' }} · {{ selectedPlaylistItems.length }} {{ selectedPlaylistItems.length === 1 ? 'video' : 'videos' }}<span v-if="selectedPlaylist.kind === 'daily-mix'"> · Your listening updates tomorrow’s selection</span><span v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.declaredItemCount > selectedPlaylist.items.length"> of {{ selectedPlaylist.declaredItemCount }} detected so far</span><span v-if="selectedPlaylist.channel"> · {{ selectedPlaylist.channel }}</span></p>
+                <div class="section-tools" style="justify-content:flex-start;margin:16px 0"><button v-if="selectedPlaylist.items.length && networkMode === 'online'" class="quiet-button" @click="playPlaylist(0)">Play all</button><button v-if="selectedPlaylist.items.length" class="quiet-button" :disabled="!locallyAvailablePlaylistCount" :title="locallyAvailablePlaylistCount ? `Play ${locallyAvailablePlaylistCount} locally available videos` : 'No videos in this playlist are downloaded yet'" @click="playLocallyAvailablePlaylist">Play all locally available ({{ locallyAvailablePlaylistCount }})</button><button v-if="selectedPlaylist.source === 'local' && !['watch-later', 'daily-mix'].includes(selectedPlaylist.kind)" class="quiet-button" @click="renamePlaylist">Rename</button><button v-if="selectedPlaylist.source === 'local' && !['watch-later', 'daily-mix'].includes(selectedPlaylist.kind)" class="quiet-button" @click="deletePlaylist">Delete playlist</button><a v-if="selectedPlaylist.source === 'youtube' && selectedPlaylist.sourceUrl" class="quiet-button" :href="selectedPlaylist.sourceUrl" target="_blank" rel="noreferrer">Open on YouTube</a></div>
+                <div v-if="selectedPlaylist.source === 'youtube' && !selectedPlaylist.isComplete" class="notice playlist-capture-notice" role="status">
+                  <strong>{{ playlistCaptureHeading }}</strong>
+                  <span>{{ playlistCaptureDetail }}</span>
+                  <button v-if="playlistCaptureStatus === 'error' || playlistCaptureStatus === 'finished' || playlistCaptureStatus === 'offline'" class="quiet-button" type="button" :disabled="networkMode !== 'online'" @click="retryPlaylistCapture">Try again</button>
+                </div>
+                <div v-else-if="!selectedPlaylistItems.length" class="notice"><strong>{{ selectedPlaylist.kind === 'daily-mix' && networkMode !== 'online' ? 'No local tracks in this mix' : 'No videos captured yet' }}</strong>{{ selectedPlaylist.kind === 'daily-mix' && networkMode !== 'online' ? 'Go Online to acquire the remaining selections.' : 'This playlist has no captured videos yet.' }}</div>
                 <div class="playlist-items">
-                  <div v-for="(video, index) in selectedPlaylist.items" :key="video.itemId" class="playlist-item">
+                  <div v-for="(video, index) in selectedPlaylistItems" :key="video.itemId" class="playlist-item">
                     <span class="playlist-item-number">{{ index + 1 }}</span>
                     <a class="playlist-item-link" :href="playlistWatchUrl(video.id, index)"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="thumbnailError($event, video)" /><span class="playlist-item-copy"><span class="playlist-item-title">{{ video.title }}</span><span class="meta">{{ video.channel || 'Channel unavailable' }}<span v-if="video.duration"> · {{ video.duration }}</span><span v-if="video.downloaded"> · Local copy</span></span></span></a>
-                    <div v-if="selectedPlaylist.source === 'local'" class="playlist-item-actions"><button class="quiet-button" type="button" :disabled="index === 0" :aria-label="`Move ${video.title} up`" @click="movePlaylistItem(index, -1)">↑</button><button class="quiet-button" type="button" :disabled="index === selectedPlaylist.items.length - 1" :aria-label="`Move ${video.title} down`" @click="movePlaylistItem(index, 1)">↓</button><button class="quiet-button" type="button" :aria-label="`Remove ${video.title} from playlist`" @click="removePlaylistItem(video)">×</button></div>
+                    <div v-if="selectedPlaylist.source === 'local' && selectedPlaylist.kind !== 'daily-mix'" class="playlist-item-actions"><button class="quiet-button" type="button" :disabled="index === 0" :aria-label="`Move ${video.title} up`" @click="movePlaylistItem(index, -1)">↑</button><button class="quiet-button" type="button" :disabled="index === selectedPlaylistItems.length - 1" :aria-label="`Move ${video.title} down`" @click="movePlaylistItem(index, 1)">↓</button><button class="quiet-button" type="button" :aria-label="`Remove ${video.title} from playlist`" @click="removePlaylistItem(video)">×</button></div>
                   </div>
                 </div>
               </template>
@@ -533,36 +560,38 @@
           </section>
           <template v-else>
           <div v-if="error" class="notice error">{{ error }}</div>
-          <div v-if="videos.length === 0" class="notice">
+          <div v-if="videos.length === 0 && !dailyMixVideos.length && !downloadedFeedVideos.length" class="notice">
             <strong>Your YouTube feed will appear here</strong>
             Open your signed-in YouTube homepage with the extension enabled. YourTube collects the video cards YouTube renders there.
           </div>
           <template v-else>
             <section class="feed-section home-feed-section">
               <div class="section-head"><h2>For you</h2><div class="for-you-filter-chips" role="group" aria-label="Filter For you by when videos were grabbed"><button type="button" class="for-you-filter-chip" :class="{ active: forYouAgeFilter === 'recent' }" :aria-pressed="String(forYouAgeFilter === 'recent')" @click="toggleForYouAgeFilter('recent')">Most recent</button><button type="button" class="for-you-filter-chip" :class="{ active: forYouAgeFilter === 'older' }" :aria-pressed="String(forYouAgeFilter === 'older')" @click="toggleForYouAgeFilter('older')">Older</button></div></div>
-              <div v-if="forYouVideos.length" class="video-grid"><video-card v-for="video in forYouVideos.slice(0, homeVisibleCount('for-you', Math.min(12, forYouVideos.length), 'video'))" :key="video.id" :video="video" source="homepage" /></div>
+              <div v-if="forYouVideos.length" class="video-grid"><video-card v-for="video in forYouVideos.slice(0, homeVisibleCount('for-you', forYouVideos.length, 'video'))" :key="video.id" :video="video" source="homepage" /></div>
               <div v-else-if="forYouAgeFilter" class="for-you-empty">No stubs in this time range.</div>
-              <div v-if="homeHasMore('for-you', Math.min(12, forYouVideos.length), 'video')" class="home-section-divider">
-                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('for-you', Math.min(12, forYouVideos.length), 'video')">{{ homeToggleLabel('for-you', Math.min(12, forYouVideos.length), 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              <div v-if="homeHasMore('for-you', forYouVideos.length, 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('for-you', forYouVideos.length, 'video')">⌄ Show more</button><span class="home-divider-rule"></span>
               </div>
             </section>
-            <section v-if="homepagePlaylists.length" class="feed-section home-feed-section">
-              <div class="section-head"><h2>Playlists &amp; mixes</h2></div>
-              <div class="playlist-grid"><button v-for="playlist in homepagePlaylists.slice(0, homeVisibleCount('homepage-playlists', homepagePlaylists.length, 'video'))" :key="playlist.id" class="playlist-tile" type="button" @click="openPlaylist(playlist.id)"><span class="playlist-thumbnail-stack"><img :src="playlist.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" @error="$event.currentTarget.src = '/image-placeholder.svg'" /><span class="playlist-card-badge"><span class="playlist-card-badge-icon" aria-hidden="true">▸</span>{{ playlist.kind === 'mix' ? 'Mix' : 'Playlist' }}</span></span><span class="playlist-tile-copy"><span class="playlist-tile-title">{{ playlist.title }}</span><span class="playlist-tile-type">Playlist</span><span class="playlist-tile-meta">{{ playlist.capturedCount }} captured<span v-if="playlist.declaredItemCount > playlist.capturedCount"> · {{ playlist.declaredItemCount }} total</span><span v-if="playlist.channel"> · {{ playlist.channel }}</span></span></span></button></div>
-              <div v-if="homeHasMore('homepage-playlists', homepagePlaylists.length, 'video')" class="home-section-divider"><span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('homepage-playlists', homepagePlaylists.length, 'video')">{{ homeToggleLabel('homepage-playlists', homepagePlaylists.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span></div>
+            <section v-if="dailyMixVideos.length" class="daily-mix-feature" aria-labelledby="daily-mix-title">
+              <div class="daily-mix-topline">
+                <div><p class="daily-mix-kicker">Made for today · {{ networkMode === 'online' ? dailyMix.items.length : dailyMixLocalCount }} {{ networkMode === 'online' ? 'picks' : 'local tracks ready' }}</p><h2 id="daily-mix-title">Your Daily Mix</h2><p class="daily-mix-description">A varied selection shaped by artist affinity, completed listens, and repeat plays, with recent discoveries in the blend. What you listen to today will inform tomorrow’s mix.</p></div>
+                <div class="daily-mix-actions"><button class="quiet-button" type="button" @click="openDailyMix">Open mix</button><button class="quiet-button" type="button" :disabled="networkMode !== 'online' && !dailyMixLocalCount" @click="playDailyMix">{{ networkMode === 'online' ? 'Play mix' : 'Play local tracks' }}</button></div>
+              </div>
+              <div class="daily-mix-track-grid" role="region" aria-label="Daily Mix picks" tabindex="0"><video-card v-for="video in dailyMixVideos" :key="video.id" :video="video" source="Daily Mix" /></div>
             </section>
             <section v-if="downloadedFeedVideos.length" class="feed-section home-feed-section">
               <div class="section-head"><h2>Downloaded</h2></div>
               <div class="video-grid"><video-card v-for="video in downloadedFeedVideos.slice(0, homeVisibleCount('downloaded-feed', downloadedFeedVideos.length, 'video'))" :key="video.id" :video="video" source="Downloaded" /></div>
               <div v-if="homeHasMore('downloaded-feed', downloadedFeedVideos.length, 'video')" class="home-section-divider">
-                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('downloaded-feed', downloadedFeedVideos.length, 'video')">{{ homeToggleLabel('downloaded-feed', downloadedFeedVideos.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('downloaded-feed', downloadedFeedVideos.length, 'video')">⌄ Show more</button><span class="home-divider-rule"></span>
               </div>
             </section>
             <section class="feed-section home-feed-section">
               <div class="section-head"><h2>Top News</h2></div>
-              <div class="video-grid"><video-card v-for="video in newsVideos.slice(0, homeVisibleCount('top-news', Math.min(12, newsVideos.length), 'video'))" :key="video.id" :video="video" source="Top News" /></div>
-              <div v-if="homeHasMore('top-news', Math.min(12, newsVideos.length), 'video')" class="home-section-divider">
-                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('top-news', Math.min(12, newsVideos.length), 'video')">{{ homeToggleLabel('top-news', Math.min(12, newsVideos.length), 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+              <div class="video-grid"><video-card v-for="video in newsVideos.slice(0, homeVisibleCount('top-news', newsVideos.length, 'video'))" :key="video.id" :video="video" source="Top News" /></div>
+              <div v-if="homeHasMore('top-news', newsVideos.length, 'video')" class="home-section-divider">
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('top-news', newsVideos.length, 'video')">⌄ Show more</button><span class="home-divider-rule"></span>
               </div>
             </section>
             <section class="feed-section home-feed-section">
@@ -571,7 +600,7 @@
                 <div class="topic-label">{{ topic }}</div>
                 <div class="video-grid"><video-card v-for="video in topicVideos(index).slice(0, homeVisibleCount(`topic-${index}`, topicVideos(index).length, 'video'))" :key="video.id" :video="video" :source="topicSource(video, topic)" /></div>
                 <div v-if="homeHasMore(`topic-${index}`, topicVideos(index).length, 'video')" class="home-section-divider">
-                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`topic-${index}`, topicVideos(index).length, 'video')">{{ homeToggleLabel(`topic-${index}`, topicVideos(index).length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`topic-${index}`, topicVideos(index).length, 'video')">⌄ Show more</button><span class="home-divider-rule"></span>
                 </div>
               </div>
             </section>
@@ -581,7 +610,7 @@
                 <div v-if="section.kind === 'shorts'" class="shorts-grid"><video-card v-for="video in lowerSectionVideos(section).slice(0, homeVisibleCount(`lower-${index}`, lowerSectionVideos(section).length, 'shorts'))" :key="video.id" :video="video" source="Shorts" /></div>
                 <div v-else class="video-grid"><video-card v-for="video in lowerSectionVideos(section).slice(0, homeVisibleCount(`lower-${index}`, lowerSectionVideos(section).length, 'video'))" :key="video.id" :video="video" source="homepage" /></div>
                 <div v-if="homeHasMore(`lower-${index}`, lowerSectionVideos(section).length, section.kind)" class="home-section-divider">
-                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`lower-${index}`, lowerSectionVideos(section).length, section.kind)">{{ homeToggleLabel(`lower-${index}`, lowerSectionVideos(section).length, section.kind) === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                  <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore(`lower-${index}`, lowerSectionVideos(section).length, section.kind)">⌄ Show more</button><span class="home-divider-rule"></span>
                 </div>
               </section>
             </template>
@@ -589,7 +618,7 @@
               <div class="section-head"><h2>More from your homepage</h2></div>
               <div class="video-grid"><video-card v-for="video in moreVideos.slice(0, homeVisibleCount('more-homepage', moreVideos.length, 'video'))" :key="video.id" :video="video" source="homepage" /></div>
               <div v-if="homeHasMore('more-homepage', moreVideos.length, 'video')" class="home-section-divider">
-                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('more-homepage', moreVideos.length, 'video')">{{ homeToggleLabel('more-homepage', moreVideos.length, 'video') === 'Show more' ? '⌄ Show more' : '⌃ Show less' }}</button><span class="home-divider-rule"></span>
+                <span class="home-divider-rule"></span><button class="home-section-more" @click="toggleHomeMore('more-homepage', moreVideos.length, 'video')">⌄ Show more</button><span class="home-divider-rule"></span>
               </div>
             </section>
           </template>
@@ -606,11 +635,14 @@
       </div>
     </div>
     <template id="video-card-template">
-      <article class="video-card" :class="{ 'menu-open': menuOpen }">
-        <a class="video-card-link" :href="`/watch/${video.id}`">
-          <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
-        </a>
-        <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="`/watch/${video.id}`">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu">⋮</button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop>{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
+      <article class="video-card" :class="{ 'menu-open': menuOpen, 'is-offline-stub': offlineStub }">
+        <div class="video-card-thumb">
+          <a class="video-card-link" :href="`/watch/${video.id}`" @click="handleVideoLink">
+            <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
+          </a>
+          <button v-if="offlineStub" class="offline-stub-overlay" type="button" :disabled="$root.networkModeUpdating" @click="$root.switchOnlineAndPlay(video)"><span>Not stored on this device</span><strong>{{ $root.networkModeUpdating ? 'Going online…' : 'Go online' }}</strong><small>Download and play locally</small></button>
+        </div>
+        <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="`/watch/${video.id}`" @click="handleVideoLink">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu">⋮</button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop.prevent="$root.openChannel(video.channelKey)">{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="publishedLabel" class="meta">{{ publishedLabel }}</div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
             <div v-if="menuOpen" class="video-card-menu" role="menu" @click.stop>
               <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('queue')">＋ <span>Add to queue</span></button>
               <button class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('watch-later')">◷ <span>Save to Watch later</span></button>
@@ -631,9 +663,25 @@
       const { createApp } = Vue;
       const cardTemplate = document.querySelector('#video-card-template').innerHTML;
       createApp({
-        components: { VideoCard: { props: { video: Object, source: String, canDelete: { type: Boolean, default: false }, showExpiry: { type: Boolean, default: false }, autoDeleteEnabled: { type: Boolean, default: false } }, emits: ['delete', 'postpone'], template: cardTemplate, data: () => ({ now: Date.now(), expiryTimer: null, postponing: false, menuOpen: false, avatarFailed: false }), computed: { sourceLabel() { if (/downloaded/i.test(this.source || '')) return ''; if (this.video.sourceLabel) return this.video.sourceLabel; return `From ${this.source || 'homepage'}`; }, expirySeconds() { return this.video.expiresAt ? Math.ceil((Date.parse(this.video.expiresAt) - this.now) / 1000) : 0; }, pulledAgo() { const timestamp = Date.parse(this.video.sourceSeenAt || this.video.seenAt || this.video.acquiredAt || ''); if (!Number.isFinite(timestamp)) return ''; const elapsed = Math.max(0, this.now - timestamp); if (elapsed > (23 * 60 + 59) * 60_000) return `${Math.max(1, Math.round(elapsed / 86_400_000))}D ago`; const minutes = Math.max(1, Math.floor(elapsed / 60_000)); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return remainder ? `${hours}h${remainder}m ago` : `${hours}h ago`; } }, mounted() { if (this.showExpiry || (this.sourceLabel && (this.video.sourceSeenAt || this.video.seenAt))) this.expiryTimer = setInterval(() => { this.now = Date.now(); }, this.showExpiry ? 1000 : 30_000); document.addEventListener('click', this.closeMenuOnOutsideClick); }, beforeUnmount() { clearInterval(this.expiryTimer); document.removeEventListener('click', this.closeMenuOnOutsideClick); }, methods: { toggleMenu() { this.menuOpen = !this.menuOpen; }, closeMenuOnOutsideClick(event) { if (this.menuOpen && !this.$el.contains(event.target)) this.menuOpen = false; }, runAction(action) { this.menuOpen = false; this.$root.performVideoAction(action, this.video); }, channelHref(video) { if (!video?.channelKey) return ''; const key = String(video.channelKey); const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/'); return `/channel/${path}/videos`; }, avatarInitials(channel) { return String(channel || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() || '?'; }, thumbnailSrc(video) { return video.thumbnail || '/image-placeholder.svg'; }, thumbnailError(event, video) { const image = event.currentTarget; const standard = video.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : ''; if (!image.dataset.fallbackTried && this.$root.networkMode === 'online' && standard && image.src !== standard) { image.dataset.fallbackTried = 'true'; image.src = standard; } else if (image.dataset.placeholderTried) image.remove(); else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; } }, viewedLabel(count) { const value = Number(count) || 0; return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`; }, formatExpiry(seconds) { const value = Math.max(0, Number(seconds) || 0); const hours = Math.floor(value / 3600); const minutes = Math.floor(value % 3600 / 60); const secs = value % 60; return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`; }, postpone(video) { if (this.postponing) return; this.postponing = true; this.$emit('postpone', video); setTimeout(() => { this.postponing = false; }, 3000); } } } },
-        data: () => ({ videos: [], downloadedVideos: [], historyVideos: [], playlists: [], selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, playlistSaving: false, playlistStatus: '', showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, mediaBytes: 0, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchOffset: 0, searchVisibleCount: 12, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'All', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, chips: ['All', 'Music', 'Live', 'Gaming', 'Mixes', 'News', 'Podcasts', 'Recently uploaded', 'Watched'], topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
+        components: { VideoCard: { props: { video: Object, source: String, offlineStub: { type: Boolean, default: false }, canDelete: { type: Boolean, default: false }, showExpiry: { type: Boolean, default: false }, autoDeleteEnabled: { type: Boolean, default: false } }, emits: ['delete', 'postpone'], template: cardTemplate, data: () => ({ now: Date.now(), expiryTimer: null, postponing: false, menuOpen: false, avatarFailed: false }), computed: { sourceLabel() { if (/downloaded/i.test(this.source || '')) return ''; if (this.video.sourceLabel) return this.video.sourceLabel; return `From ${this.source || 'homepage'}`; }, expirySeconds() { return this.video.expiresAt ? Math.ceil((Date.parse(this.video.expiresAt) - this.now) / 1000) : 0; }, pulledAgo() { const timestamp = Date.parse(this.video.sourceSeenAt || this.video.seenAt || this.video.acquiredAt || ''); if (!Number.isFinite(timestamp)) return ''; const elapsed = Math.max(0, this.now - timestamp); if (elapsed > (23 * 60 + 59) * 60_000) return `${Math.max(1, Math.round(elapsed / 86_400_000))}D ago`; const minutes = Math.max(1, Math.floor(elapsed / 60_000)); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return remainder ? `${hours}h${remainder}m ago` : `${hours}h ago`; }, publishedLabel() { const raw = String(this.video.publishedAt || ''); const precision = this.video.publishedAtPrecision || (/T/.test(raw) ? 'exact' : 'date'); const exactTime = precision === 'exact' ? Date.parse(raw) : NaN; if (Number.isFinite(exactTime) && exactTime <= this.now) { const elapsed = this.now - exactTime; if (elapsed < 86_400_000) { const minutes = Math.max(1, Math.floor(elapsed / 60_000)); return `First published on YouTube ${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ago`; } return `First published on YouTube ${new Date(exactTime).toLocaleString()}`; } const age = this.video.publishedAge || this.video.meta?.match(/\b(?:\d+\s+)?(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b/i)?.[0] || ''; if (age) return `First published on YouTube ${age}`; if (precision === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return `First published on YouTube ${new Date(`${raw}T00:00:00`).toLocaleDateString()}`; return ''; } }, mounted() { if (this.showExpiry || (this.sourceLabel && (this.video.sourceSeenAt || this.video.seenAt)) || this.video.publishedAt || this.video.publishedAge) this.expiryTimer = setInterval(() => { this.now = Date.now(); }, this.showExpiry ? 1000 : 30_000); document.addEventListener('click', this.closeMenuOnOutsideClick); }, beforeUnmount() { clearInterval(this.expiryTimer); document.removeEventListener('click', this.closeMenuOnOutsideClick); }, methods: { toggleMenu() { this.menuOpen = !this.menuOpen; }, handleVideoLink(event) { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); event.stopPropagation(); if (this.offlineStub) this.$root.switchOnlineAndPlay(this.video); else this.$root.openVideoCard(this.video, event); }, closeMenuOnOutsideClick(event) { if (this.menuOpen && !this.$el.contains(event.target)) this.menuOpen = false; }, runAction(action) { this.menuOpen = false; this.$root.performVideoAction(action, this.video); }, channelHref(video) { if (!video?.channelKey) return ''; const key = String(video.channelKey); const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/'); return `/channel/${path}/videos`; }, avatarInitials(channel) { return String(channel || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() || '?'; }, thumbnailSrc(video) { return video.thumbnail || '/image-placeholder.svg'; }, thumbnailError(event, video) { const image = event.currentTarget; const standard = video.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : ''; if (!image.dataset.fallbackTried && this.$root.networkMode === 'online' && standard && image.src !== standard) { image.dataset.fallbackTried = 'true'; image.src = standard; } else if (image.dataset.placeholderTried) image.remove(); else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; } }, viewedLabel(count) { const value = Number(count) || 0; return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`; }, formatExpiry(seconds) { const value = Math.max(0, Number(seconds) || 0); const hours = Math.floor(value / 3600); const minutes = Math.floor(value % 3600 / 60); const secs = value % 60; return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`; }, postpone(video) { if (this.postponing) return; this.postponing = true; this.$emit('postpone', video); setTimeout(() => { this.postponing = false; }, 3000); } } } },
+        data: () => ({ videos: [], downloadedVideos: [], historyVideos: [], playlists: [], dailyMix: { items: [], localCount: 0 }, dailyMixLoading: false, dailyMixError: '', dailyMixLoadPromise: null, selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, playlistSaving: false, playlistStatus: '', playlistCaptureStatus: '', playlistCaptureError: '', playlistCaptureRequestId: '', playlistCaptureRequestedId: '', playlistCaptureTimeout: null, playlistPollTimer: null, playlistLoadToken: 0, playlistPollInFlight: false, showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, mediaBytes: 0, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchOffset: 0, searchVisibleCount: 12, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'All', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, chips: ['All', 'Music', 'Live', 'Gaming', 'Mixes', 'News', 'Podcasts', 'Recently uploaded', 'Watched'], topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Daily Mix', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
         computed: {
+          playlistCaptureHeading() {
+            if (this.playlistCaptureStatus === 'opening') return 'Opening a background YouTube tab';
+            if (this.playlistCaptureStatus === 'capturing') return 'Collecting playlist videos';
+            if (this.playlistCaptureStatus === 'syncing') return 'Playlist scanned; syncing saved entries';
+            if (this.playlistCaptureStatus === 'complete') return 'Playlist capture complete';
+            if (this.playlistCaptureStatus === 'finished') return 'The playlist is still incomplete';
+            if (this.playlistCaptureStatus === 'offline' || this.networkMode !== 'online') return 'Playlist acquisition is paused while offline';
+            if (this.playlistCaptureStatus === 'error') return 'Could not start playlist acquisition';
+            return 'Preparing playlist acquisition';
+          },
+          playlistCaptureDetail() {
+            if (this.playlistCaptureError) return this.playlistCaptureError;
+            if (this.playlistCaptureStatus === 'syncing') return 'The YouTube tab finished scanning. YourTube is waiting for the local playlist record to catch up.';
+            if (this.playlistCaptureStatus === 'finished') return 'YourTube saved the items it could load. You can retry to collect more; this view keeps checking for updates.';
+            return 'YourTube is collecting items from your signed-in YouTube page in the background. This list updates automatically.';
+          },
           offlineTransitionActive() { return this.modeTransitionTarget === 'offline' || this.networkMode === 'preparing'; },
           backgroundPreparationActive() { return this.networkMode === 'online' && ['queued', 'running'].includes(this.offlinePreparation.status); },
           modeTransitionActive() { return this.modeTransitionTarget === 'online' || this.offlineTransitionActive; },
@@ -716,6 +764,13 @@
             });
           },
           statusCurrentStageTitle() { return this.offlineStageCards.find(stage => stage.state === 'active' || stage.state === 'paused')?.title || (this.networkMode === 'offline' ? 'Local library' : 'Background queue'); },
+          durationTelemetryDetail() {
+            const passTotal = Number(this.offlinePreparation?.total) || 0;
+            const passActive = ['queued', 'running', 'paused'].includes(this.offlinePreparation?.status) && this.offlinePreparation?.phase === 'video lengths';
+            return passActive && passTotal
+              ? `Missing across all tracked stubs · ${this.formatCount(passTotal)} in this Offline preparation pass`
+              : 'Missing across all tracked stubs';
+          },
           statusProgressLabel() {
             if (this.offlinePreparation.status === 'complete' || this.networkMode === 'offline' && !['queued', 'running', 'paused'].includes(this.offlinePreparation.status)) return 'READY';
             const total = Number(this.offlinePreparation.total) || 0;
@@ -741,6 +796,8 @@
           },
           statusCurrentMessage() { return this.offlineTransitionActive || this.offlinePreparation.status === 'paused' || this.backgroundPreparationActive ? this.offlinePreparation.message || this.backgroundStatus : this.backgroundStatus; },
           visibleSearchVideos() { return this.searchVideos.slice(0, this.searchVisibleCount); },
+          selectedPlaylistItems() { const items = this.selectedPlaylist?.items || []; return this.selectedPlaylist?.kind === 'daily-mix' && this.networkMode !== 'online' ? items.filter(video => Number(video.downloaded) === 1 || this.downloadedVideos.some(localVideo => localVideo.id === video.id)) : items; },
+          locallyAvailablePlaylistCount() { const localIds = new Set(this.downloadedVideos.map(video => video.id)); return this.selectedPlaylist?.items?.filter(video => Number(video.downloaded) === 1 || localIds.has(video.id)).length || 0; },
           channelHandle() { return this.channelKey.startsWith('@') ? this.channelKey : `youtube.com/${this.channelKey}`; },
           channelIsLoading() { return this.channelLoading || ['opening', 'queued', 'collecting'].includes(this.channelCaptureStatus); },
           channelSkeletonCount() { return this.channelIsLoading ? Math.max(4, Math.min(12, 12 - this.channelVideos.length)) : 0; },
@@ -749,6 +806,7 @@
             const selectedCapture = this.channelCaptureFor(this.channelTab);
             if (selectedCapture?.phase === 'retrying') return selectedCapture.message || 'Retrying channel data delivery automatically…';
             if (selectedCapture?.status === 'paused' && selectedCapture.message) return selectedCapture.message;
+            if (selectedCapture?.status === 'stale' && selectedCapture.message) return selectedCapture.message;
             if (this.channelCaptureStatus === 'offline') return 'Offline · showing channel details and videos already saved locally.';
             if (this.channelCaptureStatus === 'opening') return 'Opening this channel in a background YouTube tab…';
             if (this.channelCaptureStatus === 'queued') return 'This section is queued for background capture.';
@@ -777,9 +835,10 @@
             });
           },
           subscriptionsVisible() { return this.subscriptionsExpanded ? this.subscriptions : this.subscriptions.slice(0, 7); },
-          localPlaylists() { return this.playlists.filter(playlist => playlist.source === 'local' && playlist.kind !== 'watch-later'); },
+          localPlaylists() { return this.playlists.filter(playlist => playlist.source === 'local' && !['watch-later', 'daily-mix'].includes(playlist.kind)); },
           youtubePlaylists() { return this.playlists.filter(playlist => playlist.source === 'youtube'); },
-          homepagePlaylists() { return this.networkMode === 'online' ? this.youtubePlaylists.slice().sort((a, b) => (Date.parse(b.updatedAt || '') || 0) - (Date.parse(a.updatedAt || '') || 0)).slice(0, 24) : []; },
+          dailyMixVideos() { const items = Array.isArray(this.dailyMix?.items) ? this.dailyMix.items : []; const downloadedIds = new Set(this.downloadedVideos.map(video => video.id)); const currentItems = items.map(video => downloadedIds.has(video.id) ? { ...video, downloaded: 1 } : video); return this.networkMode === 'online' ? currentItems : currentItems.filter(video => Number(video.downloaded) === 1); },
+          dailyMixLocalCount() { return this.dailyMixVideos.filter(video => Number(video.downloaded) === 1).length; },
           downloadedFeedVideos() { return this.matching(this.downloadedVideos); },
           normalVideos() { return this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && video.kind !== 'short' && video.section === 'home')); },
           forYouVideos() {
@@ -815,9 +874,11 @@
             } catch {}
             await this.refreshMode();
             window.addEventListener('message', this.onChannelExtensionMessage);
+            window.addEventListener('message', this.onPlaylistExtensionMessage);
             window.addEventListener('resize', this.onHomeResize, { passive: true });
             this.modePollTimer = setInterval(this.refreshMode, 1500);
             await this.refresh(true);
+            await this.loadDailyMix();
             if (this.currentView === 'channel') await this.startChannelCapture(this.channelKey, this.channelTab);
             if (this.currentView === 'playlists') await this.loadPlaylists(this.selectedPlaylistId);
             this.refreshTimer = setInterval(() => this.refresh(), 3000);
@@ -837,7 +898,10 @@
             clearTimeout(this.searchLivePollTimer);
             clearInterval(this.channelPollTimer);
             clearTimeout(this.channelOpenTimeout);
+            clearInterval(this.playlistPollTimer);
+            clearTimeout(this.playlistCaptureTimeout);
             window.removeEventListener('message', this.onChannelExtensionMessage);
+            window.removeEventListener('message', this.onPlaylistExtensionMessage);
             window.removeEventListener('resize', this.onHomeResize);
             window.removeEventListener('pageshow', this.refresh);
             window.removeEventListener('focus', this.refresh);
@@ -846,6 +910,15 @@
             document.removeEventListener('visibilitychange', this.onVisibilityChange);
           },
         methods: {
+          openVideoCard(video, event) {
+            if (!video?.id || (event && (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey))) return;
+            const url = event?.currentTarget?.href || `/watch/${encodeURIComponent(video.id)}`;
+            if (this.currentView === 'search' && this.activeSearchSource === 'youtube' && this.searchSessionId && !this.searchSelectionRecorded) {
+              this.recordSearchSelection(video.id, event, url);
+              return;
+            }
+            location.assign(url);
+          },
           thumbnailError(event, video) {
             const image = event.currentTarget;
             const standard = video.id ? `https://i.ytimg.com/vi/${encodeURIComponent(video.id)}/hqdefault.jpg` : '';
@@ -856,24 +929,146 @@
             else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; }
           },
           async loadPlaylists(selectedId = '') {
+            const token = ++this.playlistLoadToken;
+            clearInterval(this.playlistPollTimer);
+            this.playlistPollTimer = null;
+            clearTimeout(this.playlistCaptureTimeout);
+            this.playlistCaptureTimeout = null;
+            if (this.selectedPlaylistId !== (selectedId || '')) {
+              this.playlistCaptureStatus = '';
+              this.playlistCaptureError = '';
+              this.playlistCaptureRequestId = '';
+              this.playlistCaptureRequestedId = '';
+            }
             this.playlistLoading = true;
             try {
               const response = await fetch(`/api/playlists?refresh=${Date.now()}`, { cache: 'no-store' });
               const rows = await response.json();
               if (!response.ok) throw new Error(rows.error || 'Playlists could not be loaded.');
+              if (token !== this.playlistLoadToken) return;
               this.playlists = Array.isArray(rows) ? rows : [];
               this.selectedPlaylistId = selectedId || '';
               if (selectedId) {
                 const detailResponse = await fetch(`/api/playlists/${encodeURIComponent(selectedId)}?refresh=${Date.now()}`, { cache: 'no-store' });
                 const detail = await detailResponse.json();
                 if (!detailResponse.ok) throw new Error(detail.error || 'Playlist could not be opened.');
+                if (token !== this.playlistLoadToken) return;
                 this.selectedPlaylist = detail;
               } else this.selectedPlaylist = null;
               this.error = '';
-            } catch (error) { this.error = error.message || 'Playlists could not be loaded.'; }
-            finally { this.playlistLoading = false; }
+            } catch (error) {
+              if (token === this.playlistLoadToken) this.error = error.message || 'Playlists could not be loaded.';
+            } finally {
+              if (token === this.playlistLoadToken) this.playlistLoading = false;
+            }
+            if (token === this.playlistLoadToken && this.currentView === 'playlists' && selectedId && this.selectedPlaylist?.source === 'youtube' && !this.selectedPlaylist.isComplete) {
+              this.beginPlaylistHydration(selectedId, token);
+            }
+          },
+          async loadDailyMix() {
+            if (this.dailyMixLoadPromise) return this.dailyMixLoadPromise;
+            this.dailyMixLoading = true;
+            this.dailyMixLoadPromise = (async () => {
+              try {
+                const response = await fetch(`/api/daily-mix?refresh=${Date.now()}`, { cache: 'no-store' });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Your Daily Mix could not be prepared.');
+                this.dailyMix = result;
+                this.dailyMixError = '';
+              } catch (error) { this.dailyMixError = error.message || 'Your Daily Mix could not be prepared.'; }
+              finally { this.dailyMixLoading = false; this.dailyMixLoadPromise = null; }
+            })();
+            return this.dailyMixLoadPromise;
+          },
+          async openDailyMix() {
+            await this.loadDailyMix();
+            if (!this.dailyMix?.id) { this.actionNotice = this.dailyMix?.message || this.dailyMixError || 'Your Daily Mix is not available yet.'; return; }
+            await this.openPlaylist(this.dailyMix.id);
+          },
+          async playDailyMix() {
+            await this.openDailyMix();
+            if (this.selectedPlaylist?.kind !== 'daily-mix' || !this.selectedPlaylist.items?.length) return;
+            if (this.networkMode === 'online') this.playPlaylist(0);
+            else this.playLocallyAvailablePlaylist();
+          },
+          beginPlaylistHydration(id, token = this.playlistLoadToken) {
+            if (id !== this.selectedPlaylistId || this.selectedPlaylist?.source !== 'youtube' || this.selectedPlaylist.isComplete) return;
+            clearInterval(this.playlistPollTimer);
+            this.playlistPollTimer = setInterval(() => this.refreshSelectedPlaylist(id, token), 2200);
+            if (this.networkMode === 'online') this.requestPlaylistCapture(id);
+            else this.playlistCaptureStatus = 'offline';
+          },
+          async refreshSelectedPlaylist(id, token = this.playlistLoadToken) {
+            if (this.playlistPollInFlight || token !== this.playlistLoadToken || this.currentView !== 'playlists' || id !== this.selectedPlaylistId) return;
+            this.playlistPollInFlight = true;
+            try {
+              const response = await fetch(`/api/playlists/${encodeURIComponent(id)}?refresh=${Date.now()}`, { cache: 'no-store' });
+              const detail = await response.json();
+              if (!response.ok || token !== this.playlistLoadToken || id !== this.selectedPlaylistId) return;
+              this.selectedPlaylist = detail;
+              if (detail.isComplete) {
+                this.playlistCaptureStatus = 'complete';
+                this.playlistCaptureError = '';
+                clearInterval(this.playlistPollTimer);
+                this.playlistPollTimer = null;
+              }
+            } catch {} finally { this.playlistPollInFlight = false; }
+          },
+          requestPlaylistCapture(id, force = false) {
+            if (!id || this.selectedPlaylist?.source !== 'youtube' || this.selectedPlaylist.isComplete) return;
+            if (this.networkMode !== 'online') {
+              this.playlistCaptureStatus = 'offline';
+              return;
+            }
+            if (!force && this.playlistCaptureRequestedId === id && ['opening', 'capturing'].includes(this.playlistCaptureStatus)) return;
+            clearTimeout(this.playlistCaptureTimeout);
+            const requestId = crypto.randomUUID();
+            this.playlistCaptureRequestedId = id;
+            this.playlistCaptureRequestId = requestId;
+            this.playlistCaptureStatus = 'opening';
+            this.playlistCaptureError = '';
+            window.postMessage({ type: 'yourtube:collect-playlist', playlistId: id, requestId }, location.origin);
+            this.playlistCaptureTimeout = setTimeout(() => {
+              if (this.playlistCaptureRequestId === requestId && this.playlistCaptureStatus === 'opening') {
+                this.playlistCaptureStatus = 'error';
+                this.playlistCaptureError = 'The extension did not acknowledge the background capture. Check that YourTube Local Feed is enabled in Chrome.';
+              }
+            }, 20000);
+          },
+          retryPlaylistCapture() {
+            this.requestPlaylistCapture(this.selectedPlaylistId, true);
+          },
+          onPlaylistExtensionMessage(event) {
+            if (event.source !== window || event.origin !== location.origin) return;
+            const message = event.data;
+            if (message?.type === 'yourtube:playlist-opened') {
+              if (message.playlistId !== this.selectedPlaylistId || message.requestId !== this.playlistCaptureRequestId) return;
+              clearTimeout(this.playlistCaptureTimeout);
+              this.playlistCaptureTimeout = null;
+              if (message.result?.ok) {
+                this.playlistCaptureRequestId = message.result.requestId || message.requestId;
+                this.playlistCaptureStatus = 'capturing';
+                this.playlistCaptureError = '';
+              } else {
+                this.playlistCaptureStatus = this.networkMode === 'online' ? 'error' : 'offline';
+                this.playlistCaptureError = message.result?.error || 'The extension could not open a background YouTube tab.';
+              }
+              return;
+            }
+            if (message?.type !== 'yourtube:playlist-capture-finished' || message.playlistId !== this.selectedPlaylistId || message.requestId !== this.playlistCaptureRequestId) return;
+            this.playlistCaptureStatus = message.complete ? 'syncing' : 'finished';
+            this.playlistCaptureError = message.complete ? '' : message.error || `YouTube stopped loading after ${Number(message.itemCount) || 0} playlist items.`;
+            this.refreshSelectedPlaylist(this.selectedPlaylistId, this.playlistLoadToken);
           },
           async openPlaylist(id) {
+            if (this.selectedPlaylistId !== id) {
+              clearInterval(this.playlistPollTimer);
+              clearTimeout(this.playlistCaptureTimeout);
+              this.playlistCaptureStatus = '';
+              this.playlistCaptureError = '';
+              this.playlistCaptureRequestId = '';
+              this.playlistCaptureRequestedId = '';
+            }
             this.currentView = 'playlists';
             this.selectedPlaylistId = id;
             const target = new URL('/', location.origin);
@@ -883,8 +1078,15 @@
             await this.loadPlaylists(id);
           },
           async closePlaylist() {
+            clearInterval(this.playlistPollTimer);
+            clearTimeout(this.playlistCaptureTimeout);
+            this.playlistPollTimer = null;
             this.selectedPlaylistId = '';
             this.selectedPlaylist = null;
+            this.playlistCaptureStatus = '';
+            this.playlistCaptureError = '';
+            this.playlistCaptureRequestId = '';
+            this.playlistCaptureRequestedId = '';
             const target = new URL('/', location.origin);
             target.searchParams.set('view', 'playlists');
             history.replaceState({}, '', target);
@@ -949,13 +1151,36 @@
             const target = new URL(`/watch/${encodeURIComponent(videoId)}`, location.origin);
             if (this.selectedPlaylist) {
               target.searchParams.set('yourtubePlaylist', this.selectedPlaylist.id);
-              target.searchParams.set('yourtubePlaylistPosition', String(this.selectedPlaylist.items[index]?.position ?? index));
+              target.searchParams.set('yourtubePlaylistPosition', String(this.selectedPlaylistItems[index]?.position ?? index));
             }
             return `${target.pathname}${target.search}`;
           },
           playPlaylist(index = 0) {
             const video = this.selectedPlaylist?.items?.[index];
             if (video) location.assign(this.playlistWatchUrl(video.id, index));
+          },
+          playLocallyAvailablePlaylist() {
+            const localIds = new Set(this.downloadedVideos.map(video => video.id));
+            const available = this.selectedPlaylist?.items?.filter(video => Number(video.downloaded) === 1 || localIds.has(video.id)) || [];
+            if (!available.length) return;
+            const storageKey = `yourtube-playlist-order:${this.selectedPlaylist.id}:local`;
+            let shuffle = false;
+            try { shuffle = localStorage.getItem('yourtube-playlist-shuffle') === 'true'; } catch {}
+            let ordered = [...available];
+            if (shuffle) {
+              for (let index = ordered.length - 1; index > 0; index--) {
+                const swap = Math.floor(Math.random() * (index + 1));
+                [ordered[index], ordered[swap]] = [ordered[swap], ordered[index]];
+              }
+              try { sessionStorage.setItem(storageKey, JSON.stringify(ordered.map(video => video.itemId))); } catch {}
+            } else {
+              try { sessionStorage.removeItem(storageKey); } catch {}
+            }
+            const first = ordered[0];
+            const index = this.selectedPlaylist.items.findIndex(video => String(video.itemId) === String(first.itemId));
+            const target = new URL(this.playlistWatchUrl(first.id, index), location.origin);
+            target.searchParams.set('yourtubePlaylistLocal', '1');
+            location.assign(`${target.pathname}${target.search}`);
           },
           async openAddToPlaylist(video) {
             this.playlistVideoToAdd = video;
@@ -1054,10 +1279,11 @@
               this.offlinePreparation = state.preparation || this.offlinePreparation;
               if (state.mode === this.modeTransitionTarget) this.modeTransitionTarget = '';
               if (['online', 'offline', 'preparing'].includes(state.mode) && previousMode !== state.mode) window.postMessage({ type: 'yourtube:mode-change', mode: state.mode }, location.origin);
-              if (this.networkMode !== 'online') {
-                this.searchSource = 'local';
-                if (this.currentView === 'search' && this.activeSearchSource !== 'local') this.beginSearch(this.searchTerm);
+              if (state.mode === 'online' && previousMode !== 'online' && this.currentView === 'playlists' && this.selectedPlaylist?.source === 'youtube' && !this.selectedPlaylist.isComplete) {
+                this.requestPlaylistCapture(this.selectedPlaylistId, true);
               }
+              if (this.networkMode !== 'online') this.searchSource = 'local';
+              if (this.currentView === 'search' && this.searchTerm && previousMode !== state.mode) this.beginSearch(this.searchTerm);
             } catch {}
             try {
               const response = await fetch(`/api/auto-delete?refresh=${Date.now()}`, { cache: 'no-store' });
@@ -1090,6 +1316,40 @@
               await this.refresh();
             } catch (error) { this.error = error.message; }
             finally { this.autoDeleteUpdating = false; }
+          },
+          async switchOnlineAndPlay(video) {
+            const videoId = String(video?.id || '');
+            if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || this.networkModeUpdating) return;
+            if (this.networkMode === 'online') {
+              location.assign(`/watch/${encodeURIComponent(videoId)}`);
+              return;
+            }
+            this.networkModeUpdating = true;
+            this.modeTransitionTarget = 'online';
+            this.networkNotice = '';
+            this.actionNotice = `Going Online to download and play “${video.title || videoId}”…`;
+            this.actionError = false;
+            try {
+              const response = await fetch('/api/mode', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ mode: 'online' })
+              });
+              const state = await response.json();
+              if (state.mode) this.networkMode = state.mode;
+              this.offlinePreparation = state.preparation || this.offlinePreparation;
+              this.networkNotice = state.connectivityNotice || '';
+              if (!response.ok || state.mode !== 'online') throw new Error(state.error || 'YourTube could not return Online. Check your internet connection and try again.');
+              this.searchSource = 'youtube';
+              window.postMessage({ type: 'yourtube:mode-change', mode: 'online' }, location.origin);
+              location.assign(`/watch/${encodeURIComponent(videoId)}`);
+            } catch (error) {
+              this.modeTransitionTarget = '';
+              this.actionNotice = error.message || 'YourTube could not switch Online.';
+              this.actionError = true;
+            } finally {
+              this.networkModeUpdating = false;
+              if (this.modeTransitionTarget === 'online') this.modeTransitionTarget = '';
+            }
           },
           async toggleNetworkMode() {
             if (this.networkModeUpdating) return;
@@ -1241,12 +1501,16 @@
             if (capture?.phase === 'retrying') return 'Retrying';
             if (capture?.status === 'collecting') return `Loading ${Number(capture.videoCount) || 0}`;
             if (capture?.status === 'complete') return `Ready ${Number(capture.videoCount) || 0}`;
-            return ({ opening: 'Opening', queued: 'Queued', paused: 'Paused', error: 'Error' })[capture?.status] || '';
+            return ({ opening: 'Opening', queued: 'Queued', paused: 'Paused', stale: 'Stalled', error: 'Error' })[capture?.status] || '';
           },
           openChannel(key) {
             const normalized = this.normalizeChannelKey(key);
             if (!normalized) return;
-            location.assign(this.channelPagePath(normalized, 'videos'));
+            this.currentView = 'channel';
+            this.channelKey = normalized;
+            this.channelTab = 'videos';
+            history.pushState({}, '', this.channelPagePath(normalized, 'videos'));
+            this.startChannelCapture(normalized, 'videos');
           },
           async startChannelCapture(key, tab = 'videos') {
             key = this.normalizeChannelKey(key);
@@ -1407,8 +1671,18 @@
             const view = new URLSearchParams(location.search).get('view');
             this.currentView = ['downloaded', 'history', 'playlists', 'status'].includes(view) ? view : 'home';
             if (this.currentView === 'playlists') this.loadPlaylists(new URLSearchParams(location.search).get('playlist') || '');
+            else {
+              clearInterval(this.playlistPollTimer);
+              clearTimeout(this.playlistCaptureTimeout);
+              this.playlistPollTimer = null;
+            }
           },
           setCurrentView(view) {
+            if (view !== 'playlists') {
+              clearInterval(this.playlistPollTimer);
+              clearTimeout(this.playlistCaptureTimeout);
+              this.playlistPollTimer = null;
+            }
             this.currentView = view;
             const target = view === 'home' ? '/' : `/?view=${encodeURIComponent(view)}`;
             window.history.replaceState({}, '', target);
@@ -1416,12 +1690,17 @@
             if (view === 'playlists') {
               this.selectedPlaylistId = '';
               this.selectedPlaylist = null;
+              this.playlistCaptureStatus = '';
+              this.playlistCaptureError = '';
+              this.playlistCaptureRequestId = '';
+              this.playlistCaptureRequestedId = '';
               this.loadPlaylists();
             }
           },
           openSidebarItem(item) {
             if (item === 'History') this.setCurrentView('history');
             if (item === 'Playlists') this.setCurrentView('playlists');
+            if (item === 'Daily Mix') this.openDailyMix();
             if (item === 'Watch later') this.openPlaylist('watch-later');
           },
           goHome() { this.setCurrentView('home'); this.refresh(true); },
@@ -1506,7 +1785,7 @@
               const existing = new Set(this.searchVideos.map(video => video.id));
               const fresh = sessionVideos.filter(video => video.id && !existing.has(video.id) && existing.add(video.id));
               if (fresh.length) this.searchVideos.push(...fresh);
-              this.searchSessionComplete = result.status === 'ready' || result.status === 'displayed';
+              this.searchSessionComplete = ['ready', 'displayed', 'stale'].includes(result.status);
               this.searchTotal = Math.max(this.searchTotal, sessionVideos.length, this.searchVideos.length);
               if (this.searchVideos.length >= 12 || this.searchSessionComplete) {
                 this.searchResultsReady = true;
@@ -1514,7 +1793,7 @@
                 if (this.activeSearchSource === 'youtube' && !this.searchLivePollTimer) this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
               }
               this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
-              if (this.searchSessionComplete && !this.searchSessionAcknowledged) {
+              if (['ready', 'displayed'].includes(result.status) && !this.searchSessionAcknowledged) {
                 this.searchSessionAcknowledged = true;
                 fetch(`/api/search-sessions/${encodeURIComponent(this.searchSessionId)}`, { method: 'POST' }).catch(() => {});
               } else if (!this.searchSessionComplete) {
@@ -1524,22 +1803,20 @@
               if (token === this.searchRequestToken) this.searchLivePollTimer = setTimeout(() => this.pollSearchSession(token), 1800);
             }
           },
-          async recordSearchSelection(videoId, event) {
-            if (this.activeSearchSource !== 'youtube' || this.searchSelectionRecorded || !this.searchSessionId) return;
-            const targetUrl = new URL(event?.currentTarget?.href || `/watch/${encodeURIComponent(videoId)}`, location.origin);
-            targetUrl.searchParams.set('yourtubeSearchId', this.searchSessionId);
-            const target = targetUrl.href;
-            event?.preventDefault?.();
-            this.searchSelectionRecorded = true;
-            try {
-              await fetch('/api/search-history', {
+          recordSearchSelection(videoId, event, sourceUrl = '') {
+            const targetUrl = new URL(sourceUrl || event?.currentTarget?.href || `/watch/${encodeURIComponent(videoId)}`, location.origin);
+            const shouldRecord = this.activeSearchSource === 'youtube' && !this.searchSelectionRecorded && Boolean(this.searchSessionId);
+            if (shouldRecord) {
+              targetUrl.searchParams.set('yourtubeSearchId', this.searchSessionId);
+              this.searchSelectionRecorded = true;
+              fetch('/api/search-history', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ searchId: this.searchSessionId, query: this.searchTerm, source: 'youtube', selectedVideoId: videoId }),
                 keepalive: true
-              });
-            } catch {}
-            location.assign(target);
+              }).catch(() => {});
+            }
+            location.assign(targetUrl.href);
           },
           async pollFirstBatch(token) {
             if (token !== this.searchRequestToken || this.searchResultsReady) return;
@@ -1554,6 +1831,14 @@
               const seenIds = new Set();
               const batch = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !seenIds.has(video.id) && seenIds.add(video.id));
               this.searchTotal = Number(result.total) || 0;
+              if (this.activeSearchSource === 'local') {
+                this.searchVideos = batch;
+                this.searchOffset = batch.length;
+                this.searchHasMore = Boolean(result.hasMore);
+                this.searchResultsReady = true;
+                this.searchLoading = false;
+                return;
+              }
               const signature = batch.map(video => video.id).join('|');
               if (batch.length >= 12) {
                 this.searchVideos = batch;
@@ -1652,18 +1937,17 @@
           },
           matching(list) { const query = this.query.trim().toLowerCase(); return query ? list.filter(video => `${video.title} ${video.channel}`.toLowerCase().includes(query)) : list; },
           toggleForYouAgeFilter(filter) { this.forYouAgeFilter = this.forYouAgeFilter === filter ? '' : filter; this.homeExpanded = { ...this.homeExpanded, 'for-you': 1 }; },
-          topicVideos(index) { const topic = this.topics[index]; const current = this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && (video.topic || '').toLowerCase() === topic.toLowerCase() && video.kind !== 'short')); return (current.length ? current : this.normalVideos.slice(index * 4, index * 4 + 12)).slice(0, 12); },
+          topicVideos(index) { const topic = this.topics[index]; const current = this.matching(this.videos.filter(video => !video.downloaded && !video.notInterested && !video.channelBlocked && (video.topic || '').toLowerCase() === topic.toLowerCase() && video.kind !== 'short')); return current.length ? current : this.normalVideos.slice(index * 4, index * 4 + 12); },
           topicSource(video, topic) { return String(video.topic || '').toLowerCase() === topic.toLowerCase() ? topic : 'homepage'; },
           lowerSectionVideos(section) { const source = section.kind === 'shorts' ? this.shortsVideos : this.normalVideos; return source.slice(section.start, section.start + section.count); },
           homepageRowSize(kind = 'video') { if (kind === 'shorts') return this.homeViewportWidth <= 620 ? 3 : this.homeViewportWidth <= 1200 ? 5 : 6; return this.homeViewportWidth <= 620 ? 2 : this.homeViewportWidth <= 900 ? 3 : 4; },
           homeVisibleCount(key, available, kind = 'video') { const rows = Math.max(1, Number(this.homeExpanded[key]) || 1); return Math.min(Math.max(0, Number(available) || 0), rows * this.homepageRowSize(kind)); },
-          homeHasMore(key, available, kind = 'video') { return (Number(available) || 0) > this.homepageRowSize(kind); },
-          homeToggleLabel(key, available, kind = 'video') { return this.homeVisibleCount(key, available, kind) > this.homepageRowSize(kind) ? 'Show less' : 'Show more'; },
-          toggleHomeMore(key, available, kind = 'video') { const size = this.homepageRowSize(kind); const totalRows = Math.max(1, Math.ceil((Number(available) || 0) / size)); const currentRows = Math.max(1, Number(this.homeExpanded[key]) || 1); const nextRows = currentRows >= totalRows ? 1 : currentRows + 1; this.homeExpanded = { ...this.homeExpanded, [key]: nextRows }; },
+          homeHasMore(key, available, kind = 'video') { return (Number(available) || 0) > this.homeVisibleCount(key, available, kind); },
+          toggleHomeMore(key) { const currentRows = Math.max(1, Number(this.homeExpanded[key]) || 1); const nextRows = currentRows === 1 ? 3 : currentRows + 2; this.homeExpanded = { ...this.homeExpanded, [key]: nextRows }; },
           onHomeResize() { this.homeViewportWidth = window.innerWidth || this.homeViewportWidth; },
           isCollapsed(key) { return Boolean(this.collapsedSections[key]); },
           toggleSection(key) { this.collapsedSections = { ...this.collapsedSections, [key]: !this.isCollapsed(key) }; },
-          iconFor(item) { return ({ 'Your channel': '◉', History: '◷', Playlists: '☷', 'Watch later': '◷', 'Liked videos': '♡', 'Your videos': '▣', Music: '♫', 'Movies & TV': '▣', Live: '◉' })[item] || '•'; },
+          iconFor(item) { return ({ 'Your channel': '◉', History: '◷', Playlists: '☷', 'Daily Mix': '♫', 'Watch later': '◷', 'Liked videos': '♡', 'Your videos': '▣', Music: '♫', 'Movies & TV': '▣', Live: '◉' })[item] || '•'; },
           subscriptionInitials(name) { return String(name || '•').trim().slice(0, 1).toUpperCase(); },
           formatCount(value) { return new Intl.NumberFormat().format(Number(value) || 0); },
           formatDurationBaseline(value) { return value ? `${value.firstWithDuration}/${value.sampled} · ${value.firstRatePercent}%` : '—'; },

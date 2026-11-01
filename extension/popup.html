@@ -74,7 +74,21 @@
     </section>
 
     <section class="section-block compact-section">
-      <div class="section-heading"><div><div class="eyebrow">IN FLIGHT</div><h2>Browser work</h2></div><span id="channel-summary" class="section-meta"></span></div>
+      <div class="section-heading browser-work-heading">
+        <div><div class="eyebrow">IN FLIGHT</div><h2>Browser work</h2></div>
+        <div class="browser-capture-controls">
+          <button id="capture-toggle" class="capture-control-button" type="button" disabled>Pause</button>
+          <label class="capture-limit-label" for="capture-limit">Tabs
+            <select id="capture-limit" aria-label="Maximum simultaneous video length capture tabs" disabled>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="browser-work-meta">
+        <div id="capture-control-note" class="capture-control-note">Controls for new video-length capture tabs</div>
+        <span id="channel-summary" class="section-meta"></span>
+      </div>
       <div id="capture-list" class="item-list"><div class="empty-state">No browser captures are active.</div></div>
     </section>
 

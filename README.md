@@ -12,6 +12,8 @@ Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate
 npm start
 ```
 
+For development, run `npm run dev`. Node watches `server.js` and `public/` and restarts the server when backend or web UI files change. It does not watch `data/`, so SQLite/media writes won't trigger a restart. This uses Node's native `--watch-path` support on macOS and Windows; see the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--watch-path).
+
 Open <http://127.0.0.1:4173>. The server binds to loopback by default. To use YourTube from another device on your trusted home network:
 
 ```sh
@@ -22,7 +24,9 @@ Then open `http://<computer-LAN-IP>:4173` on the other device. Binding to `0.0.0
 
 ## Load the extension
 
-In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files, then refresh the YourTube tab. The current source manifest is version **0.5.14**. Its toolbar popup shows server connectivity, network mode, queue counts, active browser captures, recent extension events, and the oldest video-length jobs. If its background worker does not respond, the popup probes localhost directly and tells you to reload the extension instead of reporting a false server outage.
+In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files. On extension updates, the worker reloads open YourTube tabs that are not currently playing audio, so they receive a fresh bridge instead of retaining an invalidated content-script context. The current source manifest is version **0.5.24**. Its toolbar popup shows server connectivity, network mode, queue counts, active browser captures, recent extension events, and the oldest video-length jobs. The Browser work section can pause new video-length capture tabs and set their concurrency from one to four; existing tabs stay open. If its background worker does not respond, the popup probes localhost directly and tells you to reload the extension instead of reporting a false server outage.
+
+For Safari, regenerate or update the Safari Web Extension package from the `extension` directory after changing its manifest. The localhost match patterns omit a port for Safari compatibility; the bridge itself only runs on YourTube's `localhost:4173` or `127.0.0.1:4173` origin.
 
 Open YouTube in the same browser profile where the extension is installed. The extension captures rendered cards, subscriptions, playlist/Mix structures, channel sections, and page-visible metadata. It sends structured records to `127.0.0.1:4173`; it does not send credentials. Homepage and search captures update the local stub database asynchronously. Channel-page prefetch uses one channel tab at a time; missing video-length jobs can use up to two inactive metadata-capture tabs alongside channel work.
 
