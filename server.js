@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { constants as fsConstants, createReadStream, existsSync, unlinkSync, watch as watchFileSystem } from 'node:fs';
+import { constants as fsConstants, createReadStream, existsSync, readFileSync, unlinkSync, watch as watchFileSystem } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -71,6 +71,19 @@ let shortsApiCacheExpiresAt = 0;
 let downloadedMetadataWorkerRunning = false;
 const ffmpegAvailable = spawnSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
 const ffprobeAvailable = spawnSync(process.env.FFPROBE_PATH || 'ffprobe', ['-version'], { stdio: 'ignore' }).status === 0;
+
+function readDockerGatewayAddresses() {
+  if (!existsSync('/.dockerenv')) return new Set();
+  try {
+    return new Set(readFileSync('/proc/net/route', 'utf8').split(/\r?\n/).slice(1).flatMap(line => {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length < 4 || fields[1] !== '00000000' || !(Number.parseInt(fields[3], 16) & 0x2)) return [];
+      const value = Number.parseInt(fields[2], 16) >>> 0;
+      return [[value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff].join('.')];
+    }));
+  } catch { return new Set(); }
+}
+const dockerGatewayAddresses = readDockerGatewayAddresses();
 
 function getStoredMediaPath(id, knownKind = '') {
   const kind = knownKind || database.prepare('SELECT kind FROM videos WHERE video_id = ?').get(id)?.kind;
@@ -4436,8 +4449,16 @@ const server = createServer(async (request, response) => {
   }
 
   // Some Chromium extension service-worker requests reach loopback without an Origin header.
-  // Keep these local-only while preserving the normal extension-origin CORS checks.
-  const localExtensionRequest = extensionOrigin || (!origin && loopbackAddress);
+  // In Docker, the host's localhost port-forward reaches the container from its bridge gateway,
+  // so accept that gateway only when the request itself targets a loopback Host.
+  let loopbackHost = false;
+  try {
+    const requestHostname = new URL(`http://${request.headers.host || 'localhost'}`).hostname;
+    loopbackHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(requestHostname);
+  } catch {}
+  const normalizedRemoteAddress = remoteAddress.startsWith('::ffff:') ? remoteAddress.slice('::ffff:'.length) : remoteAddress;
+  const dockerForwardedLoopbackRequest = !origin && loopbackHost && dockerGatewayAddresses.has(normalizedRemoteAddress);
+  const localExtensionRequest = extensionOrigin || (!origin && loopbackAddress) || dockerForwardedLoopbackRequest;
   const extensionOnlyRoute = ['/api/extension/metadata-capture-jobs', '/api/extension/video-metadata', '/api/extension/diagnostics'].includes(url.pathname);
   if (extensionOrigin && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
     response.setHeader('Access-Control-Allow-Origin', origin);
