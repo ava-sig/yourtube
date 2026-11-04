@@ -14,6 +14,7 @@ flowchart LR
   API -->|Cookie-free acquisition and metadata| YTDLP[yt-dlp]
   YTDLP --> MEDIA[Local WebM or MP4 files]
   FFMPEG[ffmpeg] -->|Merge separate compatible tracks| MEDIA
+  FFMPEG -->|Verified 16 kHz mono FLAC| AUDIO[Local transcription audio]
   API --> IMG[Local image cache]
 ```
 
@@ -41,12 +42,13 @@ YouTube's 11-character video ID is the stable local identity. Repeated captures 
 - `subscriptions`, `channels`, `channel_items`, and `channel_captures`: subscription presentation and captured channel profiles, tabs, items, and progress.
 - `playlists`, `playlist_items`, and `playback_queue`: local playlists, read-only YouTube playlist/Mix imports, and the play-next queue.
 - `downloads` and `download_retry_queue`: acquisition state, progress, retry schedule, pause reason, and acquisition/expiry timestamps.
-- `video_metadata`, `download_metadata`, `video_comments`, and `cached_images`: saved metadata, completeness work, capped comment data, and image-cache indexes.
+- `transcription_assets`: retained audio derivatives, source/audio checksums, transcription status, and fields for future transcript text, segments, model, and language.
+- `video_metadata`, `download_metadata`, `video_comments`, `cached_images`, and `video_thumbnail_assets`: saved metadata, completeness work, capped comment data, cached image indexes, and the first locally stored thumbnail linked by video ID.
 - `video_views`, `video_progress`, `search_history`, `search_history_results`, and `search_history_clicks`: aggregate opens, latest resume position, search sessions, and clicked results.
 - `video_duration_lookups` and `extension_duration_baseline`: duration work state and per-extension-version duration coverage observations.
 - `app_settings`: persistent Online/Offline, auto-delete, protection-cooldown, and preparation settings.
 
-The database, media, and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. Media is WebM where available; finite videos can use a compatible MP4 fallback. This folder contains personal viewing data and may contain many gigabytes of media; it is deliberately ignored by Git.
+The database and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. Media is in `data/media/` unless `YOURTUBE_MEDIA_DIR` selects a separate folder or mounted drive. Transcription audio is stored separately in `data/transcription-audio/` as 16 kHz mono FLAC, never mixed with normal or Shorts media. Media is WebM where available; finite videos can use a compatible MP4 fallback. The server watches the selected directory and rescans it periodically. It imports stable ID-named files after an integrity check, creates a minimal stub for an otherwise unknown valid YouTube ID, and marks removed media as needing reacquisition while retaining metadata. These folders contain personal data and may contain many gigabytes of media; they are deliberately ignored by Git.
 
 ## Capture and search flows
 
@@ -74,13 +76,15 @@ When `yt-dlp` cannot return a video length or browser-visible details are needed
 
 Selecting a stub opens the local watch route. The server runs `yt-dlp` with `--no-cookies`, `--no-playlist`, and a WebM-first format selection. For videos with a known finite duration, it can fall back to compatible MP4 streams if YouTube offers no WebM. Unknown-duration and live captures stay WebM-only so the existing partial-recording finalizer can safely save them. ffmpeg merges separate tracks when needed; the media endpoint serves the correct content type for either container. Progress is parsed from yt-dlp output and stored for the UI. A no-compatible-format response is paused as non-retryable instead of repeatedly issuing the same request. The player waits for the local file and presents explicit failure/retry states; there is no online-playback fallback.
 
+At the save boundary, ffmpeg decodes audio/video to verify the media and writes a 16 kHz mono FLAC derivative in the same decode pass. SHA-256 checksums for both source media and audio are stored in SQLite. Successful audio is marked `awaiting_transcription`; extraction failures and videos without an audio track have explicit statuses without blocking otherwise valid playback. Media-folder imports use the same flow. Existing ready files are registered as `pending_audio` but are not bulk-processed; a later integrity pass can create their audio derivative.
+
 Downloads run independently of watch-page polling while the Node process remains running. A persistent SQLite retry queue handles transient failures, exponential delay, and pause states. After ten failures an item is paused for user attention. Optional anti-throttling behavior is configurable; it is off by default. Live acquisition is identified separately; a captured playable file can be finalized and saved, or discarded.
 
 The local player writes an aggregate view-start counter and a latest playback-progress snapshot. It saves progress during playback and on page exit, resumes incomplete clips, supports autoplay through playlists and Up next, and has theater/expanded and fullscreen layouts. The app shell routes between home, channel, downloads, and watch views while keeping one watch DOM root and its media element alive. On other views the router moves that same element into a draggable mini player, then restores it when the watch view returns. The mini player and watch view both read the SQLite `playback_queue`; queue entries are played ahead of automatic recommendations and removed after the local file is ready. Keyboard shortcuts include J/K/L, Space, number-key seeking, and F for fullscreen. The watch page includes comments and local recommendations. Comments are capped at 50; YouTube may disable or withhold them.
 
 ## Metadata, Offline mode, and retention
 
-Once a media download is ready, the downloaded-metadata queue checks its video details, duration, comments, thumbnail, channel avatar, and commenter avatars. It stores downloaded-video metadata and referenced images in the local database/cache. The status page exposes work by item and phase; failures remain visible and retry. Duration may come from rendered extension cards, a signed-in browser capture, yt-dlp metadata, or the actual local file/playback.
+Once a media download is ready, the downloaded-metadata queue checks its video details, duration, comments, thumbnail, channel avatar, and commenter avatars. It stores downloaded-video metadata and referenced images in the local database/cache. All API image fields are localized before YourTube renders them: a cache miss goes through `/api/remote-image`, which saves the bytes before serving them. The first successful video thumbnail is linked by ID in `video_thumbnail_assets`; subsequent syncs keep that asset canonical even if YouTube changes the source URL. Unsupported uncached external images fail closed to a placeholder. The status page exposes work by item and phase; failures remain visible and retry. Duration may come from rendered extension cards, a signed-in browser capture, yt-dlp metadata, or the actual local file/playback.
 
 Switching Offline pauses discovery and new retry attempts. A normal transition first waits for active media transfers and the current local-metadata worker to settle, then prepares missing lengths, comments, thumbnails, channel avatars, and commenter avatars. An immediate option pauses preparation and resumes it the next time the app goes Online. Connectivity is checked before Online mode is accepted. If connectivity is lost while Online is the user's chosen mode, the server records that it forced Offline and automatically returns Online after connectivity is restored. An explicit user choice to remain Offline is persisted and prevents this automatic reconnect, including across server restarts. Offline search and Up next are limited to local material.
 

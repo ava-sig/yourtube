@@ -10,6 +10,14 @@ These notes capture the current choices and their practical consequences. They d
 
 **Consequence:** SQLite and the media directory are personal data. They are excluded from Git, and backups must preserve both the database and media/images directory if the library is to be restored completely.
 
+## Media-folder imports use the video ID as the filename key
+
+**Decision:** Watch the media directory and import only stable `.webm` or `.mp4` files named with an 11-character YouTube video ID. Reuse the matching stub; if none exists, create a minimal stub and queue metadata completion. Integrity-check an imported file before marking it ready. Keep unmatched filenames visible in media-folder diagnostics rather than guessing their identity.
+
+**Reason:** A media file copied back from a USB backup should reconnect with the library's retained metadata. The canonical ID avoids title-based collisions and supports stubs restored separately from media.
+
+**Consequence:** Files with arbitrary names need to be renamed to the ID format before import. Folder-imported media is exempt from the app's 24-hour Auto-delete policy so restoring a backup does not silently start a deletion timer.
+
 ## Browser extension reads rendered pages
 
 **Decision:** Use an extension content script on YouTube to read visible rendered DOM and selected page metadata. Send structured records to localhost, not full page HTML, browser profiles, or cookies.
@@ -17,6 +25,22 @@ These notes capture the current choices and their practical consequences. They d
 **Reason:** The extension can observe the signed-in browser's rendered homepage, search, channel, and playlist pages without making the backend a holder of the browser session.
 
 **Consequence:** Captures depend on the YouTube DOM and page rendering. Sponsored/Playable filtering, source classification, and duration detection are heuristic and need maintenance when YouTube changes. Extension version baselines make duration coverage measurable.
+
+## Preserve rendered homepage shelf placement
+
+**Decision:** The extension sends ordered homepage shelf records and video placements alongside the normal video metadata. SQLite stores capture snapshots, shelf order, within-shelf order, content kind, topic label, and any Mix playlist identity separately from the video row. The app renders those shelves in that order; a refresh may shuffle only For you, preserving two-day recency bands.
+
+**Reason:** A video can be recommended in several contexts, and its source category is part of the feed structure. A single `videos.section` or `topic` value cannot represent multiple placements without losing the homepage layout.
+
+**Consequence:** Homepage grouping follows the DOM YouTube rendered during capture. A one-time migration builds a best-effort layout for older stubs, but cannot recover exact historical shelf order. Shorts keep their own content kind and navigation while using the ordinary local playback path. Mix seed videos remain playable video cards; their Mix playlist IDs remain separate identities handled by the playlist adapter.
+
+## Capture personalized homepage topics separately
+
+**Decision:** Read the rendered YouTube topic chips, persist their labels and order, and capture each chip's results in one sequential inactive tab. Keep category membership separate from the canonical video row and refresh category results no more than daily.
+
+**Reason:** Topic chips vary by account and session. A fixed YourTube chip list cannot match YouTube's changing categories, and one video can belong to several captured contexts.
+
+**Consequence:** The category row reflects topics that the extension has actually seen. Capture is bounded to 24 cards per topic and uses rendered-page data; it stops when YourTube goes Offline. Category identity and titles can change when YouTube changes the personalized chips or their DOM.
 
 ## Keep acquisition credentials separate
 
@@ -50,6 +74,16 @@ These notes capture the current choices and their practical consequences. They d
 
 **Consequence:** ffmpeg is needed for videos whose available tracks are separate. Without it, only a suitable single-file WebM or MP4 can be acquired. MP4 fallback is limited to items with a recognized finite duration; live and unknown-duration captures keep the WebM path used by the partial-recording finalizer. If neither supported container is available, the item pauses with a clear error rather than retrying unchanged.
 
+## Verify media integrity before playback
+
+**Decision:** Fully decode audio/video files with ffmpeg at the save boundary, before marking a new or recovered file ready. Keep playback direct and do not run integrity checks before it starts. Move a file that fails verification to `data/quarantine/` and send the video through the ordinary retry policy.
+
+**Reason:** A successful yt-dlp exit and a plausible container do not prove that the video packets can be decoded. A damaged file can otherwise be reported as downloaded while the player produces audio with missing or undecodable video frames.
+
+**Consequence:** Save-time verification reads and decodes the whole file and can take time, especially for large high-resolution videos; the download remains in progress and reports a verification stage until it passes. A failed copy is not exposed as ready and is queued for replacement, which pauses while Offline. When ffmpeg is unavailable, ffprobe can only confirm the container and presence of a video stream, and the result is explicitly recorded as `container-checked`, not fully decoded. Previously saved files are not rechecked automatically. Quarantined files still occupy disk space and are included in storage totals; deleting the video removes its quarantine copy too.
+
+**Transcription audio:** Keep a model-ready 16 kHz mono FLAC in `data/transcription-audio/` instead of discarding decoded audio. Store its path, size, SHA-256, source-media SHA-256, format, and status in `transcription_assets`. Successful assets begin at `awaiting_transcription`; files with no audio and extraction failures receive explicit states. Audio extraction failure does not invalidate an otherwise verified playable video. Imported media uses the same save-boundary process.
+
 ## Preserve progress and distinguish counters
 
 **Decision:** Save the latest playback position and a per-video play-start count. Resume unfinished playback and use local progress in Up next.
@@ -73,6 +107,8 @@ These notes capture the current choices and their practical consequences. They d
 **Reason:** The extension can build a searchable local catalog from what the user has browsed, while the user chooses which videos to retain as media.
 
 **Consequence:** A recommendation can be a stub that needs downloading before it plays. Downloaded media has its own queue and expiry lifecycle. YouTube-mode search is a hybrid of locally indexed stubs and asynchronous extension capture, not a direct backend search endpoint.
+
+**Direct ID entry:** A user can open `/watch/<11-character YouTube ID>` without first collecting a feed card. When Online, YourTube creates a minimal stub with `direct` provenance and hands it to the existing download-and-play flow; downloaded metadata can replace the ID placeholder with the rendered title. Offline mode refuses to create that stub, preserving the rule that no new discovery occurs while Offline.
 
 ## Handle access limits with transparent retry states
 
@@ -113,6 +149,14 @@ These notes capture the current choices and their practical consequences. They d
 **Reason:** The media file is only part of a useful local library; presentation and context should remain available offline too. Capping comments bounds storage and request cost.
 
 **Consequence:** Comment availability and completeness follow YouTube's output and restrictions. Metadata can remain pending or unavailable with a reason; the app does not claim an item is fully prepared before the local assets are saved.
+
+## A displayed video thumbnail is a permanent local asset
+
+**Decision:** Every video thumbnail shown by YourTube is served from `data/images/`. The first successfully cached thumbnail is linked to the video ID and remains canonical across later extension captures and metadata refreshes. Uncached, unsupported external image URLs are not displayed directly.
+
+**Reason:** Once a thumbnail has appeared in the local library, the app already owns the image bytes and should not fetch or transfer that thumbnail again just because a capture repeats or changes its URL.
+
+**Consequence:** The first display waits for the local server to cache the image; if acquisition fails, YourTube shows a placeholder. The per-video asset link and image cache are stored in SQLite and `data/images/`, so both must be included in backups. A later upstream thumbnail change does not replace the saved one.
 
 ## Keep analysis and future AI features grounded in local records
 

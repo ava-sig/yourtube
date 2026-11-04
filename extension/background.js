@@ -7,6 +7,8 @@ const CHANNEL_QUEUE_KEY = 'yourtubeChannelCaptureQueue';
 const CHANNEL_ACTIVE_KEY = 'yourtubeActiveChannelCapture';
 const CHANNEL_PAUSED_KEY = 'yourtubeChannelCapturePaused';
 const PLAYLIST_CAPTURE_KEY = 'yourtubeActivePlaylistCaptures';
+const HOMEPAGE_CATEGORY_CAPTURE_KEY = 'yourtubeActiveHomepageCategoryCapture';
+const HOMEPAGE_CATEGORY_CAPTURE_COOLDOWN_KEY = 'yourtubeHomepageCategoryCaptureCooldown';
 const CHANNEL_ALARM = 'yourtube-channel-prefetch';
 const METADATA_CAPTURE_KEY = 'yourtubeActiveMetadataCapture';
 const METADATA_CAPTURE_ALARM = 'yourtube-metadata-capture';
@@ -15,7 +17,7 @@ const METADATA_CAPTURE_LIMIT_KEY = 'yourtubeMetadataCaptureLimit';
 const DIAGNOSTICS_KEY = 'yourtubeExtensionDiagnostics';
 const METADATA_QUEUE_STATE_KEY = 'yourtubeMetadataQueueState';
 const DEFAULT_METADATA_CAPTURE_LIMIT = 2;
-const MAX_METADATA_CAPTURE_TABS = 4;
+const MAX_METADATA_CAPTURE_TABS = 5;
 const MAX_METADATA_CAPTURE_LIMIT = MAX_METADATA_CAPTURE_TABS; // Compatibility alias for the settings field name.
 const METADATA_CAPTURE_MAX_AGE_MS = 10 * 60_000;
 let metadataCapturePaused = false;
@@ -27,6 +29,7 @@ let channelBatchMutation = Promise.resolve();
 let diagnosticMutation = Promise.resolve();
 let prioritizingChannelBatch = false;
 let metadataCaptureStarting = false;
+let homepageCategoryCaptureStarting = false;
 let metadataCaptureStartedAt = 0;
 let metadataQueueState = { status: 'idle', message: 'Waiting for the next queue check.', checkedAt: '' };
 let localAvailabilityCache = { ids: [], expiresAt: 0 };
@@ -284,6 +287,8 @@ async function pollMetadataCaptureQueue() {
       try {
         const captureUrl = new URL(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`);
         captureUrl.searchParams.set('yourtube_metadata_capture', videoId);
+        const requestedFields = Array.isArray(result.job.fields) ? result.job.fields.map(String).filter(field => ['channel', 'duration'].includes(field)) : ['duration'];
+        captureUrl.searchParams.set('yourtube_metadata_fields', requestedFields.join(','));
         const tab = await chrome.tabs.create({ url: captureUrl.href, active: false });
         active = active.map(item => item.videoId === videoId ? { ...item, tabId: tab.id, startedAt: Date.now() } : item);
         await saveMetadataCaptureEntries(active);
@@ -329,19 +334,46 @@ function serializeChannelBatchMutation(operation) {
 function syncEndpoint(message) {
   const isSearch = message?.type === 'yourtube:search-sync';
   const isChannel = message?.type === 'yourtube:channel-sync';
-  if (!isSearch && !isChannel && message?.type !== 'yourtube:sync') return null;
+  const isHomepageCategory = message?.type === 'yourtube:homepage-category-sync';
+  if (!isSearch && !isChannel && !isHomepageCategory && message?.type !== 'yourtube:sync') return null;
   const extensionVersion = chrome.runtime.getManifest().version;
   return {
-    path: isSearch ? '/api/search-sync' : isChannel ? '/api/channel-sync' : '/api/sync',
+    path: isSearch ? '/api/search-sync' : isChannel ? '/api/channel-sync' : isHomepageCategory ? '/api/homepage-category-sync' : '/api/sync',
     body: isSearch
       ? { searchId: message.searchId, query: message.query, videos: message.videos || [], complete: message.complete === true, extensionVersion }
       : isChannel
         ? { captureId: message.captureId, channel: message.channel || {}, channelKey: message.channelKey, tab: message.tab, videos: message.videos || [], phase: message.phase, message: message.message || '', final: message.final === true, complete: message.complete === true, extensionVersion }
-      : { videos: message.videos || [], subscriptions: message.subscriptions || [], playlists: message.playlists || [], provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other', extensionVersion },
+        : isHomepageCategory
+          ? { captureId: message.captureId, category: message.category || {}, videos: message.videos || [], complete: message.complete === true, extensionVersion }
+          : { videos: message.videos || [], subscriptions: message.subscriptions || [], playlists: message.playlists || [], homepageLayout: message.homepageLayout || null, homepageCategories: message.homepageCategories || [], provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other', extensionVersion },
     isSearch,
     isChannel,
+    isHomepageCategory,
     complete: message.complete === true
   };
+}
+
+async function launchHomepageCategoryCapture(categories) {
+  if (homepageCategoryCaptureStarting || extensionMode !== 'online' || !Array.isArray(categories) || !categories.length) return;
+  homepageCategoryCaptureStarting = true;
+  try {
+    const stored = await chrome.storage.local.get([HOMEPAGE_CATEGORY_CAPTURE_KEY, HOMEPAGE_CATEGORY_CAPTURE_COOLDOWN_KEY]);
+    if ((Number(stored[HOMEPAGE_CATEGORY_CAPTURE_COOLDOWN_KEY]) || 0) > Date.now()) return;
+    const active = stored[HOMEPAGE_CATEGORY_CAPTURE_KEY];
+    if (active?.captureId && Date.now() - (Number(active.startedAt) || 0) < 10 * 60_000) {
+      try { await chrome.tabs.get(active.tabId); return; } catch {}
+    }
+    if (active?.tabId !== undefined) try { await chrome.tabs.remove(active.tabId); } catch {}
+    await chrome.storage.local.set({ [HOMEPAGE_CATEGORY_CAPTURE_KEY]: null });
+    const captureId = crypto.randomUUID();
+    const captureUrl = new URL('https://www.youtube.com/');
+    captureUrl.searchParams.set('yourtube_home_categories', captureId);
+    const tab = await chrome.tabs.create({ url: captureUrl.href, active: false });
+    await chrome.storage.local.set({ [HOMEPAGE_CATEGORY_CAPTURE_KEY]: { captureId, tabId: tab.id, startedAt: Date.now() } });
+    await recordExtensionEvent('category-capture-started', `Opened one background YouTube tab to collect ${Math.min(categories.length, 60)} homepage categories.`);
+  } finally {
+    homepageCategoryCaptureStarting = false;
+  }
 }
 
 async function readQueue() {
@@ -399,9 +431,12 @@ async function postSync(request) {
 async function extensionDiagnosticsSnapshot() {
   let server = null;
   let serverError = '';
+  const captureSettings = await readMetadataCaptureSettings();
   try {
     await refreshMode();
-    const response = await fetch('http://127.0.0.1:4173/api/extension/diagnostics', { cache: 'no-store' });
+    const diagnosticsUrl = new URL('http://127.0.0.1:4173/api/extension/diagnostics');
+    diagnosticsUrl.searchParams.set('maxTabs', String(captureSettings.maxTabs));
+    const response = await fetch(diagnosticsUrl, { cache: 'no-store' });
     if (!response.ok) throw new Error(`YourTube returned HTTP ${response.status}`);
     server = await response.json();
     if (server.mode) await saveMode(server.mode);
@@ -458,7 +493,7 @@ async function extensionDiagnosticsSnapshot() {
     metadataQueueState: stored[METADATA_QUEUE_STATE_KEY] || metadataQueueState,
     metadataQueueBusy: metadataCaptureStarting,
     metadataQueueBusyForSeconds: metadataCaptureStarting ? Math.floor((Date.now() - metadataCaptureStartedAt) / 1000) : 0,
-    captureSettings: await readMetadataCaptureSettings(),
+    captureSettings,
     channel: { active: stored[CHANNEL_ACTIVE_KEY] || null, queued: channelQueue.length, paused: stored[CHANNEL_PAUSED_KEY] === true },
     events
   };
@@ -817,7 +852,14 @@ chrome.alarms.onAlarm.addListener(alarm => {
 });
 chrome.tabs.onRemoved.addListener(tabId => {
   return (async () => {
-    const stored = await chrome.storage.local.get([CHANNEL_QUEUE_KEY, CHANNEL_ACTIVE_KEY, METADATA_CAPTURE_KEY, PLAYLIST_CAPTURE_KEY]);
+    const stored = await chrome.storage.local.get([CHANNEL_QUEUE_KEY, CHANNEL_ACTIVE_KEY, METADATA_CAPTURE_KEY, PLAYLIST_CAPTURE_KEY, HOMEPAGE_CATEGORY_CAPTURE_KEY]);
+    const homepageCategoryCapture = stored[HOMEPAGE_CATEGORY_CAPTURE_KEY];
+    if (homepageCategoryCapture?.tabId === tabId) {
+      await chrome.storage.local.set({
+        [HOMEPAGE_CATEGORY_CAPTURE_KEY]: null,
+        [HOMEPAGE_CATEGORY_CAPTURE_COOLDOWN_KEY]: Date.now() + 60_000
+      });
+    }
     const playlistCaptures = Array.isArray(stored[PLAYLIST_CAPTURE_KEY]) ? stored[PLAYLIST_CAPTURE_KEY] : [];
     const playlistCapture = playlistCaptures.find(capture => capture.tabId === tabId);
     if (playlistCapture) {
@@ -984,6 +1026,52 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'yourtube:get-share-link') {
+    if (!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`)) {
+      sendResponse({ ok: false, error: 'Share links can only be requested from the YourTube extension panel.' });
+      return;
+    }
+    (async () => {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      let activeUrl;
+      try { activeUrl = new URL(activeTab?.url || ''); } catch {}
+      const localHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+      const parseMediaPath = url => {
+        if (!url) return null;
+        if (localHosts.has(url.hostname) && url.port === '4173') {
+          const pathMatch = /^\/(watch|shorts)\/([A-Za-z0-9_-]{11})(?:\/|$)/.exec(url.pathname);
+          if (pathMatch) return { kind: pathMatch[1], videoId: pathMatch[2] };
+        } else if (url.hostname === 'www.youtube.com' || url.hostname === 'm.youtube.com') {
+          const shortMatch = /^\/shorts\/([A-Za-z0-9_-]{11})(?:\/|$)/.exec(url.pathname);
+          const watchId = url.pathname === '/watch' ? url.searchParams.get('v') : '';
+          const videoId = shortMatch?.[1] || watchId;
+          if (/^[A-Za-z0-9_-]{11}$/.test(videoId || '')) return { kind: shortMatch ? 'shorts' : 'watch', videoId };
+        }
+        return null;
+      };
+      const media = parseMediaPath(activeUrl);
+      if (!media) throw new Error('Open a video or Short in YourTube or YouTube, then copy its link here.');
+
+      if (activeUrl && localHosts.has(activeUrl.hostname) && activeUrl.port === '4173') {
+        const url = media.kind === 'shorts'
+          ? `https://www.youtube.com/shorts/${encodeURIComponent(media.videoId)}`
+          : `https://www.youtube.com/watch?v=${encodeURIComponent(media.videoId)}`;
+        return { ok: true, url, destination: 'YouTube' };
+      }
+
+      let baseUrl = '';
+      const appTabs = await chrome.tabs.query({ url: ['http://localhost:4173/*', 'http://127.0.0.1:4173/*'] });
+      for (const tab of appTabs) {
+        try {
+          const appUrl = new URL(tab.url || '');
+          if (localHosts.has(appUrl.hostname) && appUrl.port === '4173') { baseUrl = appUrl.origin; break; }
+        } catch {}
+      }
+      if (!baseUrl) baseUrl = 'http://127.0.0.1:4173';
+      return { ok: true, url: `${baseUrl}/${media.kind}/${encodeURIComponent(media.videoId)}`, destination: 'YourTube' };
+    })().then(sendResponse).catch(error => sendResponse({ ok: false, error: error?.message || 'Could not create the YourTube share link.' }));
+    return true;
+  }
   if (message?.type === 'yourtube:get-local-availability') {
     if (!isYouTubePageSender(sender)) { sendResponse({ ok: false, error: 'Local availability can only be read from YouTube.' }); return; }
     fetchLocalAvailability().then(ids => sendResponse({ ok: true, ids }))
@@ -1160,9 +1248,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+  if (message?.type === 'yourtube:homepage-category-capture-finished') {
+    const captureId = String(message.captureId || '');
+    if (!/^[a-f0-9-]{36}$/i.test(captureId) || !isYouTubePageSender(sender) || sender.tab?.id === undefined) {
+      sendResponse({ ok: false, error: 'Category capture completion did not come from its assigned YouTube tab.' });
+      return;
+    }
+    (async () => {
+      const stored = await chrome.storage.local.get(HOMEPAGE_CATEGORY_CAPTURE_KEY);
+      const active = stored[HOMEPAGE_CATEGORY_CAPTURE_KEY];
+      if (active?.captureId !== captureId || active?.tabId !== sender.tab.id) {
+        sendResponse({ ok: false, error: 'This homepage category capture is no longer active.' });
+        return;
+      }
+      const cooldownMs = message.paused ? 60_000 : message.error ? 2 * 60_000 : 10 * 60_000;
+      await chrome.storage.local.set({
+        [HOMEPAGE_CATEGORY_CAPTURE_KEY]: null,
+        [HOMEPAGE_CATEGORY_CAPTURE_COOLDOWN_KEY]: Date.now() + cooldownMs
+      });
+      await recordExtensionEvent(message.error ? 'category-capture-error' : 'category-capture-completed',
+        message.error || `Captured ${Math.max(0, Number(message.completedCount) || 0)} homepage categories.`);
+      await chrome.tabs.remove(sender.tab.id).catch(() => {});
+      sendResponse({ ok: true, closed: true });
+    })().catch(error => sendResponse({ ok: false, error: error?.message || 'Could not finish homepage category capture.' }));
+    return true;
+  }
   if (message?.type === 'yourtube:set-mode-state') {
-    if (message.mode !== 'preparing') { sendResponse({ ok: false, error: 'Only the preparing mode can be synchronized without a server request.' }); return; }
-    saveMode('preparing').then(() => sendResponse({ ok: true, mode: extensionMode }));
+    if (!['online', 'offline', 'preparing'].includes(message.mode)) { sendResponse({ ok: false, error: 'Invalid synchronized mode.' }); return; }
+    // App broadcasts mirror the server's already-decided state. Do not POST
+    // back as an explicit user choice; automatic Local-mode failover must
+    // remain eligible to resume when its cooldown ends.
+    saveMode(message.mode).then(() => sendResponse({ ok: true, mode: extensionMode }));
     return true;
   }
   if (message?.type === 'yourtube:open-search') {
@@ -1180,6 +1296,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.create({ url: url.href, active: false }, tab => {
       sendResponse({ ok: true, tabId: tab?.id });
     });
+    return true;
+  }
+  if (message?.type === 'yourtube:homepage-category-sync') {
+    const captureId = String(message.captureId || '');
+    if (!isYouTubePageSender(sender) || sender.tab?.id === undefined || !/^[a-f0-9-]{36}$/i.test(captureId)) {
+      sendResponse({ ok: false, error: 'Category data must come from an assigned YouTube capture tab.' });
+      return;
+    }
+    (async () => {
+      const stored = await chrome.storage.local.get(HOMEPAGE_CATEGORY_CAPTURE_KEY);
+      const active = stored[HOMEPAGE_CATEGORY_CAPTURE_KEY];
+      if (active?.captureId !== captureId || active?.tabId !== sender.tab.id) {
+        sendResponse({ ok: false, error: 'This homepage category capture is no longer active.' });
+        return;
+      }
+      const request = syncEndpoint(message);
+      const result = await postSync(request);
+      sendResponse({ ok: true, ...result });
+    })().catch(error => sendResponse({ ok: false, paused: error?.mode === 'offline' || error?.mode === 'preparing', error: error?.message || 'Could not save this homepage category.' }));
     return true;
   }
   if (message?.type === 'yourtube:open-playlist') {
@@ -1301,6 +1436,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     try {
       const result = await postSync(request);
+      if (message?.type === 'yourtube:sync' && Array.isArray(result.homepageCategoriesToCapture) &&
+          result.homepageCategoriesToCapture.length && isYouTubePageSender(sender) && sender.tab?.id !== undefined) {
+        let sourceUrl;
+        try { sourceUrl = new URL(sender.url || ''); } catch {}
+        if (sourceUrl?.pathname === '/' && !sourceUrl.searchParams.has('yourtube_home_categories')) {
+          void launchHomepageCategoryCapture(result.homepageCategoriesToCapture).catch(error =>
+            recordExtensionEvent('category-capture-error', `Could not open the background category tab: ${String(error?.message || error).slice(0, 250)}`));
+        }
+      }
       let tabClosed = false;
       const senderUrl = sender.url || '';
       if (request.isChannel && (request.complete || request.body.final) && /^https:\/\/(www\.)?youtube\.com\//.test(senderUrl)) {

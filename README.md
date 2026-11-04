@@ -14,7 +14,7 @@ Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate
 npm start
 ```
 
-For development, run `npm run dev`. Node watches `server.js` and `public/` and restarts the server when backend or web UI files change. It does not watch `data/`, so SQLite/media writes won't trigger a restart. This uses Node's native `--watch-path` support on macOS and Windows; see the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--watch-path).
+For development, run `npm run dev`. Node watches `server.js` and restarts the server when the backend changes. Refresh the browser after frontend edits; changes under `data/` do not trigger a restart. This uses Node's native `--watch-path` support; see the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--watch-path).
 
 Open <http://127.0.0.1:4173>. The server binds to loopback by default. To use YourTube from another device on your trusted home network:
 
@@ -23,6 +23,30 @@ npm start -- --host 0.0.0.0
 ```
 
 Then open `http://<computer-LAN-IP>:4173` on the other device. Binding to `0.0.0.0` makes the app and its API reachable from the local network.
+
+## Run in Docker
+
+Docker Compose runs the YourTube web app and Node server on this computer. The image includes Node.js, `yt-dlp`, `ffmpeg`, and `ffprobe`; the browser extension remains installed in the browser and continues to communicate with YourTube on localhost.
+
+```sh
+cp .env.example .env
+mkdir -p docker-data docker-media
+docker compose up --build -d
+```
+
+Open <http://127.0.0.1:4173>. `docker-data/` persists the SQLite database, cached images, and transcription audio; `docker-media/` persists videos and the `shorts/` subfolder. For a removable or external drive, set `YOURTUBE_MEDIA_HOST_PATH` in `.env` to its mounted folder. You can also set `YOURTUBE_DATA_HOST_PATH` if you want the database and other app data on that drive too. Create the directories first and set `YOURTUBE_UID` and `YOURTUBE_GID` in `.env` to the values returned by `id -u` and `id -g`, so the container can write to them. If the external drive is not mounted, Compose will stop instead of silently creating a new media folder elsewhere. Keep a separate backup of both directories; the media drive itself is not a backup.
+
+The published port is bound to `127.0.0.1` on the host, keeping the container local and preserving the current YourTube extension connection. Docker's `/healthz` endpoint is used for container health reporting. This is the local/self-hosted packaging step; a future Electron app can make installation easier for consumers across operating systems. A later hosted product would be a separate deployment and security project.
+
+Useful commands:
+
+```sh
+docker compose logs -f yourtube
+docker compose down
+docker compose up -d --build
+```
+
+`docker compose down` leaves the bind-mounted data and media directories in place.
 
 ## Load the extension
 
@@ -34,7 +58,9 @@ Open YouTube in the same browser profile where the extension is installed. The e
 
 ## Local data
 
-By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded WebM/MP4 media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere. The database includes viewing counts and progress, search history, playlists, metadata, and local-library state. These are personal data, so `data/`, media, image caches, and runtime files are excluded from Git.
+By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded WebM/MP4 media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere, or set `YOURTUBE_MEDIA_DIR` to keep the media folder on a separate disk. YourTube watches that folder and also rescans every 30 seconds. A stable file named `<11-character YouTube ID>.webm` or `.mp4` is integrity-checked, matched to its existing stub, and added to the local library. If no stub exists, YourTube creates one and fills in metadata in the background. Files with other names are listed as unmatched by `/api/media-folder/status`; rename them to the ID-based format to import them. Removing a recognized file makes its retained stub available for download again. Folder-imported files are not auto-deleted by the 24-hour retention setting.
+
+The database includes viewing counts and progress, search history, playlists, metadata, and local-library state. These are personal data, so `data/`, media, image caches, and runtime files are excluded from Git.
 
 See [Architecture](docs/ARCHITECTURE.md) for the data flow and tables, [Features](docs/FEATURES.md) for the implemented user-facing behavior, and [Decision record](docs/DECISIONS.md) for the reasons behind the main choices and current limits.
 

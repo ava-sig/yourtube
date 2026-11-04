@@ -59,6 +59,11 @@ function timeUntil(value) {
   return `in ${Math.ceil(seconds / 3600)}h`;
 }
 
+function serverLimit(data, fallback) {
+  const value = Number(data.server?.commentBackfill?.maxConcurrency);
+  return Number.isInteger(value) && value >= 1 && value <= 5 ? value : fallback;
+}
+
 function setNotice(selector, message) {
   const element = $(selector);
   if (!element) return;
@@ -125,15 +130,16 @@ function render(data) {
   currentCaptureSettings = data.captureSettings || currentCaptureSettings;
   $('#version').textContent = `v${data.extensionVersion || chrome.runtime.getManifest().version}`;
   $('#page-badge').textContent = data.currentPage || '—';
-  const captureLimit = Math.max(1, Math.min(4, Number(currentCaptureSettings.maxTabs) || 2));
+  const captureLimit = Math.max(1, Math.min(5, Number(currentCaptureSettings.maxTabs) || 2));
+  const commentLimit = serverLimit(data, captureLimit);
   $('#capture-toggle').textContent = currentCaptureSettings.paused ? 'Resume' : 'Pause';
   $('#capture-toggle').title = currentCaptureSettings.paused ? 'Resume opening video-length capture tabs' : 'Pause opening new video-length capture tabs';
   $('#capture-limit').value = String(captureLimit);
   $('#capture-toggle').disabled = Boolean(data.workerUnavailable);
   $('#capture-limit').disabled = Boolean(data.workerUnavailable);
   $('#capture-control-note').textContent = currentCaptureSettings.paused
-    ? `New video-length tabs paused · ${data.captures?.length || 0} existing tab${data.captures?.length === 1 ? '' : 's'} continue.`
-    : `Video-length captures · up to ${captureLimit} tabs · current tabs stay open if YouTube asks for verification.`;
+    ? `New video-length tabs paused · ${data.captures?.length || 0} existing tab${data.captures?.length === 1 ? '' : 's'} continue. Comment expansion continues in the background while you browse.`
+    : `Video-length captures · up to ${captureLimit} tabs. Comment expansion runs in the background while you browse, up to ${commentLimit} at once; new batches start about once a minute.`;
   const connection = $('#connection');
   const server = data.server;
   if (!data.serverReachable) {
@@ -360,6 +366,50 @@ async function refreshDiagnostics() {
 
 $('#version').textContent = `v${chrome.runtime.getManifest().version}`;
 $('#refresh').addEventListener('click', refreshDiagnostics);
+const copyLinkButton = $('#copy-link');
+const copyLinkDefaultMarkup = copyLinkButton.innerHTML;
+let copyLinkResetTimer = null;
+async function writeClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {}
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.setAttribute('readonly', '');
+  field.style.position = 'fixed';
+  field.style.opacity = '0';
+  document.body.append(field);
+  field.select();
+  const copied = document.execCommand('copy');
+  field.remove();
+  if (!copied) throw new Error('Clipboard access was blocked. Allow clipboard access for the YourTube extension and try again.');
+}
+copyLinkButton.addEventListener('click', async () => {
+  copyLinkButton.disabled = true;
+  try {
+    const result = await sendMessage({ type: 'yourtube:get-share-link' });
+    if (!result.ok || !result.url) throw new Error(result.error || 'Could not create the YourTube share link.');
+    await writeClipboard(result.url);
+    copyLinkButton.textContent = '✓';
+    copyLinkButton.classList.add('is-copied');
+    copyLinkButton.title = `Copied ${result.destination || 'video'} link: ${result.url}`;
+    copyLinkButton.setAttribute('aria-label', `Copied ${result.destination || 'video'} link`);
+    $('#copy-link-status').textContent = `Copied ${result.destination || 'video'} link: ${result.url}`;
+    setNotice('#action-feedback', '');
+    clearTimeout(copyLinkResetTimer);
+    copyLinkResetTimer = setTimeout(() => {
+      copyLinkButton.innerHTML = copyLinkDefaultMarkup;
+      copyLinkButton.classList.remove('is-copied');
+      copyLinkButton.title = 'Copy share link for current video';
+      copyLinkButton.setAttribute('aria-label', 'Copy share link for current video');
+    }, 1600);
+  } catch (error) {
+    setNotice('#action-feedback', error.message || 'Could not copy the YourTube share link.');
+  } finally {
+    copyLinkButton.disabled = false;
+  }
+});
 async function saveCaptureSettings(settings) {
   $('#capture-toggle').disabled = true;
   $('#capture-limit').disabled = true;
@@ -403,7 +453,7 @@ $('#nudge').addEventListener('click', async () => {
   try {
     const result = await sendMessage({ type: 'yourtube:nudge-capture-queue' });
     if (!result.ok) throw new Error(result.error || 'The queue could not be started.');
-    setNotice('#action-feedback', 'Queue checked. Up to two available items can open in background YouTube tabs.');
+    setNotice('#action-feedback', `Queue checked. Up to ${currentCaptureSettings.maxTabs} available items can open in background YouTube tabs.`);
   } catch (error) {
     setNotice('#action-feedback', error.message);
   }

@@ -1,5 +1,6 @@
 (() => {
   const cardSelector = 'ytd-rich-item-renderer, ytd-rich-grid-slim-media, ytd-grid-video-renderer, ytd-video-renderer, ytd-compact-video-renderer, ytd-movie-renderer, ytd-grid-movie-renderer, ytd-compact-movie-renderer, ytd-reel-item-renderer, ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer, yt-lockup-view-model';
+  const maxCapturedComments = 1000;
   const youtubePlaylistAdapters = [
     { selector: 'ytd-radio-renderer, ytd-compact-radio-renderer', kind: 'mix', allowWatchList: true },
     { selector: 'ytd-grid-playlist-renderer, ytd-compact-playlist-renderer, ytd-playlist-renderer', kind: 'playlist', allowWatchList: true },
@@ -16,6 +17,10 @@
   const playlistCaptureId = /^[a-f0-9-]{36}$/i.test(initialSearchUrl.searchParams.get('yourtube_playlist_capture') || '')
     ? initialSearchUrl.searchParams.get('yourtube_playlist_capture') : '';
   const playlistCapturePlaylistId = initialSearchUrl.searchParams.get('list') || '';
+  const homepageCategoryCaptureId = /^[a-f0-9-]{36}$/i.test(initialSearchUrl.searchParams.get('yourtube_home_categories') || '')
+    ? initialSearchUrl.searchParams.get('yourtube_home_categories') : '';
+  let homepageCategoryScanStarted = false;
+  let homepageCategoryScanStopped = false;
   let playlistScanStarted = false;
   let playlistScanPaused = false;
   let playlistScanTimer = 0;
@@ -26,6 +31,9 @@
   let pendingPlaylistFinalize = null;
   let metadataCaptureId = /^[A-Za-z0-9_-]{11}$/.test(initialSearchUrl.searchParams.get('yourtube_metadata_capture') || '')
     ? initialSearchUrl.searchParams.get('yourtube_metadata_capture') : '';
+  const metadataCaptureFields = new Set((initialSearchUrl.searchParams.get('yourtube_metadata_fields') || 'duration')
+    .split(',').map(field => field.trim().toLowerCase()).filter(field => ['channel', 'duration'].includes(field)));
+  if (!metadataCaptureFields.size) metadataCaptureFields.add('duration');
   let metadataCaptureSent = false;
   let metadataCaptureAttempts = 0;
   let metadataCaptureTimer = 0;
@@ -34,6 +42,9 @@
   let metadataChallengeReported = false;
   let activeSearchId = initialSearchUrl.pathname === '/results' ? (initialSearchUrl.searchParams.get('yourtube_search_id') || '') : '';
   let activeSearchQuery = initialSearchUrl.pathname === '/results' ? (initialSearchUrl.searchParams.get('search_query') || '') : '';
+  let activeHomepageCaptureId = '';
+  const homepageShelfKeys = new WeakMap();
+  let homepageShelfSequence = 0;
   let searchScanStarted = false;
   let searchRounds = 0;
   let stableSearchRounds = 0;
@@ -65,6 +76,7 @@
   const thumbnailPositionTargets = new WeakMap();
   let localAvailabilityFetchedAt = 0;
   let localAvailabilityRequestInFlight = false;
+  let extensionContextUnavailable = false;
   const thumbnailPositionObserver = typeof ResizeObserver === 'function'
     ? new ResizeObserver(entries => {
         for (const entry of entries) {
@@ -77,6 +89,60 @@
   const downloadIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 18h14"/></svg>';
   const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
   const errorIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 20h18.4L12 3Zm0 5v5m0 3v.2"/></svg>';
+
+  function extensionRuntime() {
+    if (extensionContextUnavailable) return null;
+    try {
+      const runtime = globalThis.chrome?.runtime;
+      if (!runtime || typeof runtime.sendMessage !== 'function') {
+        extensionContextUnavailable = true;
+        return null;
+      }
+      return runtime;
+    } catch {
+      extensionContextUnavailable = true;
+      return null;
+    }
+  }
+
+  function noteRuntimeError(error) {
+    if (/extension context invalidated|extension context is unavailable/i.test(String(error?.message || error || ''))) {
+      extensionContextUnavailable = true;
+    }
+  }
+
+  function sendRuntimeMessage(message, callback) {
+    const runtime = extensionRuntime();
+    if (!runtime) {
+      if (callback) callback(undefined, new Error('YourTube extension context is unavailable.'));
+      return Promise.resolve(undefined);
+    }
+
+    if (callback) {
+      try {
+        runtime.sendMessage(message, response => {
+          let runtimeError = null;
+          try { runtimeError = runtime.lastError || null; } catch (error) { runtimeError = error; }
+          if (runtimeError) noteRuntimeError(runtimeError);
+          callback(response, runtimeError);
+        });
+      } catch (error) {
+        noteRuntimeError(error);
+        callback(undefined, error);
+      }
+      return Promise.resolve(undefined);
+    }
+
+    try {
+      return Promise.resolve(runtime.sendMessage(message)).catch(error => {
+        noteRuntimeError(error);
+        return undefined;
+      });
+    } catch (error) {
+      noteRuntimeError(error);
+      return Promise.resolve(undefined);
+    }
+  }
 
   function setThumbnailControlState(videoId, state, progress = 0, detail = '') {
     const controls = thumbnailControlsById.get(videoId);
@@ -111,12 +177,12 @@
   }
 
   function refreshLocalAvailability(force = false) {
-    if (localAvailabilityRequestInFlight || (!force && Date.now() - localAvailabilityFetchedAt < 15_000)) return;
+    if (extensionContextUnavailable || localAvailabilityRequestInFlight || (!force && Date.now() - localAvailabilityFetchedAt < 15_000)) return;
     localAvailabilityRequestInFlight = true;
     try {
-      chrome.runtime.sendMessage({ type: 'yourtube:get-local-availability' }, result => {
+      sendRuntimeMessage({ type: 'yourtube:get-local-availability' }, (result, runtimeError) => {
         localAvailabilityRequestInFlight = false;
-        if (chrome.runtime.lastError || !result?.ok || !Array.isArray(result.ids)) return;
+        if (runtimeError || !result?.ok || !Array.isArray(result.ids)) return;
         applyLocalAvailability(result.ids.filter(id => /^[A-Za-z0-9_-]{11}$/.test(id)));
         scheduleCapture();
       });
@@ -124,10 +190,14 @@
   }
 
   function requestDownloadProgress(videoId) {
+    if (extensionContextUnavailable) {
+      thumbnailDownloadPolls.delete(videoId);
+      return;
+    }
     try {
-      chrome.runtime.sendMessage({ type: 'yourtube:get-thumbnail-download-progress', videoId }, result => {
-        if (chrome.runtime.lastError || !result?.ok || !result.download) {
-          setThumbnailControlState(videoId, 'error', 0, result?.error || chrome.runtime.lastError?.message || 'Could not read download progress.');
+      sendRuntimeMessage({ type: 'yourtube:get-thumbnail-download-progress', videoId }, (result, runtimeError) => {
+        if (runtimeError || !result?.ok || !result.download) {
+          setThumbnailControlState(videoId, 'error', 0, result?.error || runtimeError?.message || 'Could not read download progress.');
           thumbnailDownloadPolls.delete(videoId);
           return;
         }
@@ -162,13 +232,13 @@
     thumbnailDownloadPolls.add(videoId);
     setThumbnailControlState(videoId, 'queued', 0);
     try {
-      chrome.runtime.sendMessage({
+      sendRuntimeMessage({
         type: 'yourtube:queue-thumbnail-download', video,
         provisionCategory: location.pathname === '/' ? 'homepage' : 'other'
-      }, result => {
-        if (chrome.runtime.lastError || !result?.ok) {
+      }, (result, runtimeError) => {
+        if (runtimeError || !result?.ok) {
           thumbnailDownloadPolls.delete(videoId);
-          setThumbnailControlState(videoId, 'error', 0, result?.error || chrome.runtime.lastError?.message || 'Could not queue this download.');
+          setThumbnailControlState(videoId, 'error', 0, result?.error || runtimeError?.message || 'Could not queue this download.');
           return;
         }
         const download = result.download || {};
@@ -189,9 +259,9 @@
 
   function openLocalThumbnailVideo(videoId) {
     try {
-      chrome.runtime.sendMessage({ type: 'yourtube:open-local-thumbnail-video', videoId }, result => {
-        if (chrome.runtime.lastError || !result?.ok) {
-          setThumbnailControlState(videoId, 'error', 0, result?.error || chrome.runtime.lastError?.message || 'Could not open local playback.');
+      sendRuntimeMessage({ type: 'yourtube:open-local-thumbnail-video', videoId }, (result, runtimeError) => {
+        if (runtimeError || !result?.ok) {
+          setThumbnailControlState(videoId, 'error', 0, result?.error || runtimeError?.message || 'Could not open local playback.');
         }
       });
     } catch (error) {
@@ -608,24 +678,50 @@
 
   function readRenderedComments() {
     const section = document.querySelector('ytd-comments#comments, #comments');
-    const threads = [...document.querySelectorAll('ytd-comment-thread-renderer')].slice(0, 50);
-    const comments = threads.map(thread => {
-      const author = thread.querySelector('#author-text, #author-name, a[href*="/channel/"], a[href^="/@"]');
+    const threads = [...document.querySelectorAll('ytd-comment-thread-renderer')].slice(0, maxCapturedComments);
+    const comments = [];
+    const seen = new Set();
+    const readComment = (node, parent = 'root', fallbackId = '') => {
+      const author = node.querySelector('#author-text, #author-name, a[href*="/channel/"], a[href^="/@"]');
       const authorLink = author?.closest('a') || author;
-      const authorImage = thread.querySelector('#author-thumbnail img, #author-thumbnail yt-img-shadow img, #author-thumbnail yt-image img');
-      const commentText = text(thread.querySelector('#content-text, yt-attributed-string#content-text'));
-      const published = text(thread.querySelector('#published-time-text a, #published-time-text'));
+      const authorImage = node.querySelector('#author-thumbnail img, #author-thumbnail yt-img-shadow img, #author-thumbnail yt-image img');
+      const commentText = text(node.querySelector('#content-text, yt-attributed-string#content-text'));
+      if (!commentText) return null;
+      const published = text(node.querySelector('#published-time-text a, #published-time-text'));
       const authorUrl = authorLink?.href || '';
       let authorId = '';
       try { authorId = new URL(authorUrl, location.origin).pathname.slice(1); } catch {}
-      const likesLabel = text(thread.querySelector('#vote-count-middle'));
+      const likesLabel = text(node.querySelector('#vote-count-middle'));
+      const id = node.getAttribute('data-id') || node.getAttribute('comment-id') || node.querySelector('[data-id]')?.getAttribute('data-id') || fallbackId || `${authorId}-${published}-${commentText.slice(0, 24)}`;
       return {
-        id: thread.getAttribute('data-id') || thread.id || `${authorId}-${published}-${commentText.slice(0, 24)}`,
+        id,
+        parent: node.getAttribute('data-parent-id') || node.getAttribute('parent-id') || parent,
         author: text(author), author_id: authorId, author_url: authorUrl,
         text: commentText, like_count: countFromLabel(likesLabel) || 0,
         time_text: published, author_thumbnail: imageUrl(authorImage)
       };
-    }).filter(comment => comment.text);
+    };
+    for (const thread of threads) {
+      if (comments.length >= maxCapturedComments) break;
+      const rootNode = thread.querySelector('#comment ytd-comment-view-model, #comment ytd-comment-renderer, ytd-comment-view-model, ytd-comment-renderer') || thread;
+      const rootFallbackId = thread.getAttribute('data-id') || thread.getAttribute('comment-id') || '';
+      const root = readComment(rootNode, 'root', rootFallbackId);
+      if (root && !seen.has(root.id)) {
+        comments.push(root);
+        seen.add(root.id);
+      }
+      if (!root) continue;
+      const replies = thread.querySelector('ytd-comment-replies-renderer, #replies');
+      const replyNodes = [...(replies?.querySelectorAll('ytd-comment-view-model, ytd-comment-renderer') || [])];
+      for (const replyNode of replyNodes) {
+        if (comments.length >= maxCapturedComments) break;
+        const reply = readComment(replyNode, root.id);
+        if (reply && !seen.has(reply.id)) {
+          comments.push(reply);
+          seen.add(reply.id);
+        }
+      }
+    }
     const sectionText = text(section);
     const commentsCaptured = Boolean(section) && (comments.length > 0 || /comments (?:are )?(?:turned off|disabled)|no comments yet/i.test(sectionText));
     return { comments, commentsCaptured };
@@ -634,11 +730,19 @@
   function readWatchPageMetadata() {
     const titleElement = document.querySelector('ytd-watch-metadata h1, #title h1, h1.ytd-watch-metadata');
     const title = text(titleElement) || document.querySelector('meta[property="og:title"]')?.content || document.querySelector('meta[name="title"]')?.content || '';
-    const channelLink = document.querySelector('ytd-watch-metadata #owner a[href*="/@"], ytd-watch-metadata #owner a[href*="/channel/"], #owner #channel-name a, #upload-info a[href*="/@"], #upload-info a[href*="/channel/"]');
-    const channel = text(channelLink) || text(document.querySelector('ytd-watch-metadata #channel-name, #owner #channel-name, #upload-info #channel-name, [itemprop="author"] [itemprop="name"]')) || '';
-    const channelId = String(channelLink?.getAttribute('data-channel-id') || document.querySelector('#owner [channel-id]')?.getAttribute('channel-id') || '').trim();
+    const ownerRoot = document.querySelector('ytd-watch-metadata #owner, ytd-video-owner-renderer, #upload-info, ytd-reel-channel-bar-view-model, ytd-reel-video-renderer');
+    const channelLink = ownerRoot?.querySelector('a[href*="/@"], a[href*="/channel/"], a[href*="/user/"], a[href*="/c/"]') ||
+      document.querySelector('ytd-watch-metadata #owner a[href*="/@"], ytd-watch-metadata #owner a[href*="/channel/"], #owner #channel-name a, #owner-text a, #upload-info a[href*="/@"], #upload-info a[href*="/channel/"], ytd-video-owner-renderer #channel-name a');
+    const channelImage = ownerRoot?.querySelector('#avatar img, yt-img-shadow img, yt-image img, img[alt]');
+    const channelLabel = String(channelLink?.getAttribute('aria-label') || channelLink?.getAttribute('title') || '')
+      .replace(/^(?:go to|visit)\s+channel\s+/i, '').replace(/^channel:\s*/i, '').trim();
+    const imageLabel = String(channelImage?.getAttribute('alt') || '').replace(/^(?:avatar|profile picture)(?:\s+for)?\s+/i, '').trim();
+    const channelId = String(channelLink?.getAttribute('data-channel-id') || ownerRoot?.querySelector('[channel-id]')?.getAttribute('channel-id') || document.querySelector('#owner [channel-id]')?.getAttribute('channel-id') || '').trim();
     const channelKey = channelKeyFromLink(channelLink?.href) || (/^UC[A-Za-z0-9_-]{20,32}$/.test(channelId) ? `channel/${channelId}` : '');
-    const avatar = imageUrl(document.querySelector('ytd-watch-metadata #owner #avatar img, #owner #avatar img, #upload-info #channel-thumbnail img, ytd-video-owner-renderer #avatar img'));
+    const channel = dedupeLabel(text(channelLink) || text(ownerRoot?.querySelector('#channel-name, #owner-text, yt-formatted-string#text, .ytReelChannelBarViewModelChannelName')) ||
+      text(document.querySelector('ytd-watch-metadata #channel-name, #owner #channel-name, #owner-text, #upload-info #channel-name, ytd-video-owner-renderer #channel-name, ytd-reel-channel-bar-view-model .ytReelChannelBarViewModelChannelName, [itemprop="author"] [itemprop="name"]')) ||
+      channelLabel || document.querySelector('meta[name="author"]')?.content || document.querySelector('meta[itemprop="author"]')?.content || imageLabel || channelKey).slice(0, 200);
+    const avatar = imageUrl(channelImage || document.querySelector('ytd-watch-metadata #owner #avatar img, #owner #avatar img, #upload-info #channel-thumbnail img, ytd-video-owner-renderer #avatar img'));
     const thumbnail = document.querySelector('meta[property="og:image"]')?.content ||
       imageUrl(document.querySelector('ytd-watch-metadata #thumbnail img, ytd-player img'));
     const videoDuration = Number(document.querySelector('video')?.duration);
@@ -649,21 +753,27 @@
     const comments = readRenderedComments();
     const description = text(document.querySelector('#description-inline-expander, ytd-text-inline-expander#description-inline-expander')) ||
       document.querySelector('meta[name="description"]')?.content || '';
-    const viewCount = countFromLabel(text(document.querySelector('ytd-watch-info-text #info, #info span')) ||
+    const viewCount = countFromLabel(text(document.querySelector('ytd-watch-info-text #info, ytd-watch-info-text #info-container, #info span')) ||
       document.querySelector('meta[itemprop="interactionCount"]')?.content || '');
+    const likeLabels = [...document.querySelectorAll('#top-level-buttons-computed button[aria-label], ytd-watch-metadata button[aria-label]')]
+      .map(button => button.getAttribute('aria-label') || '')
+      .filter(label => /like/i.test(label) && !/(?:dislike|unlike)/i.test(label));
+    const likeCount = likeLabels.map(countFromLabel).find(count => count !== null) ?? null;
+    const commentCount = countFromLabel(text(document.querySelector('ytd-comments-header-renderer #count h2, ytd-comments-header-renderer #count, h2#count')));
+    const channelFollowerCount = countFromLabel(text(document.querySelector('#owner-sub-count, ytd-video-owner-renderer #owner-sub-count, #upload-info #owner-sub-count')));
     const publication = publicationDetails(document, text(document.querySelector('#info-strings, ytd-watch-info-text, #info-container')));
     const tags = (document.querySelector('meta[name="keywords"]')?.content || '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 100);
     return {
       title: title.slice(0, 500), channel: dedupeLabel(channel).slice(0, 200), channelId,
       channelKey, channelUrl: channelKey ? `https://www.youtube.com/${channelKey}` : '',
       thumbnail, avatar, durationSeconds,
-      description, viewCount, tags, ...publication,
+      description, viewCount, likeCount, commentCount, channelFollowerCount, tags, ...publication,
       comments: comments.comments, commentsCaptured: comments.commentsCaptured
     };
   }
 
   function scheduleMetadataPageCapture() {
-    if (!metadataCaptureId || metadataCaptureSent || location.pathname !== '/watch' || new URLSearchParams(location.search).get('v') !== metadataCaptureId) return;
+    if (extensionContextUnavailable || !metadataCaptureId || metadataCaptureSent || location.pathname !== '/watch' || new URLSearchParams(location.search).get('v') !== metadataCaptureId) return;
     document.querySelector('video')?.pause();
     if (metadataCaptureTimer) clearTimeout(metadataCaptureTimer);
     metadataCaptureTimer = setTimeout(() => {
@@ -678,22 +788,25 @@
         Boolean(document.querySelector('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA" i]'));
       if (verificationVisible && !metadataChallengeReported) {
         metadataChallengeReported = true;
-        chrome.runtime.sendMessage({
+        sendRuntimeMessage({
           type: 'yourtube:metadata-page-challenge', videoId: metadataCaptureId,
           message: 'YouTube is waiting for age, CAPTCHA, or sign-in verification. Complete it in the open capture tab; YourTube will keep waiting.'
         });
       } else if (!verificationVisible) metadataChallengeReported = false;
-      const ready = capture.durationSeconds > 0 && metadataCaptureAttempts >= 5;
+      const targetReady = [...metadataCaptureFields].every(field => field === 'channel' ? Boolean(capture.channel) : capture.durationSeconds > 0);
+      const ready = targetReady && metadataCaptureAttempts >= 5;
       const elapsed = Date.now() - (metadataCaptureStartedAt || Date.now());
       const exhausted = elapsed >= (verificationVisible ? 10 * 60_000 : 60_000);
       if (ready || exhausted) {
         metadataCaptureSent = true;
-        chrome.runtime.sendMessage({
+        sendRuntimeMessage({
           type: 'yourtube:metadata-page-capture', videoId: metadataCaptureId,
-          capture, failed: !(capture.durationSeconds > 0),
+          capture: { ...capture, requestedFields: [...metadataCaptureFields] }, failed: !targetReady,
           error: verificationVisible
             ? 'YouTube verification was not completed within ten minutes.'
-            : 'The signed-in YouTube page did not expose a video length within one minute.'
+            : !capture.channel && metadataCaptureFields.has('channel')
+              ? 'The signed-in YouTube page did not expose a channel name within one minute.'
+              : 'The signed-in YouTube page did not expose a video length within one minute.'
         });
         return;
       }
@@ -828,6 +941,7 @@
     const meta = text(card.querySelector('#metadata-line'));
     const publication = publicationDetails(card, meta);
     const source = channelPageSource();
+    const sourcePlaylistId = playlistIdFrom(anchor.href);
 
     return {
       id,
@@ -842,12 +956,121 @@
       meta: dedupeLabel(meta).slice(0, 200),
       ...publication,
       kind: anchor.pathname.startsWith('/shorts/') ? 'short' : 'normal',
+      mixId: /^RD/i.test(sourcePlaylistId) ? sourcePlaylistId : '',
       acquisitionExclusionReason: excludedReason,
       section: trackedSearch() ? 'search' : new URL(location.href).searchParams.has('list') ? 'playlist' : /top news/i.test(sectionTitle) ? 'news' : 'home',
       topic,
       sourceChannelKey: source?.channelKey || '',
       sourceTab: source?.tab || ''
     };
+  }
+
+  function homepageShelf(card, video) {
+    const richSection = card.closest('ytd-rich-section-renderer');
+    const title = text(richSection?.querySelector('#title, h2, yt-formatted-string'));
+    const topic = video.topic || '';
+    if (/^top news\b/i.test(title)) return { key: 'top-news', title: title || 'Top News', kind: 'feed', topic: '' };
+    if (/^for you\b/i.test(title)) return { key: 'for-you', title: title || 'For you', kind: 'for-you', topic: '' };
+    if (richSection) {
+      const sectionKind = /^shorts?\b/i.test(title) || video.kind === 'short' ? 'shorts' : topic ? 'topic' : 'feed';
+      let key = homepageShelfKeys.get(richSection);
+      if (!key) {
+        const slug = (title || (sectionKind === 'shorts' ? 'shorts' : 'youtube')).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'youtube';
+        key = `${sectionKind}:${slug}:${++homepageShelfSequence}`;
+        homepageShelfKeys.set(richSection, key);
+      }
+      return { key, title: title || (sectionKind === 'shorts' ? 'Shorts' : topic || 'YouTube'), kind: sectionKind, topic: sectionKind === 'topic' ? topic : '' };
+    }
+    if (topic) return { key: `topic:${topic.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, title: topic, kind: 'topic', topic };
+    if (video.kind === 'short') return { key: 'shorts', title: 'Shorts', kind: 'shorts', topic: '' };
+    return { key: 'for-you', title: 'For you', kind: 'for-you', topic: '' };
+  }
+
+  function readHomepageCategories() {
+    const seen = new Set();
+    return [...document.querySelectorAll('yt-chip-cloud-chip-renderer')].map((chip, position) => {
+      const title = text(chip.querySelector('#text, yt-formatted-string, button') || chip).slice(0, 80);
+      if (!title || /^(all|all videos)$/i.test(title)) return null;
+      const key = title.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 70);
+      if (!key || seen.has(key)) return null;
+      seen.add(key);
+      return { key, title, position };
+    }).filter(Boolean).slice(0, 60);
+  }
+
+  const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+  async function startHomepageCategoryScan() {
+    if (extensionContextUnavailable || !homepageCategoryCaptureId || homepageCategoryScanStarted) return;
+    homepageCategoryScanStarted = true;
+    let categories = [];
+    for (let attempt = 0; attempt < 40 && !categories.length; attempt += 1) {
+      categories = readHomepageCategories();
+      if (!categories.length) await wait(500);
+    }
+    if (!categories.length) {
+      sendRuntimeMessage({ type: 'yourtube:homepage-category-capture-finished', captureId: homepageCategoryCaptureId, error: 'YouTube did not render its category chips.' });
+      return;
+    }
+
+    try {
+      const discoveryResult = await sendRuntimeMessage({ type: 'yourtube:sync', videos: [], subscriptions: [], homepageCategories: categories, provisionCategory: 'homepage' });
+      if (!discoveryResult?.ok) {
+        await sendRuntimeMessage({
+          type: 'yourtube:homepage-category-capture-finished', captureId: homepageCategoryCaptureId,
+          paused: discoveryResult?.paused === true, error: discoveryResult?.error || 'YourTube could not save the YouTube categories.'
+        });
+        return;
+      }
+      let completed = 0;
+      let failure = '';
+      for (const category of categories) {
+        if (homepageCategoryScanStopped) break;
+        const chip = [...document.querySelectorAll('yt-chip-cloud-chip-renderer')]
+          .find(item => text(item.querySelector('#text, yt-formatted-string, button') || item) === category.title);
+        if (!chip) continue;
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        await wait(250);
+        (chip.querySelector('button, [role="button"]') || chip).click();
+        await wait(1600);
+
+        const found = new Map();
+        let previousCount = 0;
+        let quietRounds = 0;
+        for (let round = 0; round < 8 && found.size < 24; round += 1) {
+          if (homepageCategoryScanStopped) break;
+          for (const card of document.querySelectorAll(cardSelector)) {
+            const video = readCard(card);
+            if (video && !found.has(video.id)) found.set(video.id, { ...video, position: found.size });
+          }
+          quietRounds = found.size === previousCount ? quietRounds + 1 : 0;
+          previousCount = found.size;
+          if (found.size >= 16 && quietRounds >= 2) break;
+          const root = document.scrollingElement || document.documentElement;
+          const currentY = window.scrollY || root.scrollTop || 0;
+          const nextY = Math.min(root.scrollHeight, currentY + Math.max(600, Math.floor(window.innerHeight * 0.85)));
+          if (nextY <= currentY && quietRounds >= 2) break;
+          window.scrollTo({ top: nextY, behavior: 'instant' });
+          await wait(850);
+        }
+
+        const result = await sendRuntimeMessage({
+          type: 'yourtube:homepage-category-sync', captureId: homepageCategoryCaptureId,
+          category, videos: [...found.values()].slice(0, 24), complete: true
+        });
+        if (result?.ok) completed += 1;
+        if (result?.error && !result?.queued) {
+          failure = result.error;
+          if (result.paused) homepageCategoryScanStopped = true;
+          break;
+        }
+        await wait(350);
+      }
+      await sendRuntimeMessage({ type: 'yourtube:homepage-category-capture-finished', captureId: homepageCategoryCaptureId, categoryCount: categories.length, completedCount: completed, paused: homepageCategoryScanStopped, error: failure });
+    } catch (error) {
+      sendRuntimeMessage({ type: 'yourtube:homepage-category-capture-finished', captureId: homepageCategoryCaptureId, error: String(error?.message || 'Category capture failed.').slice(0, 300) });
+    }
   }
 
   function playlistTitleFrom(card, anchor) {
@@ -957,7 +1180,7 @@
 
   function finishPlaylistCapture(complete, itemCount) {
     if (!playlistCaptureId || !playlistCapturePlaylistId) return;
-    chrome.runtime.sendMessage({
+    sendRuntimeMessage({
       type: 'yourtube:playlist-capture-finished', playlistId: playlistCapturePlaylistId,
       requestId: playlistCaptureId, complete: complete === true, itemCount
     });
@@ -978,11 +1201,10 @@
     }
     if (signature === lastPlaylistSignature && !options.finalize) return;
     playlistSyncInFlight.add(signature);
-    chrome.runtime.sendMessage({
+    sendRuntimeMessage({
       type: 'yourtube:sync', videos: [], subscriptions: [], playlists: records,
       provisionCategory: 'other'
-    }, result => {
-      const runtimeError = chrome.runtime.lastError;
+    }, (result, runtimeError) => {
       playlistSyncInFlight.delete(signature);
       if (!runtimeError && (result?.ok || result?.queued)) {
         lastPlaylistSignature = signature;
@@ -1230,15 +1452,19 @@
     channelSyncInFlight = true;
     const sendingComplete = channelPendingComplete;
     const sendingFinal = channelPendingFinal;
-    chrome.runtime.sendMessage({
+    sendRuntimeMessage({
         type: 'yourtube:channel-sync', captureId: activeChannelId, channelKey: profile.key,
         channel: profile, tab: activeChannelTab, videos: changed,
         phase: channelRounds === 0 ? 'priority' : phase, complete: sendingComplete,
         final: sendingFinal, message: sendingFinal ? channelPendingFinalMessage : ''
-      }, result => {
-        const runtimeError = chrome.runtime.lastError;
+      }, (result, runtimeError) => {
         channelSyncInFlight = false;
         if (runtimeError || !(result?.ok || result?.queued)) {
+          if (extensionContextUnavailable) {
+            channelComplete = true;
+            clearTimeout(channelRetryTimer);
+            return;
+          }
           if (result?.fatal || result?.paused) {
             channelComplete = true;
             return;
@@ -1246,7 +1472,7 @@
           channelDeliveryAttempts += 1;
           const retryDetail = runtimeError?.message || result?.error || 'No response from the local server';
           console.warn(`[YourTube] Channel data was not acknowledged; retrying (attempt ${channelDeliveryAttempts}).`, retryDetail);
-          chrome.runtime.sendMessage({
+          sendRuntimeMessage({
             type: 'yourtube:channel-retry-status', captureId: activeChannelId,
             attempt: channelDeliveryAttempts, detail: `Last delivery error: ${retryDetail}`
           });
@@ -1319,7 +1545,15 @@
 
   function capture(searchComplete = false) {
     pending = 0;
+    if (extensionContextUnavailable) return;
     cleanupDetachedThumbnailControls();
+    if (homepageCategoryCaptureId) {
+      startHomepageCategoryScan();
+      return;
+    }
+    const isHomepage = location.pathname === '/' && !trackedSearch() && !trackedChannel() && !new URL(location.href).searchParams.has('list');
+    if (isHomepage && !activeHomepageCaptureId) activeHomepageCaptureId = crypto.randomUUID();
+    if (!isHomepage) activeHomepageCaptureId = '';
     if (metadataCaptureId && location.pathname === '/watch') return;
     if (trackedChannel()) {
       captureChannel(false, channelRounds === 0 ? 'priority' : 'background');
@@ -1327,15 +1561,33 @@
     }
     expandMoreControls();
     const cardsById = new Map();
+    const homepageSectionMap = new Map();
     for (const card of document.querySelectorAll(cardSelector)) {
       const video = readCard(card);
       installThumbnailControl(card, video);
-      if (video && !cardsById.has(video.id)) {
-        cardsById.set(video.id, video);
+      if (video) {
+        if (!cardsById.has(video.id)) cardsById.set(video.id, video);
         if (trackedSearch()) observedSearchVideoIds.add(video.id);
+        if (isHomepage) {
+          const shelf = homepageShelf(card, video);
+          let group = homepageSectionMap.get(shelf.key);
+          if (!group) {
+            group = { ...shelf, position: homepageSectionMap.size, placements: [], seen: new Set() };
+            homepageSectionMap.set(shelf.key, group);
+          }
+          if (!group.seen.has(video.id)) {
+            group.seen.add(video.id);
+            group.placements.push({ id: video.id, position: group.placements.length, mixId: video.mixId || '' });
+          }
+        }
       }
     }
     const cards = [...cardsById.values()].map((video, position) => ({ ...video, position }));
+    const homepageLayout = isHomepage && homepageSectionMap.size ? {
+      captureId: activeHomepageCaptureId,
+      sections: [...homepageSectionMap.values()].map(({ seen, ...section }) => section)
+    } : null;
+    const homepageCategories = isHomepage ? readHomepageCategories() : [];
     const subscriptions = readSubscriptions();
     const playlistRecords = readPlaylists([...document.querySelectorAll(cardSelector)].map(card => ({ card })));
     syncPlaylistRecords(playlistRecords);
@@ -1347,7 +1599,7 @@
         return true;
       });
       if (changedCards.length || searchComplete) {
-        chrome.runtime.sendMessage({
+        sendRuntimeMessage({
           type: 'yourtube:search-sync', searchId: activeSearchId, query: activeSearchQuery,
           videos: changedCards, complete: searchComplete
         });
@@ -1356,13 +1608,15 @@
     }
     const signature = JSON.stringify([
       cards.map(video => [video.id, video.title, video.channel, video.thumbnail, video.avatar, video.duration, video.acquisitionExclusionReason, video.section, video.topic, video.sourceChannelKey, video.sourceTab]),
+      homepageLayout?.sections.map(section => [section.key, section.title, section.kind, section.topic, section.position, section.placements.map(item => [item.id, item.position, item.mixId])]) || null,
+      homepageCategories.map(category => [category.key, category.title, category.position]),
       subscriptions.map(subscription => [subscription.key, subscription.name, subscription.avatar])
     ]);
-    if ((!cards.length && !subscriptions.length) || signature === lastSent) return;
+    if ((!cards.length && !subscriptions.length && !homepageCategories.length) || signature === lastSent) return;
     lastSent = signature;
-    chrome.runtime.sendMessage({
-      type: 'yourtube:sync', videos: cards, subscriptions,
-      provisionCategory: location.pathname === '/' ? 'homepage' : 'other'
+    sendRuntimeMessage({
+      type: 'yourtube:sync', videos: cards, subscriptions, homepageLayout, homepageCategories,
+      provisionCategory: isHomepage ? 'homepage' : 'other'
     });
   }
 
@@ -1379,11 +1633,14 @@
   }
 
   function scheduleCapture() {
+    if (extensionContextUnavailable) return;
     if (pending) clearTimeout(pending);
     pending = setTimeout(capture, 800);
   }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const messageRuntime = extensionRuntime();
+  if (messageRuntime?.onMessage && typeof messageRuntime.onMessage.addListener === 'function') {
+    messageRuntime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'yourtube:start-metadata-capture') {
       const videoId = String(message.videoId || '');
       if (!/^[A-Za-z0-9_-]{11}$/.test(videoId) || location.pathname !== '/watch' || new URLSearchParams(location.search).get('v') !== videoId) {
@@ -1403,6 +1660,7 @@
       return;
     }
     if (message?.type === 'yourtube:mode-changed') {
+      if (homepageCategoryCaptureId && message.mode !== 'online') homepageCategoryScanStopped = true;
       if (message.mode === 'online') {
         scheduleCapture();
         startPlaylistScan();
@@ -1444,7 +1702,8 @@
     sentChannelCards.clear();
     startChannelScan();
     sendResponse({ ok: true });
-  });
+    });
+  }
 
   function startSearchScan() {
     if (searchScanStarted || !trackedSearch()) return;
@@ -1519,6 +1778,7 @@
   refreshLocalAvailability(true);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshLocalAvailability(); });
   setInterval(() => { if (!document.hidden) refreshLocalAvailability(); }, 20_000);
+  if (homepageCategoryCaptureId) setTimeout(startHomepageCategoryScan, 1200);
   scheduleCapture();
   scheduleMetadataPageCapture();
   startSearchScan();

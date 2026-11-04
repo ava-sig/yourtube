@@ -1,0 +1,30 @@
+services:
+  yourtube:
+    build: .
+    image: yourtube:local
+    user: "${YOURTUBE_UID:-1000}:${YOURTUBE_GID:-1000}"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4173
+      YOURTUBE_DATA_DIR: /var/lib/yourtube
+      YOURTUBE_MEDIA_DIR: /var/lib/yourtube-media
+      YOURTUBE_DOWNLOAD_PROTECTIONS: ${YOURTUBE_DOWNLOAD_PROTECTIONS:-off}
+      HOME: /tmp
+    ports:
+      # Keep the app private by default. Put an authenticated HTTPS proxy in front
+      # before making it reachable from the internet.
+      - "127.0.0.1:4173:4173"
+    volumes:
+      - type: bind
+        source: ${YOURTUBE_DATA_HOST_PATH:-./docker-data}
+        target: /var/lib/yourtube
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${YOURTUBE_MEDIA_HOST_PATH:-./docker-media}
+        target: /var/lib/yourtube-media
+        bind:
+          create_host_path: false

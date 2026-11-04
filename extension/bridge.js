@@ -59,7 +59,7 @@
     if (event.source !== window || event.origin !== location.origin) return;
     const message = event.data;
     if (message?.type === 'yourtube:mode-change' && ['online', 'offline', 'preparing'].includes(message.mode)) {
-      sendToExtension({ type: message.mode === 'preparing' ? 'yourtube:set-mode-state' : 'yourtube:set-mode', mode: message.mode });
+      sendToExtension({ type: 'yourtube:set-mode-state', mode: message.mode });
       return;
     }
     if (message?.type === 'yourtube:collect-search') {

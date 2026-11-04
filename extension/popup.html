@@ -14,7 +14,13 @@
         <h1>YourTube</h1>
         <p>Extension diagnostics <span id="version"></span></p>
       </div>
-      <button id="refresh" class="icon-button" type="button" aria-label="Refresh diagnostics" title="Refresh diagnostics">↻</button>
+      <div class="topbar-actions">
+        <button id="copy-link" class="icon-button" type="button" aria-label="Copy share link for current video" title="Copy share link for current video">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13.5a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.25 1.25M14 10.5a4 4 0 0 0-5.66 0l-3 3A4 4 0 0 0 11 19.16l1.25-1.25"></path></svg>
+        </button>
+        <span id="copy-link-status" class="visually-hidden" role="status" aria-live="polite"></span>
+        <button id="refresh" class="icon-button" type="button" aria-label="Refresh diagnostics" title="Refresh diagnostics">↻</button>
+      </div>
     </header>
 
     <section id="connection" class="connection" aria-live="polite">
@@ -80,7 +86,7 @@
           <button id="capture-toggle" class="capture-control-button" type="button" disabled>Pause</button>
           <label class="capture-limit-label" for="capture-limit">Tabs
             <select id="capture-limit" aria-label="Maximum simultaneous video length capture tabs" disabled>
-              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+              <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
             </select>
           </label>
         </div>
