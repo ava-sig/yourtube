@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, unlinkSync, watch as watchFileSystem } from 'node:fs';
+import { constants as fsConstants, createReadStream, existsSync, unlinkSync, watch as watchFileSystem } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -8,11 +8,17 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const dataDirectory = process.env.YOURTUBE_DATA_DIR || path.join(root, 'data');
+const repositoryDataDirectory = path.resolve(root, 'data');
+const dataDirectory = path.resolve(process.env.YOURTUBE_DATA_DIR || repositoryDataDirectory);
+const dataDirectoryIsRepositoryDefault = dataDirectory === repositoryDataDirectory;
+// Keep the committed starter immutable; native runtime writes go to an ignored sibling database.
+const databasePath = path.join(dataDirectory, dataDirectoryIsRepositoryDefault ? 'yourtube.runtime.sqlite' : 'yourtube.sqlite');
+const legacyOrStarterDatabasePath = path.join(dataDirectory, 'yourtube.sqlite');
 const configuredMediaDirectory = String(process.env.YOURTUBE_MEDIA_DIR || '').trim();
 const mediaDirectory = path.resolve(configuredMediaDirectory || path.join(dataDirectory, 'media'));
 const shortsMediaDirectory = path.join(mediaDirectory, 'shorts');
 const transcriptionAudioDirectory = path.join(dataDirectory, 'transcription-audio');
+const keepTranscriptionAudio = /^(1|true|yes|on)$/i.test(String(process.env.YOURTUBE_KEEP_TRANSCRIPTION_AUDIO || 'off').trim());
 const mediaDirectoryIsExternal = Boolean(configuredMediaDirectory);
 const imageCacheDirectory = path.join(dataDirectory, 'images');
 const mediaContentTypes = Object.freeze({ webm: 'video/webm', mp4: 'video/mp4' });
@@ -28,11 +34,30 @@ else {
   } catch {}
 }
 await mkdir(imageCacheDirectory, { recursive: true });
-await mkdir(transcriptionAudioDirectory, { recursive: true });
+if (keepTranscriptionAudio) await mkdir(transcriptionAudioDirectory, { recursive: true });
+if (databasePath !== legacyOrStarterDatabasePath && !existsSync(databasePath) && existsSync(legacyOrStarterDatabasePath)) {
+  // Checkpoint legacy WAL changes before making a one-time copy into the runtime database.
+  const legacyDatabase = new DatabaseSync(legacyOrStarterDatabasePath);
+  legacyDatabase.exec('PRAGMA busy_timeout = 5000;');
+  let checkpoint;
+  try {
+    checkpoint = legacyDatabase.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+  } finally {
+    legacyDatabase.close();
+  }
+  if (checkpoint?.busy) {
+    throw new Error('The existing YourTube database is still in use. Stop the older YourTube server, then restart so the database can be copied safely.');
+  }
+  try {
+    await copyFile(legacyOrStarterDatabasePath, databasePath, fsConstants.COPYFILE_EXCL);
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+}
 const favicon = await readFile(path.join(root, 'public', 'favicon.ico'));
 const vueRuntime = await readFile(path.join(root, 'public', 'vendor', 'vue.global.prod.js'));
 const imagePlaceholder = await readFile(path.join(root, 'public', 'image-placeholder.svg'));
-const database = new DatabaseSync(path.join(dataDirectory, 'yourtube.sqlite'));
+const database = new DatabaseSync(databasePath);
 database.exec('PRAGMA busy_timeout = 5000;');
 const port = Number(process.env.PORT || 4173);
 const hostArgument = process.argv.slice(2).find(argument => argument.startsWith('--host='))?.slice('--host='.length);
@@ -412,6 +437,7 @@ async function recordTranscriptionAudioIssue(id, status, sourceChecksum, error =
 }
 
 async function ensureTranscriptionAudio(id, filePath, sourceChecksum, timeoutMs, durationSeconds, downloadJob = null) {
+  if (!keepTranscriptionAudio) return;
   const existing = database.prepare(`SELECT status, source_checksum AS sourceChecksum FROM transcription_assets WHERE video_id = ?`).get(id);
   if (existing?.sourceChecksum === sourceChecksum && existing.status === 'no_audio_track') return;
   if (await hasReusableTranscriptionAudio(id, sourceChecksum)) return;
@@ -460,7 +486,9 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
     downloadJob.integrityChecking = true;
     downloadJob.integrityProgress = null;
     downloadJob.integrityPhase = 'Preparing local integrity check…';
-    downloadJob.stage = 'Verifying media and preparing transcription audio…';
+    downloadJob.stage = keepTranscriptionAudio
+      ? 'Verifying media and preparing transcription audio…'
+      : 'Verifying media integrity…';
     saveDownload(id, 'downloading', '', downloadJob.progress, downloadJob.stage);
   }
   const reportIntegrityProgress = (progress, phase) => {
@@ -501,10 +529,11 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
   try { audioTrackPresent = await runFfprobeHasAudio(filePath); } catch {}
   let tempAudioPath = '';
   let audioExtractionError = '';
-  const decodeProgress = progress => reportIntegrityProgress(videoDurationSeconds > 0 ? progress * 0.75 : null, 'Decoding media and preparing transcription audio…');
+  const decodeProgress = progress => reportIntegrityProgress(videoDurationSeconds > 0 ? progress * 0.75 : null,
+    keepTranscriptionAudio ? 'Decoding media and preparing transcription audio…' : 'Decoding media for integrity check…');
   let result;
   if (ffmpegAvailable) {
-    if (audioTrackPresent !== false) {
+    if (keepTranscriptionAudio && audioTrackPresent !== false) {
       tempAudioPath = makeTranscriptionAudioTempPath(id);
       try {
         result = await runFfmpegIntegrityDecode(filePath, timeoutMs, {
@@ -526,7 +555,7 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
     }
   } else if (ffprobeAvailable) {
     result = await runFfprobeContainerCheck(filePath);
-    if (audioTrackPresent !== false) audioExtractionError = 'ffmpeg is unavailable to prepare the transcription audio file.';
+    if (keepTranscriptionAudio && audioTrackPresent !== false) audioExtractionError = 'ffmpeg is unavailable to prepare the transcription audio file.';
   } else {
     throw Object.assign(new Error('Install ffmpeg (or ffprobe) and restart YourTube before this media can be checked and played.'), { code: 'INTEGRITY_TOOL_MISSING' });
   }
@@ -566,9 +595,9 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
       audioExtractionError = error.message || 'Audio extraction failed.';
     }
   }
-  if (audioTrackPresent === false) {
+  if (keepTranscriptionAudio && audioTrackPresent === false) {
     await recordTranscriptionAudioIssue(id, 'no_audio_track', checksum, 'This media file has no audio stream to transcribe.');
-  } else if (audioExtractionError) {
+  } else if (keepTranscriptionAudio && audioExtractionError) {
     await recordTranscriptionAudioIssue(id, 'audio_extraction_failed', checksum, audioExtractionError);
   }
   return { ...result, checkedAt, filePath, checksum, cached: false };
@@ -951,8 +980,10 @@ try { database.exec('ALTER TABLE video_preferences ADD COLUMN liked INTEGER NOT 
 catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
 database.exec('CREATE INDEX IF NOT EXISTS video_preferences_liked_updated ON video_preferences (liked, updated_at DESC)');
 await migrateLegacyShortsMedia();
-database.prepare(`INSERT OR IGNORE INTO transcription_assets (video_id, status, created_at, updated_at)
-  SELECT video_id, 'pending_audio', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM downloads WHERE status = 'ready'`).run();
+if (keepTranscriptionAudio) {
+  database.prepare(`INSERT OR IGNORE INTO transcription_assets (video_id, status, created_at, updated_at)
+    SELECT video_id, 'pending_audio', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP FROM downloads WHERE status = 'ready'`).run();
+}
 // Older builds treated permanently unavailable live recordings like paid-content exclusions.
 // Keep those entries eligible for metadata recapture; only paid/movie content is blocklisted.
 database.prepare("DELETE FROM acquisition_exclusions WHERE reason = 'unavailable-source'").run();

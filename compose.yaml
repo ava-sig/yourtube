@@ -12,11 +12,12 @@ services:
       YOURTUBE_DATA_DIR: /var/lib/yourtube
       YOURTUBE_MEDIA_DIR: /var/lib/yourtube-media
       YOURTUBE_DOWNLOAD_PROTECTIONS: ${YOURTUBE_DOWNLOAD_PROTECTIONS:-off}
+      YOURTUBE_KEEP_TRANSCRIPTION_AUDIO: ${YOURTUBE_KEEP_TRANSCRIPTION_AUDIO:-off}
       HOME: /tmp
     ports:
       # Keep the app private by default. Put an authenticated HTTPS proxy in front
       # before making it reachable from the internet.
-      - "127.0.0.1:4173:4173"
+      - "127.0.0.1:${YOURTUBE_PORT:-4173}:4173"
     volumes:
       - type: bind
         source: ${YOURTUBE_DATA_HOST_PATH:-./docker-data}

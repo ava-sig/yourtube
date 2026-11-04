@@ -26,7 +26,7 @@ Then open `http://<computer-LAN-IP>:4173` on the other device. Binding to `0.0.0
 
 ## Run in Docker
 
-Docker Compose runs the YourTube web app and Node server on this computer. The image includes Node.js, `yt-dlp`, `ffmpeg`, and `ffprobe`; the browser extension remains installed in the browser and continues to communicate with YourTube on localhost.
+Requirements: Docker Desktop (macOS or Windows), or Docker Engine with the Docker Compose v2 plugin (Linux). The image contains the YourTube server, Node.js, `yt-dlp`, `ffmpeg`, and `ffprobe`. The browser extension stays installed in your browser and communicates with the server on localhost.
 
 ```sh
 cp .env.example .env
@@ -34,9 +34,19 @@ mkdir -p docker-data docker-media
 docker compose up --build -d
 ```
 
-Open <http://127.0.0.1:4173>. `docker-data/` persists the SQLite database, cached images, and transcription audio; `docker-media/` persists videos and the `shorts/` subfolder. For a removable or external drive, set `YOURTUBE_MEDIA_HOST_PATH` in `.env` to its mounted folder. You can also set `YOURTUBE_DATA_HOST_PATH` if you want the database and other app data on that drive too. Create the directories first and set `YOURTUBE_UID` and `YOURTUBE_GID` in `.env` to the values returned by `id -u` and `id -g`, so the container can write to them. If the external drive is not mounted, Compose will stop instead of silently creating a new media folder elsewhere. Keep a separate backup of both directories; the media drive itself is not a backup.
+Open <http://127.0.0.1:4173>. Check startup and health with:
 
-The published port is bound to `127.0.0.1` on the host, keeping the container local and preserving the current YourTube extension connection. Docker's `/healthz` endpoint is used for container health reporting. This is the local/self-hosted packaging step; a future Electron app can make installation easier for consumers across operating systems. A later hosted product would be a separate deployment and security project.
+```sh
+docker compose ps
+docker compose logs -f yourtube
+curl -fsS http://127.0.0.1:4173/healthz
+```
+
+Persistent files stay outside the container in two separate host folders. `docker-data/` stores the SQLite database, cached images, optional transcription audio, and other app state. `docker-media/` stores video files and the `shorts/` subfolder. Transcript-ready audio retention is off by default; set `YOURTUBE_KEEP_TRANSCRIPTION_AUDIO=on` in `.env` to enable it. To use a mounted drive instead, set `YOURTUBE_DATA_HOST_PATH` and `YOURTUBE_MEDIA_HOST_PATH` in `.env` to existing folders on that drive. For example, if the drive is mounted at `/media`, use `/media` for app data and `/media/media` for video files. Compose refuses to start if either configured folder is missing, so an absent drive cannot silently become an empty library elsewhere. On Linux, set `YOURTUBE_UID` and `YOURTUBE_GID` to the values from `id -u` and `id -g` so the container can write to the mounted folders. Keep a separate backup of both folders; the media drive itself is not a backup.
+
+If port 4173 is already in use, set `YOURTUBE_PORT` in `.env` to another free port, such as `4174`, and open `http://127.0.0.1:4174`. The default is loopback-only, so the app is not exposed to your network or the public internet.
+
+Docker's `/healthz` endpoint is used for container health reporting. The extension can be loaded from this repository's `extension/` folder as described below. This is the local/self-hosted packaging step; a future Electron app can make installation easier for consumers across operating systems. A later hosted product would be a separate deployment and security project.
 
 Useful commands:
 
@@ -58,7 +68,7 @@ Open YouTube in the same browser profile where the extension is installed. The e
 
 ## Local data
 
-By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded WebM/MP4 media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere, or set `YOURTUBE_MEDIA_DIR` to keep the media folder on a separate disk. YourTube watches that folder and also rescans every 30 seconds. A stable file named `<11-character YouTube ID>.webm` or `.mp4` is integrity-checked, matched to its existing stub, and added to the local library. If no stub exists, YourTube creates one and fills in metadata in the background. Files with other names are listed as unmatched by `/api/media-folder/status`; rename them to the ID-based format to import them. Removing a recognized file makes its retained stub available for download again. Folder-imported files are not auto-deleted by the 24-hour retention setting.
+By default, YourTube stores its runtime database in `data/yourtube.runtime.sqlite`, alongside downloaded media, cached images, and optional transcription audio. On first start, it copies the existing `data/yourtube.sqlite` database into that runtime file; this keeps the tracked starter database clean. If you set `YOURTUBE_DATA_DIR`, the runtime database is named `yourtube.sqlite` inside that folder. Set `YOURTUBE_MEDIA_DIR` to keep the media folder on a separate disk. Transcript-ready audio retention is off by default; set `YOURTUBE_KEEP_TRANSCRIPTION_AUDIO=on` to enable it. YourTube watches the media folder and also rescans every 30 seconds. A stable file named `<11-character YouTube ID>.webm` or `.mp4` is integrity-checked, matched to its existing stub, and added to the local library. If no stub exists, YourTube creates one and fills in metadata in the background. Files with other names are listed as unmatched by `/api/media-folder/status`; rename them to the ID-based format to import them. Removing a recognized file makes its retained stub available for download again. Folder-imported files are not auto-deleted by the 24-hour retention setting.
 
 The repository includes a fresh starter `data/yourtube.sqlite` with the app's default settings and empty library tables. Runtime library data, media, image caches, transcription audio, and other generated files remain excluded from Git. Keep your personal database and assets private when contributing changes.
 

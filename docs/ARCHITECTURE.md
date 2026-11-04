@@ -14,7 +14,7 @@ flowchart LR
   API -->|Cookie-free acquisition and metadata| YTDLP[yt-dlp]
   YTDLP --> MEDIA[Local WebM or MP4 files]
   FFMPEG[ffmpeg] -->|Merge separate compatible tracks| MEDIA
-  FFMPEG -->|Verified 16 kHz mono FLAC| AUDIO[Local transcription audio]
+  FFMPEG -.->|Optional: YOURTUBE_KEEP_TRANSCRIPTION_AUDIO=on| AUDIO[Local transcription audio]
   API --> IMG[Local image cache]
 ```
 
@@ -42,13 +42,13 @@ YouTube's 11-character video ID is the stable local identity. Repeated captures 
 - `subscriptions`, `channels`, `channel_items`, and `channel_captures`: subscription presentation and captured channel profiles, tabs, items, and progress.
 - `playlists`, `playlist_items`, and `playback_queue`: local playlists, read-only YouTube playlist/Mix imports, and the play-next queue.
 - `downloads` and `download_retry_queue`: acquisition state, progress, retry schedule, pause reason, and acquisition/expiry timestamps.
-- `transcription_assets`: retained audio derivatives, source/audio checksums, transcription status, and fields for future transcript text, segments, model, and language.
+- `transcription_assets`: optional retained audio derivatives, source/audio checksums, transcription status, and fields for future transcript text, segments, model, and language.
 - `video_metadata`, `download_metadata`, `video_comments`, `cached_images`, and `video_thumbnail_assets`: saved metadata, completeness work, capped comment data, cached image indexes, and the first locally stored thumbnail linked by video ID.
 - `video_views`, `video_progress`, `search_history`, `search_history_results`, and `search_history_clicks`: aggregate opens, latest resume position, search sessions, and clicked results.
 - `video_duration_lookups` and `extension_duration_baseline`: duration work state and per-extension-version duration coverage observations.
 - `app_settings`: persistent Online/Offline, auto-delete, protection-cooldown, and preparation settings.
 
-The database and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. Media is in `data/media/` unless `YOURTUBE_MEDIA_DIR` selects a separate folder or mounted drive. Transcription audio is stored separately in `data/transcription-audio/` as 16 kHz mono FLAC, never mixed with normal or Shorts media. Media is WebM where available; finite videos can use a compatible MP4 fallback. The server watches the selected directory and rescans it periodically. It imports stable ID-named files after an integrity check, creates a minimal stub for an otherwise unknown valid YouTube ID, and marks removed media as needing reacquisition while retaining metadata. These folders contain personal data and may contain many gigabytes of media; they are deliberately ignored by Git.
+The database and image cache live under `data/` unless `YOURTUBE_DATA_DIR` points elsewhere. Media is in `data/media/` unless `YOURTUBE_MEDIA_DIR` selects a separate folder or mounted drive. Transcript-ready audio retention is off by default. When explicitly enabled with `YOURTUBE_KEEP_TRANSCRIPTION_AUDIO=on`, 16 kHz mono FLAC files are stored separately in `data/transcription-audio/`, never mixed with normal or Shorts media. Media is WebM where available; finite videos can use a compatible MP4 fallback. The server watches the selected directory and rescans it periodically. It imports stable ID-named files after an integrity check, creates a minimal stub for an otherwise unknown valid YouTube ID, and marks removed media as needing reacquisition while retaining metadata. These folders contain personal data and may contain many gigabytes of media; they are deliberately ignored by Git.
 
 ## Capture and search flows
 
@@ -76,7 +76,7 @@ When `yt-dlp` cannot return a video length or browser-visible details are needed
 
 Selecting a stub opens the local watch route. The server runs `yt-dlp` with `--no-cookies`, `--no-playlist`, and a WebM-first format selection. For videos with a known finite duration, it can fall back to compatible MP4 streams if YouTube offers no WebM. Unknown-duration and live captures stay WebM-only so the existing partial-recording finalizer can safely save them. ffmpeg merges separate tracks when needed; the media endpoint serves the correct content type for either container. Progress is parsed from yt-dlp output and stored for the UI. A no-compatible-format response is paused as non-retryable instead of repeatedly issuing the same request. The player waits for the local file and presents explicit failure/retry states; there is no online-playback fallback.
 
-At the save boundary, ffmpeg decodes audio/video to verify the media and writes a 16 kHz mono FLAC derivative in the same decode pass. SHA-256 checksums for both source media and audio are stored in SQLite. Successful audio is marked `awaiting_transcription`; extraction failures and videos without an audio track have explicit statuses without blocking otherwise valid playback. Media-folder imports use the same flow. Existing ready files are registered as `pending_audio` but are not bulk-processed; a later integrity pass can create their audio derivative.
+At the save boundary, ffmpeg decodes the full audio/video to verify the media. Transcript-ready 16 kHz mono FLAC derivatives are optional and are disabled by default; set `YOURTUBE_KEEP_TRANSCRIPTION_AUDIO=on` to retain them, along with their checksums and `awaiting_transcription` status. Audio extraction errors do not invalidate otherwise verified playable media. Media-folder imports use the same integrity flow. Existing ready files are not bulk-processed; a later integrity pass creates an audio derivative only when retention is enabled. Turning retention off does not delete audio files already present.
 
 Downloads run independently of watch-page polling while the Node process remains running. A persistent SQLite retry queue handles transient failures, exponential delay, and pause states. After ten failures an item is paused for user attention. Optional anti-throttling behavior is configurable; it is off by default. Live acquisition is identified separately; a captured playable file can be finalized and saved, or discarded.
 

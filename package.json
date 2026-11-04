@@ -1,6 +1,6 @@
 {
   "name": "yourtube-local-feed",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "type": "module",

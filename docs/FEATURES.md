@@ -79,7 +79,7 @@ Optional anti-throttling protections (`off`, `auto`, `always`) are controlled by
 
 ## Storage and limits
 
-`data/yourtube.sqlite` stores structured state; `data/media/` stores WebM or MP4 files unless `YOURTUBE_MEDIA_DIR` points to another folder; `data/images/` stores cached images. `YOURTUBE_DATA_DIR` moves the database and image cache as a unit. There is no tenant model or remote YourTube database in this project.
+`data/yourtube.runtime.sqlite` stores native runtime state by default; the tracked `data/yourtube.sqlite` remains a clean starter copy. With `YOURTUBE_DATA_DIR` set, the runtime database is named `yourtube.sqlite` in that directory. `data/media/` stores WebM or MP4 files unless `YOURTUBE_MEDIA_DIR` points to another folder; `data/images/` stores cached images. `YOURTUBE_DATA_DIR` moves the database and image cache as a unit. There is no tenant model or remote YourTube database in this project.
 
 Transcripts, transcript search, semantic embeddings, and AI-generated multi-video chapter overviews with selection rationales are **not implemented**. The app currently has aggregate view counts, latest playback progress, titles/channels/provenance, comments, and media metadata. It does not retain a complete timestamped event for every playback start.
 
