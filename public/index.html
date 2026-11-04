@@ -1111,13 +1111,13 @@
                 downloaded: localById.has(video.id) || Number(video.downloaded) === 1 ? 1 : 0
               }];
             }));
-            const videos = [...byId.values()].filter(video => Number(video.viewCount) === 0);
+            const videos = [...byId.values()];
             if (this.networkMode === 'online' && this.shortsSource === 'live') {
               const sessionIds = new Set(this.liveShortsSessionIds);
-              return videos.filter(video => Number(video.downloaded) !== 1 || (
+              return videos.filter(video => Number(video.viewCount) === 0 && (Number(video.downloaded) !== 1 || (
                 sessionIds.has(video.id) && Number.isFinite(Date.parse(video.acquiredAt || '')) &&
                 Date.parse(video.acquiredAt) >= this.shortsLiveSessionStartedAt
-              )).sort((a, b) => {
+              ))).sort((a, b) => {
                 const seenAt = video => Date.parse(Number(video.downloaded) === 1 ? video.acquiredAt || '' : video.seenAt || video.sourceSeenAt || '') || 0;
                 return seenAt(b) - seenAt(a) || String(a.id).localeCompare(String(b.id));
               });
