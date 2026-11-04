@@ -785,7 +785,9 @@
       let shortsFeedLoadFailed = false;
       const shortsViewedIds = new Set();
       const isShortUnplayed = item => Number(item?.viewCount) === 0 && !shortsViewedIds.has(item?.id);
-      const isShortFeedEligible = item => isShortUnplayed(item) || (shortsMode && item?.id === videoId && shortsViewedIds.has(item.id));
+      const isShortFeedEligible = item => shortsSource === 'local'
+        ? Number(item?.downloaded) === 1
+        : isShortUnplayed(item) || (shortsMode && item?.id === videoId && shortsViewedIds.has(item.id));
       let shortsLiked = false;
       let shortsLikeSaving = false;
       let shortsLikeRequestToken = 0;
@@ -1498,7 +1500,9 @@
         if (!shortsMode || shortsNavigationBusy || !next) return false;
         shortsAwaitingFreshItem = false;
         if (next.id === videoId) return true;
-        shortsFeedItems = shortsFeedItems.filter(item => isShortUnplayed(item) || item.id === next.id);
+        if (shortsSource === 'live') {
+          shortsFeedItems = shortsFeedItems.filter(item => isShortUnplayed(item) || item.id === next.id);
+        }
         if (networkMode === 'online' && shortsSource === 'live') reconcileShortsBatchGroups();
         window.__yourtubePrefetchedLocalMedia = Number(next.downloaded) === 1 ? next : null;
         shortsNavigationBusy = true;
@@ -2449,7 +2453,7 @@
           await loadShortsFeed({ coordinate: false });
           if (startToken !== playerStartToken) return;
           const activeStub = shortsAllItems.find(item => item.id === activeVideoId);
-          if (activeStub && !isShortUnplayed(activeStub)) {
+          if (activeStub && shortsSource === 'live' && !isShortUnplayed(activeStub)) {
             const nextFreshShort = shortsFeedItems.find(item => item.id !== activeVideoId && isShortUnplayed(item));
             if (nextFreshShort) {
               navigateToShort(nextFreshShort);
