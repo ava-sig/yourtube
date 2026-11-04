@@ -8,7 +8,7 @@ These notes capture the current choices and their practical consequences. They d
 
 **Reason:** The project's central value is a private, portable viewing corpus. Stable IDs make repeated homepage, search, playlist, and channel captures update one stub while provenance remains independently recorded.
 
-**Consequence:** SQLite and the media directory are personal data. They are excluded from Git, and backups must preserve both the database and media/images directory if the library is to be restored completely.
+**Consequence:** The repository tracks only a clean starter SQLite database with default settings and empty library tables. A user's working database, media, cached images, transcription audio, and playback/search history remain private runtime data and are excluded from Git. Backups must preserve the working database and media/images directories to restore a library completely.
 
 ## Media-folder imports use the video ID as the filename key
 
@@ -60,7 +60,7 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Keep capture work asynchronous and bounded
 
-**Decision:** Feed sync, channel capture, browser metadata capture, comments, durations, and downloaded-file metadata run in background queues with visible state. Channel sections are serialized through one tab; missing video-length jobs use at most two concurrent inactive watch tabs and can overlap channel capture when capacity allows.
+**Decision:** Feed sync, channel capture, browser metadata capture, comments, durations, and downloaded-file metadata run in background queues with visible state. Channel sections are serialized through one tab; missing video-length jobs use up to five configurable concurrent inactive watch tabs and can overlap channel capture when capacity allows.
 
 **Reason:** Large page scans and metadata operations should not block navigation or require users to open every section manually. Bounded concurrency reduces bursts and gives the user a path to see and diagnose work.
 
@@ -144,7 +144,7 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Keep local metadata bounded and useful
 
-**Decision:** Store capped comment data (up to 50), durations, thumbnails, channel avatars, and commenter avatars for downloaded media, and expose metadata work by phase.
+**Decision:** Store capped comment data (up to 1,000), durations, thumbnails, channel avatars, and commenter avatars for downloaded media, and expose metadata work by phase.
 
 **Reason:** The media file is only part of a useful local library; presentation and context should remain available offline too. Capping comments bounds storage and request cost.
 
@@ -184,8 +184,16 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Repository and commit boundary
 
-**Decision:** Track source, bundled runtime/license, scripts, and documentation. Ignore `data/`, local media, cached images, SQLite/WAL files, logs, environment files, and machine-specific `.DS_Store` files.
+**Decision:** Track source, bundled runtime/license notices, scripts, documentation, and a clean starter database. Ignore the user's runtime database changes, local media, cached images, transcription audio, SQLite WAL/SHM files, logs, environment files, and machine-specific `.DS_Store` files.
 
-**Reason:** The 14 GB local data folder includes the user's media and personal history. Committing it would duplicate private assets and make the repository impractical to use.
+**Reason:** A clean starter database makes first-run defaults explicit without publishing a user's media or history. Runtime libraries can contain many gigabytes of private assets and remain outside the repository.
 
 **Consequence:** This project had no prior Git metadata. The first commit is a complete source snapshot, not a continuation of earlier feature-by-feature history. Feature chronology is summarized in the project docs rather than fabricated as commit history.
+
+## Source-available noncommercial release
+
+**Decision:** Publish the project under PolyForm Noncommercial 1.0.0. Keep the copyright and required attribution notice with redistributions. Personal entertainment and hobby use are permitted; the license also allows use by certain listed noncommercial institutions regardless of funding. Other commercial use requires separate permission from the copyright holder; the holder may separately license the code for Ultima. Require contributors to accept `CLA.md` so the copyright holder may also offer separate commercial licenses for their contributions.
+
+**Reason:** The project is intended to be usable by people for private, noncommercial viewing while reserving commercial licensing for the copyright holder.
+
+**Consequence:** This is source available, not OSI-approved open source. The license governs the YourTube code only; it does not grant rights to third-party video content or platform services.

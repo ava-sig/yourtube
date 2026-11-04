@@ -71,7 +71,7 @@ Optional anti-throttling protections (`off`, `auto`, `always`) are controlled by
 ## Metadata, Offline mode, and retention
 
 - The duration pipeline can use rendered extension cards, browser-visible watch-page metadata, yt-dlp metadata, or duration probed from a local file/playback. Missing metadata has explicit queued, capturing, retrying, Upcoming, and unavailable states.
-- The downloaded-metadata queue checks the local video details, duration, thumbnail, channel avatar, comments, and commenter avatars. It stores capped comment data (up to 50) and caches referenced images locally. Incomplete items retry with phase-specific status.
+- The downloaded-metadata queue checks the local video details, duration, thumbnail, channel avatar, comments, and commenter avatars. It stores up to 1,000 comments per video and caches referenced images locally. Incomplete items retry with phase-specific status.
 - Extension duration capture has a versioned coverage baseline: unique stubs record whether first capture contained a duration and whether a later capture filled it.
 - Online mode checks connectivity and returns to Offline when the connection is lost. Offline mode blocks discovery, external search capture, and automatic retry work; it restricts recommendations/search to local material.
 - Going Offline normally waits for active transfers and the active local metadata pass, then prepares video lengths, comments, thumbnails, channel avatars, and commenter avatars. The status page supports immediate pause and background resume on the next Online transition.

@@ -19,6 +19,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --chown=node:node package.json server.js ./
+COPY --chown=node:node LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY --chown=node:node public ./public
 COPY --chown=node:node scripts ./scripts
 
