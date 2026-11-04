@@ -1,5 +1,5 @@
 # Personal library and runtime state
-data/
+data/*
 outputs/
 work/
 *.sqlite
@@ -16,3 +16,6 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Ship only the clean starter database; all generated library data stays ignored.
+!data/yourtube.sqlite

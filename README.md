@@ -60,7 +60,7 @@ Open YouTube in the same browser profile where the extension is installed. The e
 
 By default, YourTube creates `data/` for `yourtube.sqlite`, downloaded WebM/MP4 media, and cached images. Set `YOURTUBE_DATA_DIR` to keep those files elsewhere, or set `YOURTUBE_MEDIA_DIR` to keep the media folder on a separate disk. YourTube watches that folder and also rescans every 30 seconds. A stable file named `<11-character YouTube ID>.webm` or `.mp4` is integrity-checked, matched to its existing stub, and added to the local library. If no stub exists, YourTube creates one and fills in metadata in the background. Files with other names are listed as unmatched by `/api/media-folder/status`; rename them to the ID-based format to import them. Removing a recognized file makes its retained stub available for download again. Folder-imported files are not auto-deleted by the 24-hour retention setting.
 
-The database includes viewing counts and progress, search history, playlists, metadata, and local-library state. These are personal data, so `data/`, media, image caches, and runtime files are excluded from Git.
+The repository includes a fresh starter `data/yourtube.sqlite` with the app's default settings and empty library tables. Runtime library data, media, image caches, transcription audio, and other generated files remain excluded from Git. Keep your personal database and assets private when contributing changes.
 
 See [Architecture](docs/ARCHITECTURE.md) for the data flow and tables, [Features](docs/FEATURES.md) for the implemented user-facing behavior, and [Decision record](docs/DECISIONS.md) for the reasons behind the main choices and current limits.
 
