@@ -805,6 +805,17 @@
         ...(Array.isArray(storedLiveShortIds) ? storedLiveShortIds : [])
       ].filter(id => /^[A-Za-z0-9_-]{11}$/.test(String(id))));
       window.__yourtubeLiveShortsSessionIds = [...shortsLiveSessionIds];
+      const shortsLivePlaylistStorageKey = 'yourtube-live-shorts-playlist-ids';
+      let shortsLivePlaylistIds = [];
+      let shortsLivePlaylistInitialized = false;
+      try {
+        const storedPlaylist = sessionStorage.getItem(shortsLivePlaylistStorageKey);
+        if (storedPlaylist !== null) {
+          const parsedPlaylist = JSON.parse(storedPlaylist);
+          shortsLivePlaylistIds = Array.isArray(parsedPlaylist) ? [...new Set(parsedPlaylist.filter(id => /^[A-Za-z0-9_-]{11}$/.test(String(id))))] : [];
+          shortsLivePlaylistInitialized = true;
+        }
+      } catch {}
       let shortsBatchGroups = [];
       try {
         const storedGroups = JSON.parse(sessionStorage.getItem('yourtube-shorts-batch-groups') || '[]');
@@ -1291,7 +1302,13 @@
       function setShortsSource(source, { persist = true, dispatch = true } = {}) {
         if (source === 'youtube') source = 'live';
         if (source !== 'local' && source !== 'live') return;
+        const previousSource = shortsSource;
         shortsSource = networkMode === 'online' ? source : 'local';
+        const sourceChanged = shortsSource !== previousSource;
+        if (sourceChanged) {
+          clearLiveShortsPlaylist();
+          shortsAwaitingFreshItem = shortsMode && shortsSource === 'live';
+        }
         if (persist && networkMode === 'online') {
           try { localStorage.setItem('yourtube-shorts-source', shortsSource); } catch {}
         }
@@ -1301,14 +1318,48 @@
       }
       function syncShortsSourceToNetwork(previousMode) {
         shortsNetworkModeKnown = true;
+        const previousSource = shortsSource;
         if (networkMode !== 'online') shortsSource = 'local';
         else if (previousMode !== 'online') {
           try { shortsSource = localStorage.getItem('yourtube-shorts-source') === 'local' ? 'local' : 'live'; } catch { shortsSource = 'live'; }
+        }
+        if (shortsSource !== previousSource) {
+          clearLiveShortsPlaylist();
+          shortsAwaitingFreshItem = shortsMode && shortsSource === 'live';
+        } else if (shortsSource !== 'live' && shortsLivePlaylistInitialized) {
+          clearLiveShortsPlaylist();
         }
         updateShortsSourceToggle();
       }
       function persistShortsBatchGroups() {
         try { sessionStorage.setItem('yourtube-shorts-batch-groups', JSON.stringify(shortsBatchGroups)); } catch {}
+      }
+      function persistLiveShortsPlaylist() {
+        try {
+          if (shortsLivePlaylistInitialized) sessionStorage.setItem(shortsLivePlaylistStorageKey, JSON.stringify(shortsLivePlaylistIds));
+          else sessionStorage.removeItem(shortsLivePlaylistStorageKey);
+        } catch {}
+        window.dispatchEvent(new CustomEvent('yourtube-shorts-live-playlist-update', {
+          detail: { ids: shortsLivePlaylistIds.slice(), active: shortsLivePlaylistInitialized }
+        }));
+      }
+      function clearLiveShortsPlaylist() {
+        shortsLivePlaylistIds = [];
+        shortsLivePlaylistInitialized = false;
+        shortsBatchGroups = [];
+        shortsBatchRequestTimes.clear();
+        shortsTerminalIds.clear();
+        try {
+          sessionStorage.removeItem(shortsLivePlaylistStorageKey);
+          sessionStorage.removeItem('yourtube-shorts-batch-groups');
+        } catch {}
+        persistLiveShortsPlaylist();
+      }
+      function isLiveShortPlaylistCandidate(item) {
+        if (!isShortUnplayed(item)) return false;
+        if (Number(item?.downloaded) !== 1) return true;
+        const acquiredAt = Date.parse(item?.acquiredAt || '');
+        return shortsLiveSessionIds.has(item?.id) && Number.isFinite(acquiredAt) && acquiredAt >= shortsLiveSessionStartedAt;
       }
       function reconcileShortsBatchGroups() {
         const availableIds = new Set(shortsFeedItems.map(item => item.id));
@@ -1344,7 +1395,7 @@
       async function queueShortsBatch(batchIndex) {
         const group = shortsBatchGroups[batchIndex];
         const batch = shortsBatchItems(batchIndex);
-        const ids = batch.map(item => item.id).filter(Boolean);
+        const ids = batch.filter(item => Number(item.downloaded) !== 1 && !shortsTerminalIds.has(item.id)).map(item => item.id).filter(Boolean);
         if (!ids.length) return;
         if (group) { group.scheduled = true; persistShortsBatchGroups(); }
         const batchKey = ids.join(',');
@@ -1405,15 +1456,28 @@
                 try { sessionStorage.setItem('yourtube-live-shorts-ids', JSON.stringify([...shortsLiveSessionIds])); } catch {}
                 window.dispatchEvent(new CustomEvent('yourtube-shorts-live-session-update', { detail: { ids: [...shortsLiveSessionIds] } }));
               }
-              shortsFeedItems = allShorts.filter(item => {
-                if (!isShortFeedEligible(item)) return false;
-                if (Number(item.downloaded) !== 1) return true;
-                const acquiredAt = Date.parse(item.acquiredAt || '');
-                return shortsLiveSessionIds.has(item.id) && Number.isFinite(acquiredAt) && acquiredAt >= shortsLiveSessionStartedAt;
-              }).sort((a, b) => {
+              const candidates = allShorts.filter(isLiveShortPlaylistCandidate).sort((a, b) => {
                 const seenAt = item => Date.parse(Number(item.downloaded) === 1 ? item.acquiredAt || '' : item.seenAt || item.sourceSeenAt || '') || 0;
                 return seenAt(b) - seenAt(a) || String(a.id).localeCompare(String(b.id));
               });
+              const previousPlaylist = shortsLivePlaylistIds.join(',');
+              const wasInitialized = shortsLivePlaylistInitialized;
+              const availableById = new Map(allShorts.map(item => [item.id, item]));
+              if (!shortsLivePlaylistInitialized) {
+                shortsLivePlaylistIds = candidates.map(item => item.id);
+                shortsLivePlaylistInitialized = true;
+              } else {
+                shortsLivePlaylistIds = shortsLivePlaylistIds.filter(id => availableById.has(id));
+                const knownIds = new Set(shortsLivePlaylistIds);
+                for (const item of candidates) {
+                  if (!knownIds.has(item.id)) {
+                    shortsLivePlaylistIds.push(item.id);
+                    knownIds.add(item.id);
+                  }
+                }
+              }
+              if (!wasInitialized || previousPlaylist !== shortsLivePlaylistIds.join(',')) persistLiveShortsPlaylist();
+              shortsFeedItems = shortsLivePlaylistIds.map(id => availableById.get(id)).filter(Boolean);
               reconcileShortsBatchGroups();
             } else {
               shortsFeedItems = allShorts.filter(item => isShortFeedEligible(item) && Number(item.downloaded) === 1).sort((a, b) => {
@@ -1488,6 +1552,11 @@
         if (changed) { try { sessionStorage.setItem('yourtube-live-shorts-ids', JSON.stringify([...shortsLiveSessionIds])); } catch {} }
         if (changed && shortsMode) void loadShortsFeed({ coordinate: false });
       });
+      window.addEventListener('yourtube-shorts-live-playlist-update', event => {
+        const incoming = Array.isArray(event.detail?.ids) ? event.detail.ids : [];
+        shortsLivePlaylistIds = [...new Set(incoming.filter(id => /^[A-Za-z0-9_-]{11}$/.test(String(id))))];
+        shortsLivePlaylistInitialized = Boolean(event.detail?.active);
+      });
       function navigateShort(offset) {
         if (!shortsMode || shortsNavigationBusy || !shortsFeedItems.length) return false;
         let index = shortsFeedItems.findIndex(item => item.id === videoId);
@@ -1500,9 +1569,6 @@
         if (!shortsMode || shortsNavigationBusy || !next) return false;
         shortsAwaitingFreshItem = false;
         if (next.id === videoId) return true;
-        if (shortsSource === 'live') {
-          shortsFeedItems = shortsFeedItems.filter(item => isShortUnplayed(item) || item.id === next.id);
-        }
         if (networkMode === 'online' && shortsSource === 'live') reconcileShortsBatchGroups();
         window.__yourtubePrefetchedLocalMedia = Number(next.downloaded) === 1 ? next : null;
         shortsNavigationBusy = true;
@@ -1718,7 +1784,7 @@
         if (autoDeleteRefreshInFlight) return;
         autoDeleteRefreshInFlight = true;
         try {
-          const response = await fetch(`/api/auto-delete?refresh=${Date.now()}`, { cache: 'no-store' });
+          const response = await fetch(new URL(`/api/auto-delete?refresh=${Date.now()}`, window.location.origin), { cache: 'no-store' });
           if (!response.ok) return;
           const state = await response.json();
           const previous = autoDeleteEnabled;
@@ -1733,7 +1799,7 @@
         if (networkModeRefreshInFlight) return;
         networkModeRefreshInFlight = true;
         try {
-          const response = await fetch(`/api/mode?refresh=${Date.now()}`, { cache: 'no-store' });
+          const response = await fetch(new URL(`/api/mode?refresh=${Date.now()}`, window.location.origin), { cache: 'no-store' });
           const serverWasDown = !serverReachable;
           serverReachable = true;
           serverFailureCount = 0;
@@ -1779,7 +1845,7 @@
         const mode = networkMode === 'online' ? 'offline' : 'online';
         networkModeToggle.disabled = true;
         try {
-          const response = await fetch('/api/mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode }) });
+          const response = await fetch(new URL('/api/mode', window.location.origin), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode }) });
           const state = await response.json();
           if (!response.ok && response.status !== 202) throw new Error(state.error || 'Could not change mode.');
           networkMode = state.mode;
@@ -1797,7 +1863,7 @@
       autoDeleteToggle.addEventListener('click', async () => {
         autoDeleteToggle.disabled = true;
         try {
-          const response = await fetch('/api/auto-delete', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: !autoDeleteEnabled, expectedUpdatedAt: autoDeleteUpdatedAt }) });
+          const response = await fetch(new URL('/api/auto-delete', window.location.origin), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: !autoDeleteEnabled, expectedUpdatedAt: autoDeleteUpdatedAt }) });
           const state = await response.json();
           if (typeof state.enabled === 'boolean') {
             autoDeleteEnabled = state.enabled;
@@ -2453,7 +2519,7 @@
           await loadShortsFeed({ coordinate: false });
           if (startToken !== playerStartToken) return;
           const activeStub = shortsAllItems.find(item => item.id === activeVideoId);
-          if (activeStub && shortsSource === 'live' && !isShortUnplayed(activeStub)) {
+          if (activeStub && shortsSource === 'live' && !isShortUnplayed(activeStub) && !shortsLivePlaylistIds.includes(activeVideoId)) {
             const nextFreshShort = shortsFeedItems.find(item => item.id !== activeVideoId && isShortUnplayed(item));
             if (nextFreshShort) {
               navigateToShort(nextFreshShort);
@@ -4196,7 +4262,7 @@
         video.dataset.yourtubeVideoId = activeVideoId;
         const mediaKind = shortsMode || activeVideoInfo?.kind === 'short' ? 'short' : 'normal';
         video.dataset.yourtubeMediaKind = mediaKind;
-        video.src = source;
+        video.src = new URL(source, window.location.origin).href;
         shell.querySelector('.player-title').textContent = videoTitle;
         stage.classList.add('playing');
         stage.replaceChildren(shell);

@@ -34,6 +34,14 @@ These notes capture the current choices and their practical consequences. They d
 
 **Consequence:** Homepage grouping follows the DOM YouTube rendered during capture. A one-time migration builds a best-effort layout for older stubs, but cannot recover exact historical shelf order. Shorts keep their own content kind and navigation while using the ordinary local playback path. Mix seed videos remain playable video cards; their Mix playlist IDs remain separate identities handled by the playlist adapter.
 
+## Keep Live Shorts in a session playlist
+
+**Decision:** Build an ordered Live Shorts playlist from the currently eligible, unplayed stubs and persist its IDs in `sessionStorage`. Keep a Short in that active list after it is viewed, and append newly captured eligible Shorts without reordering the existing list. Clear the list when the user switches to Local; create a fresh list the next time Live is selected. Keep Unseen navigation based on view state, independently of playlist membership.
+
+**Reason:** A feed that removes a Short immediately after playback cannot behave like a playlist: the user loses the ability to navigate backward and rewatch it. Separating membership from viewed state preserves both playlist navigation and the existing “skip watched” action.
+
+**Consequence:** Refreshing the same browser tab restores the active Live playlist and its order. Switching sources intentionally starts a new Live session. Downloaded media already queued for acquisition is not cancelled by clearing the playlist; only the Live session ordering and batch reservations are reset. Local Shorts continue to show downloaded files only.
+
 ## Capture personalized homepage topics separately
 
 **Decision:** Read the rendered YouTube topic chips, persist their labels and order, and capture each chip's results in one sequential inactive tab. Keep category membership separate from the canonical video row and refresh category results no more than daily.
