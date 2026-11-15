@@ -89,7 +89,7 @@ See [Architecture](docs/ARCHITECTURE.md) for the data flow and tables, [Features
 - **Download retry protections:** `YOURTUBE_DOWNLOAD_PROTECTIONS` accepts `off` (default), `auto`, or `always`. `auto` enables a shared cooldown and serial automatic downloads after a sign-in/bot-check response; `always` serializes downloads from startup. Retries stop after ten failures and remain visible in the paused queue.
 - **Duration backfill:** `npm run backfill:durations` checks local progress and media first, then uses sequential, cookie-free `yt-dlp` metadata lookups. It pauses when YouTube rate-limits metadata requests.
 - **Topic backfill:** `npm run backfill:topics` previews deterministic topic labels from saved categories, search phrases, titles, channel names, tags, and descriptions. Add `-- --apply` to write high-confidence labels to the runtime database; items without enough evidence remain uncategorized.
-- **Downloaded library:** Browse local media by channel or inferred topic, sort groups and their files by total file size, views, likes, availability, or recency, filter to items never played, play a whole group, or delete its local files while retaining metadata.
+- **Downloaded library:** Browse local media by channel or inferred topic, sort groups and their files by total file size, views, likes, availability, or recency, filter to items never played, play a whole group, or delete its local files while retaining metadata. File sizes recorded during integrity checks are reused; when a size is missing, the app reads it from the media file on demand while sorting by size.
 
 ## Current boundaries
 
