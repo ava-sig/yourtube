@@ -234,7 +234,8 @@
     try {
       sendRuntimeMessage({
         type: 'yourtube:queue-thumbnail-download', video,
-        provisionCategory: location.pathname === '/' ? 'homepage' : 'other'
+        provisionCategory: location.pathname === '/' ? 'homepage' : 'other',
+        sourceContext: video.provenance || captureSourceContext(video)
       }, (result, runtimeError) => {
         if (runtimeError || !result?.ok) {
           thumbnailDownloadPolls.delete(videoId);
@@ -879,6 +880,54 @@
     return { channelKey, tab };
   }
 
+  function captureSourceContext(video = {}, sectionTitle = '') {
+    let pageUrl;
+    try { pageUrl = new URL(location.href); } catch { return null; }
+    if (!['www.youtube.com', 'm.youtube.com'].includes(pageUrl.hostname)) return null;
+    const params = pageUrl.searchParams;
+    const pathname = pageUrl.pathname || '/';
+    const listId = String(params.get('list') || '').slice(0, 120);
+    const canonicalUrl = `https://www.youtube.com${pathname}${listId ? `?list=${encodeURIComponent(listId)}` : ''}`;
+    const slug = value => String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120);
+    const channel = channelPageSource();
+    if (channel) {
+      const tabLabel = ({ home: 'Home', videos: 'Videos', shorts: 'Shorts', streams: 'Live', playlists: 'Playlists', community: 'Community' })[channel.tab] || 'Videos';
+      return { sourceType: 'channel', sourceKey: `${channel.channelKey}:${channel.tab}`, sourceLabel: `Channel · ${video.channel || channel.channelKey} · ${tabLabel}`, sourceUrl: canonicalUrl };
+    }
+    if (pathname === '/results') {
+      const query = String(params.get('search_query') || activeSearchQuery || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      return { sourceType: 'search', sourceKey: query || 'youtube-search', sourceLabel: query ? `YouTube search · ${query}` : 'YouTube search', sourceUrl: `https://www.youtube.com${pathname}` };
+    }
+    if (listId) {
+      const title = pathname === '/playlist'
+        ? String(document.title || '').replace(/\s*[-|·]\s*YouTube.*$/i, '').trim().slice(0, 100)
+        : listId;
+      return { sourceType: 'playlist', sourceKey: listId, sourceLabel: `YouTube playlist · ${title || listId}`, sourceUrl: canonicalUrl };
+    }
+    if (pathname === '/shorts' || pathname.startsWith('/shorts/')) {
+      return { sourceType: 'shorts', sourceKey: 'shorts-feed', sourceLabel: 'YouTube Shorts feed', sourceUrl: 'https://www.youtube.com/shorts' };
+    }
+    if (pathname === '/' && sectionTitle) {
+      const title = String(sectionTitle).replace(/\s+/g, ' ').trim().slice(0, 100);
+      return { sourceType: 'homepage-section', sourceKey: slug(title) || 'homepage', sourceLabel: `Homepage · ${title}`, sourceUrl: 'https://www.youtube.com/' };
+    }
+    if (pathname === '/') return { sourceType: 'homepage', sourceKey: 'homepage', sourceLabel: 'YouTube homepage', sourceUrl: 'https://www.youtube.com/' };
+    if (pathname === '/watch') {
+      return { sourceType: 'watch', sourceKey: params.get('v') || '', sourceLabel: 'YouTube watch page', sourceUrl: 'https://www.youtube.com/watch' };
+    }
+    const knownPages = new Map([
+      ['/feed/trending', 'YouTube · Trending'], ['/feed/subscriptions', 'YouTube · Subscriptions'],
+      ['/gaming', 'YouTube · Gaming'], ['/music', 'YouTube · Music'], ['/movies', 'YouTube · Movies & TV'],
+      ['/feed/library', 'YouTube · Library'], ['/feed/history', 'YouTube · History']
+    ]);
+    const tail = pathname.split('/').filter(Boolean).at(-1) || '';
+    let humanPath = tail;
+    try { humanPath = decodeURIComponent(tail); } catch {}
+    humanPath = humanPath.replace(/[-_]+/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+    return { sourceType: 'youtube-page', sourceKey: slug(pathname) || 'youtube-page', sourceLabel: knownPages.get(pathname) || `YouTube · ${humanPath || 'page'}`, sourceUrl: `https://www.youtube.com${pathname}` };
+  }
+
   function trackedSearch() {
     if (location.pathname !== '/results') return false;
     const params = new URLSearchParams(location.search);
@@ -920,8 +969,10 @@
 
     const section = card.closest('ytd-rich-section-renderer');
     const sectionTitle = text(section?.querySelector('#title, h2, yt-formatted-string'));
-    const topic = ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts']
+    const knownTopic = ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts']
       .find(value => sectionTitle.toLowerCase().includes(value.toLowerCase())) || '';
+    const genericSection = /^(?:for you|top news|shorts?|explore more topics|watch again|continue watching|recommended for you|because you watched|recently uploaded|new to you|subscriptions|your videos|history)$/i.test(sectionTitle.trim());
+    const topic = knownTopic || (section && sectionTitle && !genericSection ? sectionTitle.slice(0, 80) : '');
     const thumbnailImage = card.querySelector('ytd-thumbnail img, a#thumbnail img, yt-image#img img, img#img') || card.querySelector('img');
     const thumbnail = thumbnailImage?.currentSrc || thumbnailImage?.getAttribute('src') || '';
     const channelLinks = [...card.querySelectorAll('a[href*="/@"], a[href*="/channel/"], a[href*="/user/"], a[href*="/c/"]')];
@@ -942,6 +993,7 @@
     const publication = publicationDetails(card, meta);
     const source = channelPageSource();
     const sourcePlaylistId = playlistIdFrom(anchor.href);
+    const provenance = captureSourceContext({ channel, topic }, sectionTitle);
 
     return {
       id,
@@ -961,7 +1013,8 @@
       section: trackedSearch() ? 'search' : new URL(location.href).searchParams.has('list') ? 'playlist' : /top news/i.test(sectionTitle) ? 'news' : 'home',
       topic,
       sourceChannelKey: source?.channelKey || '',
-      sourceTab: source?.tab || ''
+      sourceTab: source?.tab || '',
+      provenance
     };
   }
 
@@ -1057,7 +1110,10 @@
 
         const result = await sendRuntimeMessage({
           type: 'yourtube:homepage-category-sync', captureId: homepageCategoryCaptureId,
-          category, videos: [...found.values()].slice(0, 24), complete: true
+          category, videos: [...found.values()].slice(0, 24).map(video => ({
+            ...video,
+            provenance: { sourceType: 'homepage-section', sourceKey: `category:${category.key}`, sourceLabel: `Homepage category · ${category.title}`, sourceUrl: 'https://www.youtube.com/' }
+          })), complete: true
         });
         if (result?.ok) completed += 1;
         if (result?.error && !result?.queued) {
@@ -1607,7 +1663,7 @@
       return;
     }
     const signature = JSON.stringify([
-      cards.map(video => [video.id, video.title, video.channel, video.thumbnail, video.avatar, video.duration, video.acquisitionExclusionReason, video.section, video.topic, video.sourceChannelKey, video.sourceTab]),
+      cards.map(video => [video.id, video.title, video.channel, video.thumbnail, video.avatar, video.duration, video.acquisitionExclusionReason, video.section, video.topic, video.sourceChannelKey, video.sourceTab, video.provenance]),
       homepageLayout?.sections.map(section => [section.key, section.title, section.kind, section.topic, section.position, section.placements.map(item => [item.id, item.position, item.mixId])]) || null,
       homepageCategories.map(category => [category.key, category.title, category.position]),
       subscriptions.map(subscription => [subscription.key, subscription.name, subscription.avatar])
@@ -1616,7 +1672,8 @@
     lastSent = signature;
     sendRuntimeMessage({
       type: 'yourtube:sync', videos: cards, subscriptions, homepageLayout, homepageCategories,
-      provisionCategory: isHomepage ? 'homepage' : 'other'
+      provisionCategory: isHomepage ? 'homepage' : 'other',
+      sourceContext: captureSourceContext()
     });
   }
 

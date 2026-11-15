@@ -102,11 +102,11 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Keep acquisition provenance
 
-**Decision:** Record provision category independently of the canonical video row, and show the source and pull age on cards. Channel captures retain channel and section identifiers.
+**Decision:** Record broad provision category and detailed source context independently of the canonical video row. `video_provenance` keeps source type, key, label, safe YouTube URL, first/last observation times, and observation count; cards can show the source and pull age. Channel captures retain channel and section identifiers.
 
 **Reason:** The same video may arrive through a homepage refresh, search, playlist, or channel. Provenance helps explain why it appears and supports separate recommendation policies.
 
-**Consequence:** Video ID deduplication does not erase the fact that a stub has multiple sources. Some section assignment is still best-effort because YouTube may not expose reliable category data in its rendered cards.
+**Consequence:** Video ID deduplication does not erase the fact that a stub has multiple sources. The extension records rendered homepage sections, search queries, channel tabs, playlists, Shorts feeds, and other observed YouTube pages. Some section assignment remains best-effort because YouTube may not expose reliable category data in its rendered cards; URLs are restricted to YouTube and do not include watch-page query parameters or account credentials.
 
 ## Separate library discovery from media acquisition
 

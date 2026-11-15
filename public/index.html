@@ -171,7 +171,7 @@
       .quiet-button { padding: 7px 12px; border-radius: 18px; background: #272727; color: #f1f1f1; }
       .download-sort-select { max-width: 210px; padding: 7px 30px 7px 12px; border: 1px solid #383838; border-radius: 18px; background: #272727; color: #f1f1f1; font: inherit; cursor: pointer; }
       .download-sort-select option { background: #222; }
-      .search-more-button { display: block; margin: 24px auto 8px; }
+      .search-load-sentinel { display: flex; min-height: 34px; align-items: center; justify-content: center; gap: 9px; padding: 12px; color: #858b92; font-size: 12px; }
       .video-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 34px 16px; }
       .channel-page { min-width: 0; }
       .channel-banner { width: 100%; aspect-ratio: 6 / 1; min-height: 120px; max-height: 260px; overflow: hidden; border-radius: 14px; background: #202020; }
@@ -454,20 +454,21 @@
             <div v-else class="search-dropdown-results" @scroll.passive="onSearchDropdownScroll" @wheel="onSearchDropdownWheel">
               <button v-if="activeSearchSource === 'youtube' && localSearchTotal > 0" class="local-search-teaser" type="button" @click="searchLocalFromTeaser"><span class="local-search-stack"><span v-for="(video, index) in localSearchPreview" :key="video.id" class="local-search-thumb" :style="{ left: `${index * 11}px`, top: `${index * 6}px`, zIndex: localSearchPreview.length - index }"><img :src="video.thumbnail || '/image-placeholder.svg'" alt="" loading="lazy" /><span v-if="video.duration" class="duration">{{ video.duration }}</span></span></span><span class="local-search-teaser-label">{{ localSearchTotal }} {{ localSearchTotal === 1 ? 'result' : 'results' }} locally · switch to Local</span></button>
               <div v-for="video in visibleSearchVideos" :key="video.id" class="search-result" :class="{ 'is-offline-result': networkMode !== 'online' && !video.downloaded }">
-                <a class="search-result-link" :href="`${video.kind === 'short' ? '/shorts/' : '/watch/'}${video.id}`" @click.prevent="networkMode !== 'online' && !video.downloaded ? switchOnlineAndPlay(video, { shorts: video.kind === 'short' }) : recordSearchSelection(video.id, $event)">
-                  <span class="search-result-thumb"><img :src="video.thumbnail || '/image-placeholder.svg'" :alt="video.title || ''" loading="lazy" /><span v-if="video.duration" class="search-result-duration duration">{{ video.duration }}</span></span>
-                  <span class="search-result-copy"><span class="search-result-title">{{ video.title || video.id }}</span><span class="search-result-channel">{{ video.channel || 'Channel unavailable' }}</span><span class="search-result-meta">{{ video.downloaded ? 'Available locally' : networkMode !== 'online' ? 'Go online to download and play' : 'Video stub' }}</span></span>
-                </a>
-                <div class="search-result-mini-actions" role="group" :aria-label="`Actions for ${video.title || 'video'}`">
-                  <button v-if="video.downloaded" class="video-card-mini-action" type="button" :aria-label="`Play ${video.title || 'video'}`" title="Play locally" @click.stop.prevent="miniPlayerAction('play', video)"><svg class="ui-icon ui-icon-fill" aria-hidden="true"><use href="#yt-icon-play"></use></svg></button>
-                  <button v-else class="video-card-mini-action" type="button" :disabled="networkMode !== 'online'" :aria-label="`Download ${video.title || 'video'}`" :title="networkMode !== 'online' ? 'Go online to download' : 'Download locally'" @click.stop.prevent="miniPlayerAction('download', video)"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-download"></use></svg></button>
-                  <button v-if="video.kind !== 'short'" class="video-card-mini-action video-card-mini-action-queue" type="button" :disabled="!video.downloaded && networkMode !== 'online'" :aria-label="video.downloaded ? `Add ${video.title || 'video'} to queue` : `Add ${video.title || 'video'} to queue and download`" :title="video.downloaded ? 'Add to queue' : networkMode !== 'online' ? 'Go online to queue and download' : 'Add to queue and start download'" @click.stop.prevent="miniPlayerAction('queue', video)"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-add"></use></svg></button>
+                <div class="search-result-media">
+                  <a class="search-result-link" :href="`${video.kind === 'short' ? '/shorts/' : '/watch/'}${video.id}`" @click.prevent="networkMode !== 'online' && !video.downloaded ? switchOnlineAndPlay(video, { shorts: video.kind === 'short' }) : recordSearchSelection(video.id, $event)">
+                    <span class="search-result-thumb"><img :src="video.thumbnail || '/image-placeholder.svg'" :alt="video.title || ''" loading="lazy" /><span v-if="video.duration" class="search-result-duration duration">{{ video.duration }}</span></span>
+                  </a>
+                  <div class="search-result-mini-actions" role="group" :aria-label="`Actions for ${video.title || 'video'}`">
+                    <button v-if="video.downloaded" class="video-card-mini-action" type="button" :aria-label="`Play ${video.title || 'video'}`" title="Play locally" @click.stop.prevent="miniPlayerAction('play', video)"><svg class="ui-icon ui-icon-fill" aria-hidden="true"><use href="#yt-icon-play"></use></svg></button>
+                    <button v-else class="video-card-mini-action" type="button" :disabled="networkMode !== 'online'" :aria-label="`Download ${video.title || 'video'}`" :title="networkMode !== 'online' ? 'Go online to download' : 'Download locally'" @click.stop.prevent="miniPlayerAction('download', video)"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-download"></use></svg></button>
+                    <button v-if="video.kind !== 'short'" class="video-card-mini-action video-card-mini-action-queue" type="button" :disabled="!video.downloaded && networkMode !== 'online'" :aria-label="video.downloaded ? `Add ${video.title || 'video'} to Up next` : `Add ${video.title || 'video'} to Up next and download`" :title="video.downloaded ? 'Add to Up next' : networkMode !== 'online' ? 'Go online to add to Up next' : 'Add to Up next and start download'" @click.stop.prevent="miniPlayerAction('queue', video)"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-add"></use></svg></button>
+                  </div>
                 </div>
+                <a class="search-result-copy search-result-text-link" :href="`${video.kind === 'short' ? '/shorts/' : '/watch/'}${video.id}`" @click.prevent="networkMode !== 'online' && !video.downloaded ? switchOnlineAndPlay(video, { shorts: video.kind === 'short' }) : recordSearchSelection(video.id, $event)"><span class="search-result-title">{{ video.title || video.id }}</span><span class="search-result-channel">{{ video.channel || 'Channel unavailable' }}</span><span class="search-result-meta">{{ video.downloaded ? 'Available locally' : networkMode !== 'online' ? 'Go online to download and play' : 'Video stub' }}</span></a>
               </div>
               <div v-if="searchLoading && !searchVideos.length" class="search-dropdown-empty"><span class="small-spinner" aria-hidden="true"></span><span>Gathering the first results…</span></div>
               <div v-else-if="searchLoading" class="search-dropdown-empty">Loading more results…</div>
               <div v-else-if="searchResultsReady && !visibleSearchVideos.length && !localSearchTotal" class="search-dropdown-empty">No matching videos yet.</div>
-              <button v-if="searchResultsReady && searchHasMore" class="search-more-button" type="button" @click="loadMoreSearch">Show more results</button>
               <button v-if="searchResultsReady && (visibleSearchVideos.length || localSearchTotal)" class="search-view-all" type="button" @click="openFullSearchResults">Open full search results</button>
             </div>
           </div>
@@ -527,7 +528,7 @@
           <div v-if="currentView === 'home'" class="chips">
             <button v-for="chip in homepageChips" :key="chip.key" class="chip" :class="{ active: activeChip === chip.key }" :aria-pressed="String(activeChip === chip.key)" @click="selectHomepageChip(chip)">{{ chip.title }}</button>
           </div>
-          <section v-if="currentView === 'search'" class="feed-section">
+          <section v-if="currentView === 'search'" class="feed-section" @wheel.passive="onSearchPageWheel">
             <div class="section-head"><h2>{{ networkMode !== 'online' ? 'Offline search results' : activeSearchSource === 'youtube' ? 'Search results from YouTube' : 'Downloaded search results' }}</h2></div>
             <p class="meta">{{ networkMode !== 'online' ? 'Local media and saved video stubs · stubs need Online to download and play' : activeSearchSource === 'youtube' ? 'Collected YouTube video stubs' : 'Local downloads' }} · “{{ searchTerm }}”<span v-if="searchTotal"> · {{ searchTotal }} matches</span></p>
             <div v-if="searchLoading && !searchResultsReady" class="notice"><div class="spinner" style="margin:0 auto 14px"></div><strong>Gathering the first results</strong>{{ activeSearchSource === 'youtube' ? 'Waiting for matching video stubs from your YouTube feed.' : 'Searching your downloaded videos.' }}</div>
@@ -539,7 +540,10 @@
               <video-card v-for="video in visibleSearchVideos" :key="video.id" :video="video" :source="activeSearchSource === 'youtube' ? 'YouTube search' : 'Downloaded'" :offline-stub="networkMode !== 'online' && !video.downloaded" />
             </div>
             <div v-if="searchLoading && searchResultsReady" class="meta" style="padding:18px 0;text-align:center">Loading the next batch…</div>
-            <button v-else-if="searchHasMore && searchResultsReady" id="search-load-trigger" class="quiet-button search-more-button" type="button" @click="loadMoreSearch">Show 12 more results</button>
+            <div v-if="searchHasMore && searchResultsReady" id="search-load-trigger" class="search-load-sentinel" role="status" aria-live="polite">
+              <span v-if="searchLoading" class="small-spinner" aria-hidden="true"></span>
+              <span>{{ searchLoading ? 'Loading more results…' : 'Keep scrolling for more' }}</span>
+            </div>
             <div v-if="searchResultsReady && !visibleSearchVideos.length && !(activeSearchSource === 'youtube' && localSearchTotal > 0)" class="notice"><strong>No matching videos</strong>No collected videos match this term yet.</div>
             <div v-else-if="!searchResultsReady && !searchLoading && !searchError && !(activeSearchSource === 'youtube' && localSearchTotal > 0)" class="notice"><strong>No matching videos</strong>{{ activeSearchSource === 'youtube' ? 'No collected YouTube stubs match this search.' : 'No downloaded videos match this search.' }}</div>
           </section>
@@ -625,7 +629,7 @@
                       <article v-for="item in group.items" :key="item.videoId || item.id || group.key + '-' + item.title" class="background-queue-item">
                         <div class="background-queue-item-top">
                           <strong class="background-queue-item-title">{{ item.title || item.videoId || item.id || group.label }}</strong>
-                          <button v-if="item.retryAction" class="background-queue-badge is-actionable" :class="item.status || 'queued'" type="button" :disabled="networkMode !== 'online' || !serverReachable || backgroundRetrying[backgroundRetryKey(item.retryAction)]" :aria-label="`Retry ${item.status || 'queued'} job`" :title="networkMode !== 'online' ? 'Go Online to retry this item.' : backgroundRetrying[backgroundRetryKey(item.retryAction)] ? 'Retrying this item…' : 'Click to retry this item.'" @click.stop="retryBackgroundItem(item)">{{ item.status || 'queued' }}</button>
+                          <button v-if="item.retryAction" class="background-queue-badge is-actionable" :class="item.status || 'queued'" type="button" :disabled="networkMode !== 'online' || !serverReachable || backgroundRetryBlocked(item) || backgroundRetrying[backgroundRetryKey(item.retryAction)]" :aria-label="`Retry ${item.status || 'queued'} job`" :title="backgroundRetryTitle(item)" @click.stop="retryBackgroundItem(item)">{{ item.status || 'queued' }}</button>
                           <span v-else class="background-queue-badge" :class="item.status || 'queued'">{{ item.status || 'queued' }}</span>
                         </div>
                         <div class="background-queue-item-meta">
@@ -635,6 +639,7 @@
                           <span v-if="item.phase">{{ item.phase }}</span>
                           <span v-if="item.progress !== null && item.progress !== undefined">{{ Number(item.progress).toFixed(1) }}%</span>
                           <span v-if="item.completed !== undefined && item.total !== undefined">{{ item.completed }}/{{ item.total }}</span>
+                          <span v-if="item.retryAction && item.retryAction.type === 'media' && mediaRetryCooldownActive()">Retry paused · YouTube sign-in cooldown {{ mediaRetryCooldownText() }}</span>
                           <span v-if="item.attempts">Attempt {{ item.attempts }}</span>
                           <span v-if="item.resultCount !== undefined">{{ item.resultCount }} results</span>
                           <span v-if="item.nextAttemptAt">Next retry {{ queueTimestamp(item.nextAttemptAt) }}</span>
@@ -651,15 +656,63 @@
           </section>
           <div v-else-if="currentView === 'downloaded'">
             <section class="feed-section">
-              <div class="section-head"><h2>Downloaded</h2><div class="section-tools"><select v-model="downloadSortOrder" class="download-sort-select" aria-label="Sort downloaded videos" @change="saveDownloadSortOrder"><option value="newest">Time added · newest first</option><option value="oldest">Time added · oldest first</option><option value="mostPlayed">Most played</option><option v-if="downloadedKindFilter === 'videos'" value="durationAscending">Length · shortest first</option><option v-if="downloadedKindFilter === 'videos'" value="durationDescending">Length · longest first</option><option v-if="autoDeleteEnabled" value="autodeletion">Autodeletion time · soonest first</option><option value="mostLiked" disabled>Most liked · coming later</option></select><button class="quiet-button" :aria-expanded="String(!isCollapsed('downloaded-page'))" @click="toggleSection('downloaded-page')">{{ isCollapsed('downloaded-page') ? '⌄ Expand' : '⌃ Collapse' }}</button></div></div>
+              <div class="section-head"><h2>Downloaded</h2><div class="section-tools"><select v-if="!['channel', 'topic'].includes(downloadedKindFilter)" v-model="downloadSortOrder" class="download-sort-select" aria-label="Sort downloaded videos" @change="saveDownloadSortOrder"><option value="newest">Time added · newest first</option><option value="oldest">Time added · oldest first</option><option value="mostPlayed">Most played</option><option v-if="downloadedKindFilter === 'videos'" value="durationAscending">Length · shortest first</option><option v-if="downloadedKindFilter === 'videos'" value="durationDescending">Length · longest first</option><option v-if="autoDeleteEnabled" value="autodeletion">Autodeletion time · soonest first</option><option value="mostLiked" disabled>Most liked · coming later</option></select><button class="quiet-button" :aria-expanded="String(!isCollapsed('downloaded-page'))" @click="toggleSection('downloaded-page')">{{ isCollapsed('downloaded-page') ? '⌄ Expand' : '⌃ Collapse' }}</button></div></div>
               <div v-show="!isCollapsed('downloaded-page')">
-              <div class="download-kind-filters" role="group" aria-label="Filter downloaded media">
+              <div class="download-kind-filters" role="group" aria-label="Browse downloaded media">
                 <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'all' }" type="button" :aria-pressed="String(downloadedKindFilter === 'all')" @click="setDownloadedKindFilter('all')">All <span class="download-kind-filter-count">{{ downloadedKindCounts.all }}</span></button>
                 <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'videos' }" type="button" :aria-pressed="String(downloadedKindFilter === 'videos')" @click="setDownloadedKindFilter('videos')">Videos <span class="download-kind-filter-count">{{ downloadedKindCounts.videos }}</span></button>
                 <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'shorts' }" type="button" :aria-pressed="String(downloadedKindFilter === 'shorts')" @click="setDownloadedKindFilter('shorts')">Shorts <span class="download-kind-filter-count">{{ downloadedKindCounts.shorts }}</span></button>
+                <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'channel' }" type="button" :aria-pressed="String(downloadedKindFilter === 'channel')" @click="setDownloadedKindFilter('channel')">By Channel <span class="download-kind-filter-count">{{ downloadedKindCounts.channels }}</span></button>
+                <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'topic' }" type="button" :aria-pressed="String(downloadedKindFilter === 'topic')" @click="setDownloadedKindFilter('topic')">By Topic <span class="download-kind-filter-count">{{ downloadedKindCounts.topics }}</span></button>
               </div>
-              <div v-if="downloadedVideosSorted.length === 0" class="notice"><strong>{{ downloadedKindFilter === 'shorts' ? 'No local Shorts yet' : downloadedKindFilter === 'videos' ? 'No local videos yet' : 'No local media yet' }}</strong>Locally available media appears here after a download finishes.</div>
-              <div class="video-grid"><video-card v-for="video in downloadedVideosSorted" :key="video.id" :video="video" source="Downloaded" :can-delete="true" :show-expiry="true" :auto-delete-enabled="autoDeleteEnabled" @delete="deleteDownloadedVideo" @postpone="postponeDownloadedVideo" /></div>
+              <div v-if="['channel', 'topic'].includes(downloadedKindFilter)" class="downloaded-group-controls" role="group" :aria-label="`Sort and filter downloaded ${downloadedKindFilter === 'channel' ? 'channels' : 'topics'}`">
+                <span class="downloaded-group-controls-label">Order {{ downloadedKindFilter === 'channel' ? 'channels' : 'topics' }} by</span>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'mostViewed' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'mostViewed')" @click="setDownloadedGroupSort('mostViewed')">Most viewed</button>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'mostAvailable' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'mostAvailable')" @click="setDownloadedGroupSort('mostAvailable')">Most locally available</button>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'mostLiked' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'mostLiked')" @click="setDownloadedGroupSort('mostLiked')">Most YouTube-liked</button>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'mostLikedByYou' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'mostLikedByYou')" @click="setDownloadedGroupSort('mostLikedByYou')">Liked by you</button>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'recent' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'recent')" @click="setDownloadedGroupSort('recent')">Recently added</button>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'biggestFileSize' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'biggestFileSize')" @click="setDownloadedGroupSort('biggestFileSize')">Biggest file size</button>
+                <span class="downloaded-group-controls-label">Filter</span>
+                <button class="download-kind-filter" :class="{ active: downloadedGroupUnwatchedOnly(downloadedKindFilter) }" type="button" :aria-pressed="String(downloadedGroupUnwatchedOnly(downloadedKindFilter))" title="Hide media you have already played" @click="toggleDownloadedGroupUnwatchedOnly(downloadedKindFilter)">Show only unwatched</button>
+              </div>
+              <p v-if="downloadedKindFilter === 'topic'" class="downloaded-group-note">Topics combine captured YouTube categories with clear title and metadata signals. A video may appear under more than one category; uncertain matches stay uncategorized.</p>
+              <template v-if="downloadedKindFilter === 'channel' || downloadedKindFilter === 'topic'">
+                <div v-if="downloadedKindFilter === 'channel' ? !downloadedChannelGroups.length : !downloadedTopicGroups.length" class="notice"><strong>{{ downloadedGroupUnwatchedOnly(downloadedKindFilter) ? 'No unwatched media in these groups' : downloadedKindFilter === 'channel' ? 'No downloaded channels yet' : 'No topic groups yet' }}</strong>{{ downloadedGroupUnwatchedOnly(downloadedKindFilter) ? 'Turn off “Show only unwatched” to see all downloaded media.' : downloadedKindFilter === 'channel' ? 'Channel sections appear when locally available media has captured author details.' : 'Topic groups appear when saved metadata provides a reliable subject signal.' }}</div>
+                <section v-for="group in (downloadedKindFilter === 'channel' ? downloadedChannelGroups : downloadedTopicGroups)" :key="group.key" class="downloaded-group-section" :class="{ 'is-unattributed': group.unattributed }">
+                  <div class="downloaded-group-heading">
+                    <img v-if="group.avatar" class="downloaded-group-avatar" :src="group.avatar" alt="" loading="lazy" referrerpolicy="no-referrer">
+                    <span v-else class="downloaded-group-avatar downloaded-group-avatar-fallback" aria-hidden="true">{{ group.unattributed ? '•' : group.title.slice(0, 1).toUpperCase() }}</span>
+                    <div class="downloaded-group-heading-copy">
+                      <div class="downloaded-group-title-row">
+                        <h3>{{ group.title }}</h3>
+                        <div class="downloaded-group-heading-actions">
+                          <button v-if="group.items.some(video => video.kind !== 'short')" class="downloaded-group-action" type="button" :disabled="backgroundRetrying['download-group-play:' + group.key]" :aria-label="`Play all local videos in ${group.title}`" @click.stop="playDownloadedGroup(group)">
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.3 2.7a.8.8 0 0 1 1.2-.7l8 5.3a.8.8 0 0 1 0 1.4l-8 5.3a.8.8 0 0 1-1.2-.7z" fill="currentColor"/></svg>
+                            {{ backgroundRetrying['download-group-play:' + group.key] ? 'Opening…' : 'Play all' }}
+                          </button>
+                          <button v-if="downloadedKindFilter === 'topic' || !group.unattributed" class="downloaded-group-action is-destructive" type="button" :disabled="backgroundRetrying['download-group-delete:' + group.key]" :aria-label="`Delete local files in ${group.title}`" @click.stop="deleteDownloadedGroup(group)">
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.3 2.2h5.4l.5 1.2h2.1v1.4H2.7V3.4h2.1zm-1.2 3.7h9.8l-.7 8.2H4.8zm2.1 1.2v5.6h1.2V7.1zm2.4 0v5.6h1.2V7.1z" fill="currentColor"/></svg>
+                            {{ backgroundRetrying['download-group-delete:' + group.key] ? 'Deleting…' : 'Delete' }}
+                          </button>
+                        </div>
+                      </div>
+                      <p>{{ group.items.length }} {{ group.items.length === 1 ? 'item' : 'items' }} <span v-if="group.kindSummary">· {{ group.kindSummary }}</span><span v-if="downloadedGroupSort(downloadedKindFilter) === 'biggestFileSize'">· {{ formatBytes(group.totalBytes) }}</span><span v-if="group.subtitle">· {{ group.subtitle }}</span></p>
+                    </div>
+                    <span class="downloaded-group-view-sort">{{ downloadedGroupSort(downloadedKindFilter) === 'mostViewed' ? 'Unviewed first · then most viewed' : downloadedGroupSort(downloadedKindFilter) === 'mostLiked' ? 'Most YouTube likes first' : downloadedGroupSort(downloadedKindFilter) === 'mostLikedByYou' ? 'Your likes first' : downloadedGroupSort(downloadedKindFilter) === 'recent' ? 'Newest added first' : downloadedGroupSort(downloadedKindFilter) === 'biggestFileSize' ? 'Largest files first' : 'Recently added within group' }}</span>
+                  </div>
+                  <div class="video-grid">
+                    <video-card v-for="video in group.items.slice(0, downloadedGroupVisibleCount(group.key, group.items.length))" :key="video.id" :video="video" source="Downloaded" :can-delete="true" :show-expiry="true" :auto-delete-enabled="autoDeleteEnabled" @delete="deleteDownloadedVideo" @postpone="postponeDownloadedVideo" />
+                  </div>
+                  <div v-if="downloadedGroupHasMore(group.key, group.items.length)" class="home-section-divider downloaded-group-more">
+                    <span class="home-divider-rule"></span><button class="home-section-more" type="button" @click="showMoreDownloadedGroup(group.key)">⌄ Show more</button><span class="home-divider-rule"></span>
+                  </div>
+                </section>
+              </template>
+              <template v-else>
+                <div v-if="downloadedVideosSorted.length === 0" class="notice"><strong>{{ downloadedKindFilter === 'shorts' ? 'No local Shorts yet' : downloadedKindFilter === 'videos' ? 'No local videos yet' : 'No local media yet' }}</strong>Locally available media appears here after a download finishes.</div>
+                <div class="video-grid"><video-card v-for="video in downloadedVideosSorted" :key="video.id" :video="video" source="Downloaded" :can-delete="true" :show-expiry="true" :auto-delete-enabled="autoDeleteEnabled" @delete="deleteDownloadedVideo" @postpone="postponeDownloadedVideo" /></div>
+              </template>
               </div>
             </section>
           </div>
@@ -871,7 +924,7 @@
       const cardTemplate = document.querySelector('#video-card-template').innerHTML;
       createApp({
         components: { VideoCard: { props: { video: Object, source: String, offlineStub: { type: Boolean, default: false }, canDelete: { type: Boolean, default: false }, showExpiry: { type: Boolean, default: false }, autoDeleteEnabled: { type: Boolean, default: false }, shortsMode: { type: Boolean, default: false } }, emits: ['delete', 'postpone'], template: cardTemplate, data: () => ({ now: Date.now(), expiryTimer: null, postponing: false, menuOpen: false, avatarFailed: false }), computed: { isShort() { return this.shortsMode || this.video?.kind === 'short'; }, videoHref() { return this.isShort ? `/shorts/${encodeURIComponent(this.video.id)}` : `/watch/${encodeURIComponent(this.video.id)}`; }, sourceLabel() { if (/downloaded|liked/i.test(this.source || '')) return ''; if (this.video.sourceLabel) return this.video.sourceLabel; return `From ${this.source || 'homepage'}`; }, expirySeconds() { return this.video.expiresAt ? Math.ceil((Date.parse(this.video.expiresAt) - this.now) / 1000) : 0; }, pulledAgo() { const timestamp = Date.parse(this.video.sourceSeenAt || this.video.seenAt || this.video.acquiredAt || ''); if (!Number.isFinite(timestamp)) return ''; const elapsed = Math.max(0, this.now - timestamp); if (elapsed > (23 * 60 + 59) * 60_000) return `${Math.max(1, Math.round(elapsed / 86_400_000))}D ago`; const minutes = Math.max(1, Math.floor(elapsed / 60_000)); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return remainder ? `${hours}h${remainder}m ago` : `${hours}h ago`; }, publishedLabel() { const raw = String(this.video.publishedAt || ''); const precision = this.video.publishedAtPrecision || (/T/.test(raw) ? 'exact' : 'date'); const exactTime = precision === 'exact' ? Date.parse(raw) : NaN; if (Number.isFinite(exactTime) && exactTime <= this.now) { const elapsed = this.now - exactTime; if (elapsed < 86_400_000) { const minutes = Math.max(1, Math.floor(elapsed / 60_000)); return `First published on YouTube ${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ago`; } return `First published on YouTube ${new Date(exactTime).toLocaleString()}`; } const age = this.video.publishedAge || this.video.meta?.match(/\b(?:\d+\s+)?(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b/i)?.[0] || ''; if (age) return `First published on YouTube ${age}`; if (precision === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return `First published on YouTube ${new Date(`${raw}T00:00:00`).toLocaleDateString()}`; return ''; } }, mounted() { if (this.showExpiry || (this.sourceLabel && (this.video.sourceSeenAt || this.video.seenAt)) || this.video.publishedAt || this.video.publishedAge) this.expiryTimer = setInterval(() => { this.now = Date.now(); }, this.showExpiry ? 1000 : 30_000); document.addEventListener('click', this.closeMenuOnOutsideClick); }, beforeUnmount() { clearInterval(this.expiryTimer); document.removeEventListener('click', this.closeMenuOnOutsideClick); }, methods: { toggleMenu() { this.menuOpen = !this.menuOpen; }, handleVideoLink(event) { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); event.stopPropagation(); if (this.offlineStub) this.$root.switchOnlineAndPlay(this.video, { shorts: this.isShort }); else this.$root.openVideoCard(this.video, event); }, closeMenuOnOutsideClick(event) { if (this.menuOpen && !this.$el.contains(event.target)) this.menuOpen = false; }, runAction(action) { this.menuOpen = false; this.$root.performVideoAction(action, this.video); }, channelHref(video) { if (!video?.channelKey) return ''; const key = String(video.channelKey); const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/'); return `/channel/${path}/videos`; }, avatarInitials(channel) { return String(channel || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() || '?'; }, thumbnailSrc(video) { return video.thumbnail || '/image-placeholder.svg'; }, thumbnailError(event) { const image = event.currentTarget; if (image.dataset.placeholderTried) image.remove(); else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; } }, viewedLabel(count) { const value = Number(count) || 0; return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`; }, formatExpiry(seconds) { const value = Math.max(0, Number(seconds) || 0); const hours = Math.floor(value / 3600); const minutes = Math.floor(value % 3600 / 60); const secs = value % 60; return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`; }, postpone(video) { if (this.postponing) return; this.postponing = true; this.$emit('postpone', video); setTimeout(() => { this.postponing = false; }, 3000); } } } },
-        data: () => ({ videos: [], likedVideos: [], likedLoading: false, likedError: '', likedLoadToken: 0, likedLoadedAt: 0, shortsVideos: [], shortsSource: 'live', shortsLiveSessionStartedAt: 0, liveShortsSessionIds: [], liveShortsPlaylistIds: [], liveShortsPlaylistActive: false, shortsLoading: false, shortsLoadToken: 0, homepageCategories: [], homepageCategoryVideos: [], homepageCategoryLoading: false, homepageCategoryError: '', homepageCategoryOffset: 0, homepageCategoryHasMore: false, homepageCategoryTotal: 0, homepageCategoryLoadedAt: '', homepageCategoryRequestToken: 0, homepageLayout: { captureId: '', capturedAt: '', sections: [] }, downloadedVideos: [], historyVideos: [], playlists: [], dailyMix: { items: [], localCount: 0 }, dailyMixLoading: false, dailyMixError: '', dailyMixLoadPromise: null, selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, deletingPlaylistId: '', playlistSaving: false, playlistPlayLoading: false, playlistRedownloadLoading: false, playlistRedownloadResult: null, playlistRedownloadPlaylistId: '', playlistDuplicating: false, playlistOperationError: '', playlistOperationPlaylistId: '', playlistStatus: '', playlistCaptureStatus: '', playlistCaptureError: '', playlistCaptureRequestId: '', playlistCaptureRequestedId: '', playlistCaptureTimeout: null, playlistPollTimer: null, playlistLoadToken: 0, playlistPollInFlight: false, showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', downloadedKindFilter: 'all', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', serverReachable: true, serverFailureCount: 0, networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, skipCommentAvatars: false, skipCommentAvatarUpdating: false, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundRetrying: {}, backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, localVideos: 0, localShorts: 0, mediaBytes: 0, mediaIntegrity: { verified: 0, containerChecked: 0, unchecked: 0, failed: 0 }, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, noticeTimers: {}, dismissedNetworkNotice: '', refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchHistoryTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchHistoryRecordedId: '', searchHistory: [], searchHistoryLoading: false, searchFocused: false, searchDropdownVisible: false, searchOutsideHandler: null, searchOffset: 0, searchVisibleCount: 4, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'all', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Daily Mix', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
+        data: () => ({ videos: [], likedVideos: [], likedLoading: false, likedError: '', likedLoadToken: 0, likedLoadedAt: 0, shortsVideos: [], shortsSource: 'live', shortsLiveSessionStartedAt: 0, liveShortsSessionIds: [], liveShortsPlaylistIds: [], liveShortsPlaylistActive: false, shortsLoading: false, shortsLoadToken: 0, homepageCategories: [], homepageCategoryVideos: [], homepageCategoryLoading: false, homepageCategoryError: '', homepageCategoryOffset: 0, homepageCategoryHasMore: false, homepageCategoryTotal: 0, homepageCategoryLoadedAt: '', homepageCategoryRequestToken: 0, homepageLayout: { captureId: '', capturedAt: '', sections: [] }, downloadedVideos: [], historyVideos: [], playlists: [], dailyMix: { items: [], localCount: 0 }, dailyMixLoading: false, dailyMixError: '', dailyMixLoadPromise: null, selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, deletingPlaylistId: '', playlistSaving: false, playlistPlayLoading: false, playlistRedownloadLoading: false, playlistRedownloadResult: null, playlistRedownloadPlaylistId: '', playlistDuplicating: false, playlistOperationError: '', playlistOperationPlaylistId: '', playlistStatus: '', playlistCaptureStatus: '', playlistCaptureError: '', playlistCaptureRequestId: '', playlistCaptureRequestedId: '', playlistCaptureTimeout: null, playlistPollTimer: null, playlistLoadToken: 0, playlistPollInFlight: false, showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', downloadedKindFilter: 'all', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], searchResultCache: null, localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', serverReachable: true, serverFailureCount: 0, networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, skipCommentAvatars: false, skipCommentAvatarUpdating: false, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundRetrying: {}, backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, localVideos: 0, localShorts: 0, mediaBytes: 0, mediaIntegrity: { verified: 0, containerChecked: 0, unchecked: 0, failed: 0 }, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, noticeTimers: {}, dismissedNetworkNotice: '', refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchHistoryTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchHistoryRecordedId: '', searchHistory: [], searchHistoryLoading: false, searchFocused: false, searchDropdownVisible: false, searchOutsideHandler: null, searchOffset: 0, searchVisibleCount: 4, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'all', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Daily Mix', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
         computed: {
           homepageChips() {
             const fallback = [
@@ -1096,9 +1149,17 @@
               return time(b) - time(a) || a.id.localeCompare(b.id);
             });
           },
+          downloadedChannelGroups() { return this.buildDownloadedGroups('channel'); },
+          downloadedTopicGroups() { return this.buildDownloadedGroups('topic'); },
           downloadedKindCounts() {
             const shorts = this.downloadedVideos.filter(video => video.kind === 'short').length;
-            return { all: this.downloadedVideos.length, videos: this.downloadedVideos.length - shorts, shorts };
+            return {
+              all: this.downloadedVideos.length,
+              videos: this.downloadedVideos.length - shorts,
+              shorts,
+              channels: this.downloadedChannelGroups.filter(group => !group.unattributed).length,
+              topics: this.downloadedTopicGroups.filter(group => !group.unattributed).length
+            };
           },
           subscriptionsVisible() { return this.subscriptionsExpanded ? this.subscriptions : this.subscriptions.slice(0, 7); },
           localPlaylists() { return this.playlists.filter(playlist => playlist.source === 'local' && !['watch-later', 'daily-mix'].includes(playlist.kind)); },
@@ -1260,7 +1321,7 @@
               const savedSort = localStorage.getItem('yourtube-downloaded-sort');
               if (['newest', 'oldest', 'mostPlayed', 'autodeletion', 'durationAscending', 'durationDescending'].includes(savedSort)) this.downloadSortOrder = savedSort;
               const savedKindFilter = localStorage.getItem('yourtube-downloaded-kind-filter');
-              if (['all', 'videos', 'shorts'].includes(savedKindFilter)) this.downloadedKindFilter = savedKindFilter;
+              if (['all', 'videos', 'shorts', 'channel', 'topic'].includes(savedKindFilter)) this.downloadedKindFilter = savedKindFilter;
               if (this.downloadedKindFilter !== 'videos' && ['durationAscending', 'durationDescending'].includes(this.downloadSortOrder)) this.downloadSortOrder = 'newest';
               if (localStorage.getItem('yourtube-search-source') === 'local') this.searchSource = 'local';
             } catch {}
@@ -1321,6 +1382,38 @@
             document.removeEventListener('visibilitychange', this.onVisibilityChange);
           },
         methods: {
+          searchCacheKey(term, source = this.activeSearchSource) {
+            return `${source}:${String(term || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
+          },
+          readSearchCache(key) {
+            let stored = '{}';
+            try { stored = localStorage.getItem('yourtube-search-results-v1') || sessionStorage.getItem('yourtube-search-results-v1') || '{}'; } catch {}
+            try { this.searchResultCache = JSON.parse(stored) || {}; }
+            catch { this.searchResultCache = {}; }
+            const cached = this.searchResultCache[key];
+            if (!cached || !Array.isArray(cached.videos)) return null;
+            return cached;
+          },
+          saveSearchCache() {
+            if (!this.searchTerm || !this.searchSessionId) return;
+            const entries = this.searchResultCache || (this.searchResultCache = {});
+            const key = this.searchCacheKey(this.searchTerm, this.activeSearchSource);
+            const entry = {
+              searchId: this.searchSessionId,
+              videos: this.searchVideos.slice(0, 80), offset: Math.min(this.searchOffset, 80),
+              total: this.searchTotal, hasMore: this.searchHasMore,
+              complete: this.searchSessionComplete,
+              localVideos: this.localSearchPreview.slice(0, 4), localTotal: this.localSearchTotal
+            };
+            const previous = entries[key];
+            if (previous && Object.keys(entry).every(field => JSON.stringify(previous[field]) === JSON.stringify(entry[field]))) return;
+            entries[key] = { savedAt: Date.now(), ...entry };
+            const recent = Object.entries(entries).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, 12);
+            this.searchResultCache = Object.fromEntries(recent);
+            const serialized = JSON.stringify(this.searchResultCache);
+            try { localStorage.setItem('yourtube-search-results-v1', serialized); } catch {}
+            try { sessionStorage.setItem('yourtube-search-results-v1', serialized); } catch {}
+          },
           scheduleNoticeDismissal(key, value, delay) {
             clearTimeout(this.noticeTimers[key]);
             delete this.noticeTimers[key];
@@ -1831,8 +1924,143 @@
           saveDownloadSortOrder() {
             try { localStorage.setItem('yourtube-downloaded-sort', this.downloadSortOrder); } catch {}
           },
+          buildDownloadedGroups(mode) {
+            const groups = new Map();
+            const unattributedItems = [];
+            const acquisitionTime = video => Date.parse(video.acquiredAt || video.seenAt || '') || 0;
+            const showUnwatchedOnly = this.downloadedGroupUnwatchedOnly(mode);
+            const usableChannelName = video => {
+              const name = String(video.channel || '').replace(/\s+/g, ' ').trim();
+              return /^(?:youtube|channel unavailable|channel details syncing|unknown channel|unavailable)$/i.test(name) ? '' : name;
+            };
+            const add = (key, title, video, extra = {}) => {
+              let group = groups.get(key);
+              if (!group) {
+                group = { key, title, items: [], avatar: '', channelKey: '', channelUrl: '', unattributed: false, ...extra };
+                groups.set(key, group);
+              }
+              group.items.push(video);
+              if (!group.avatar && video.avatar) group.avatar = video.avatar;
+              if (!group.channelKey && video.channelKey) group.channelKey = video.channelKey;
+              if (!group.channelUrl && video.channelUrl) group.channelUrl = video.channelUrl;
+            };
+            for (const video of this.downloadedVideos) {
+              if (showUnwatchedOnly && Number(video.viewCount) > 0) continue;
+              if (mode === 'channel') {
+                const name = usableChannelName(video);
+                if (!name) { unattributedItems.push(video); continue; }
+                const identity = String(video.channelKey || video.channelUrl || name.toLocaleLowerCase()).trim().toLocaleLowerCase();
+                add(`channel:${identity}`, name, video);
+                continue;
+              }
+              const labels = [...new Map([...(Array.isArray(video.topics) ? video.topics : []), video.topic || '']
+                .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+                .filter(value => Boolean(value) && !/^(?:all|watched|recently uploaded)$/i.test(value))
+                .map(value => [value.toLocaleLowerCase(), value])).values()];
+              if (!labels.length) { unattributedItems.push(video); continue; }
+              for (const label of labels) add(`topic:${label.toLocaleLowerCase()}`, label, video);
+            }
+            const byViews = (a, b) => {
+              const aViews = Math.max(0, Number(a.viewCount) || 0);
+              const bViews = Math.max(0, Number(b.viewCount) || 0);
+              if ((aViews === 0) !== (bViews === 0)) return aViews === 0 ? -1 : 1;
+              return bViews - aViews || acquisitionTime(b) - acquisitionTime(a) || String(a.id).localeCompare(String(b.id));
+            };
+            const sortMode = this.downloadedGroupSort(mode);
+            const byRecent = (a, b) => acquisitionTime(b) - acquisitionTime(a) || byViews(a, b);
+            const byPublicLikes = (a, b) => (Number(b.likeCount) || 0) - (Number(a.likeCount) || 0) || byViews(a, b);
+            const byLocallyLiked = (a, b) => (Number(b.liked) || 0) - (Number(a.liked) || 0) || byViews(a, b);
+            const fileSize = video => Math.max(0, Number(video.fileSizeBytes) || 0);
+            const byFileSize = (a, b) => fileSize(b) - fileSize(a) || byRecent(a, b);
+            const result = [...groups.values()].map(group => {
+              group.items.sort(sortMode === 'biggestFileSize' ? byFileSize : sortMode === 'mostLiked' ? byPublicLikes : sortMode === 'mostLikedByYou' ? byLocallyLiked : sortMode === 'recent' || sortMode === 'mostAvailable' ? byRecent : byViews);
+              const shorts = group.items.filter(video => video.kind === 'short').length;
+              const videos = group.items.length - shorts;
+              group.kindSummary = shorts && videos ? `${videos} videos · ${shorts} Shorts` : shorts ? `${shorts} Shorts` : `${videos} videos`;
+              group.latestAcquiredAt = group.items.reduce((latest, video) => Math.max(latest, acquisitionTime(video)), 0);
+              group.totalViews = group.items.reduce((total, video) => total + Math.max(0, Number(video.viewCount) || 0), 0);
+              group.totalLikes = group.items.reduce((total, video) => total + Math.max(0, Number(video.likeCount) || 0), 0);
+              group.likedCount = group.items.reduce((total, video) => total + (Number(video.liked) === 1 || video.liked === true ? 1 : 0), 0);
+              group.totalBytes = group.items.reduce((total, video) => total + fileSize(video), 0);
+              return group;
+            }).sort((a, b) => {
+              if (sortMode === 'biggestFileSize') return b.totalBytes - a.totalBytes || b.items.length - a.items.length || b.latestAcquiredAt - a.latestAcquiredAt || a.title.localeCompare(b.title);
+              if (sortMode === 'mostAvailable') return b.items.length - a.items.length || b.totalViews - a.totalViews || b.latestAcquiredAt - a.latestAcquiredAt || a.title.localeCompare(b.title);
+              if (sortMode === 'mostLiked') return b.totalLikes - a.totalLikes || b.totalViews - a.totalViews || b.latestAcquiredAt - a.latestAcquiredAt || a.title.localeCompare(b.title);
+              if (sortMode === 'mostLikedByYou') return b.likedCount - a.likedCount || b.totalViews - a.totalViews || b.latestAcquiredAt - a.latestAcquiredAt || a.title.localeCompare(b.title);
+              if (sortMode === 'recent') return b.latestAcquiredAt - a.latestAcquiredAt || b.items.length - a.items.length || a.title.localeCompare(b.title);
+              return b.totalViews - a.totalViews || b.items.length - a.items.length || b.latestAcquiredAt - a.latestAcquiredAt || a.title.localeCompare(b.title);
+            });
+            if (unattributedItems.length) {
+              unattributedItems.sort(sortMode === 'biggestFileSize' ? byFileSize : byViews);
+              const shorts = unattributedItems.filter(video => video.kind === 'short').length;
+              const videos = unattributedItems.length - shorts;
+              result.push({
+                key: `${mode}:unattributed`,
+                title: mode === 'channel' ? 'Channel details missing' : 'Uncategorized',
+                subtitle: mode === 'channel' ? 'Author information still needs capture' : 'No reliable topic signal was found in saved metadata',
+                items: unattributedItems,
+                avatar: '',
+                unattributed: true,
+                totalBytes: unattributedItems.reduce((total, video) => total + fileSize(video), 0),
+                kindSummary: shorts && videos ? `${videos} videos · ${shorts} Shorts` : shorts ? `${shorts} Shorts` : `${videos} videos`
+              });
+            }
+            return result;
+          },
+          downloadedGroupVisibleCount(key, total) {
+            const stateKey = `downloads:${key}`;
+            const rows = Math.max(2, Number(this.homeExpanded[stateKey]) || 2);
+            return Math.min(total, rows * this.homepageRowSize('video'));
+          },
+          downloadedGroupHasMore(key, total) {
+            return total > this.downloadedGroupVisibleCount(key, total);
+          },
+          showMoreDownloadedGroup(key) {
+            const stateKey = `downloads:${key}`;
+            const rows = Math.max(2, Number(this.homeExpanded[stateKey]) || 2);
+            this.homeExpanded = { ...this.homeExpanded, [stateKey]: rows + 2 };
+          },
+          downloadedGroupSort(mode) {
+            const key = `downloads:sort:${mode}`;
+            const allowed = ['mostViewed', 'mostAvailable', 'mostLiked', 'mostLikedByYou', 'recent', 'biggestFileSize'];
+            if (allowed.includes(this.homeExpanded[key])) return this.homeExpanded[key];
+            try {
+              const saved = JSON.parse(localStorage.getItem('yourtube-downloaded-group-sorts') || '{}');
+              if (allowed.includes(saved?.[mode])) return saved[mode];
+            } catch {}
+            return 'mostViewed';
+          },
+          setDownloadedGroupSort(order) {
+            if (!['mostViewed', 'mostAvailable', 'mostLiked', 'mostLikedByYou', 'recent', 'biggestFileSize'].includes(order)) return;
+            const mode = this.downloadedKindFilter;
+            const key = `downloads:sort:${mode}`;
+            this.homeExpanded = { ...this.homeExpanded, [key]: order };
+            try {
+              const saved = JSON.parse(localStorage.getItem('yourtube-downloaded-group-sorts') || '{}');
+              localStorage.setItem('yourtube-downloaded-group-sorts', JSON.stringify({ ...saved, [mode]: order }));
+            } catch {}
+          },
+          downloadedGroupUnwatchedOnly(mode) {
+            const key = `downloads:unwatched:${mode}`;
+            if (typeof this.homeExpanded[key] === 'boolean') return this.homeExpanded[key];
+            try {
+              const saved = JSON.parse(localStorage.getItem('yourtube-downloaded-group-unwatched') || '{}');
+              return Boolean(saved?.[mode]);
+            } catch { return false; }
+          },
+          toggleDownloadedGroupUnwatchedOnly(mode) {
+            if (!['channel', 'topic'].includes(mode)) return;
+            const enabled = !this.downloadedGroupUnwatchedOnly(mode);
+            const key = `downloads:unwatched:${mode}`;
+            this.homeExpanded = { ...this.homeExpanded, [key]: enabled };
+            try {
+              const saved = JSON.parse(localStorage.getItem('yourtube-downloaded-group-unwatched') || '{}');
+              localStorage.setItem('yourtube-downloaded-group-unwatched', JSON.stringify({ ...saved, [mode]: enabled }));
+            } catch {}
+          },
           setDownloadedKindFilter(kind) {
-            if (!['all', 'videos', 'shorts'].includes(kind)) return;
+            if (!['all', 'videos', 'shorts', 'channel', 'topic'].includes(kind)) return;
             this.downloadedKindFilter = kind;
             if (kind !== 'videos' && ['durationAscending', 'durationDescending'].includes(this.downloadSortOrder)) {
               this.downloadSortOrder = 'newest';
@@ -1925,6 +2153,11 @@
           async retryBackgroundItem(item) {
             const action = item?.retryAction;
             if (!action || this.networkMode !== 'online' || !this.serverReachable) return;
+            if (this.backgroundRetryBlocked(item)) {
+              this.actionError = true;
+              this.actionNotice = `YouTube sign-in cooldown is active. Retry ${this.mediaRetryCooldownText()}.`;
+              return;
+            }
             const key = `${action.type}:${action.id}`;
             if (this.backgroundRetrying[key]) return;
             this.backgroundRetrying[key] = true;
@@ -1933,6 +2166,7 @@
               if (action.type === 'media') {
                 const response = await fetch(`/api/downloads/${encodeURIComponent(action.id)}?retry=1`, { method: 'POST' });
                 result = await response.json();
+                if (response.status === 429 && result.retryAt) this.stats = { ...this.stats, youtubeCooldownUntil: result.retryAt };
                 if (!response.ok) throw new Error(result.error || 'Download could not be retried.');
               } else {
                 const response = await fetch('/api/background-queue/retry', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action) });
@@ -1949,6 +2183,19 @@
             } finally { this.backgroundRetrying[key] = false; }
           },
           backgroundRetryKey(action) { return action ? `${action.type}:${action.id}` : ''; },
+          mediaRetryCooldownActive() { return Date.parse(this.stats.youtubeCooldownUntil || '') > Date.now(); },
+          mediaRetryCooldownText() {
+            const until = Date.parse(this.stats.youtubeCooldownUntil || '');
+            const seconds = Number.isFinite(until) ? Math.max(0, Math.ceil((until - Date.now()) / 1000)) : 0;
+            return seconds >= 60 ? `in ${Math.floor(seconds / 60)}m ${seconds % 60}s` : `in ${seconds}s`;
+          },
+          backgroundRetryBlocked(item) { return item?.retryAction?.type === 'media' && this.mediaRetryCooldownActive(); },
+          backgroundRetryTitle(item) {
+            if (this.backgroundRetryBlocked(item)) return `YouTube asked for sign-in. Retry ${this.mediaRetryCooldownText()}, when the cooldown ends.`;
+            if (this.networkMode !== 'online') return 'Go Online to retry this item.';
+            if (this.backgroundRetrying[this.backgroundRetryKey(item?.retryAction)]) return 'Retrying this item…';
+            return 'Click to retry this item.';
+          },
           async switchOnlineAndPlay(video, options = {}) {
             const videoId = String(video?.id || '');
             const playPath = `${options.shorts ? '/shorts/' : '/watch/'}${encodeURIComponent(videoId)}`;
@@ -2109,6 +2356,60 @@
           queueTimestamp(timestamp) {
             const value = Date.parse(timestamp || '');
             return Number.isFinite(value) ? new Date(value).toLocaleString() : 'not scheduled';
+          },
+          async deleteDownloadedGroup(group) {
+            const stateKey = `download-group-delete:${group?.key || ''}`;
+            if (!group?.items?.length || this.backgroundRetrying[stateKey]) return;
+            const videoIds = [...new Set(group.items.map(video => String(video.id || '')).filter(id => /^[A-Za-z0-9_-]{11}$/.test(id)))];
+            if (!videoIds.length) return;
+            this.backgroundRetrying = { ...this.backgroundRetrying, [stateKey]: true };
+            try {
+              const response = await fetch('/api/downloads/delete-group', {
+                method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoIds })
+              });
+              if (!response.ok) return;
+              await this.refresh();
+            } catch (error) {
+              console.warn('Could not delete this downloaded group:', error);
+            } finally {
+              this.backgroundRetrying = { ...this.backgroundRetrying, [stateKey]: false };
+            }
+          },
+          async playDownloadedGroup(group) {
+            const stateKey = `download-group-play:${group?.key || ''}`;
+            if (!group?.items?.length || this.backgroundRetrying[stateKey]) return;
+            const items = group.items.filter(video => video.kind !== 'short' && (video.downloaded === true || Number(video.downloaded) === 1));
+            if (!items.length) return;
+            this.backgroundRetrying = { ...this.backgroundRetrying, [stateKey]: true };
+            try {
+              const response = await fetch('/api/downloads/play-group', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ groupKey: group.key, title: group.title, items: items.map(video => ({ videoId: video.id })) })
+              });
+              const result = await response.json().catch(() => ({}));
+              if (!response.ok || !result.items?.length) {
+                console.warn('Could not start this downloaded group:', result.error || response.statusText);
+                return;
+              }
+              const firstQueued = result.items[0];
+              const firstVideo = items.find(video => video.id === firstQueued.id);
+              if (!firstVideo) return;
+              this.primeLocalPlayback(firstVideo);
+              const target = new URL(`/watch/${encodeURIComponent(firstQueued.id)}`, location.origin);
+              target.searchParams.set('yourtubePlaylist', result.playlistId);
+              target.searchParams.set('yourtubePlaylistPosition', '0');
+              target.searchParams.set('yourtubePlaylistLocal', '1');
+              target.searchParams.set('yourtubePlaylistQueue', '1');
+              target.searchParams.set('yourtubeQueueItem', String(firstQueued.queueItemId));
+              window.dispatchEvent(new CustomEvent('yourtube-queue-updated'));
+              const destination = `${target.pathname}${target.search}`;
+              window.yourtubeNavigate?.(destination) || location.assign(destination);
+            } catch (error) {
+              console.warn('Could not start this downloaded group:', error);
+            } finally {
+              this.backgroundRetrying = { ...this.backgroundRetrying, [stateKey]: false };
+            }
           },
           async deleteDownloadedVideo(video) {
             const name = video.title || 'this video';
@@ -2501,6 +2802,11 @@
           openSearchDropdown() {
             this.searchFocused = true;
             this.searchDropdownVisible = true;
+            this.$nextTick(() => {
+              const results = document.querySelector('.search-dropdown-results');
+              if (results) results.scrollTop = 0;
+              this.searchDropdownLastScrollTop = 0;
+            });
             if (this.query.trim().length < 2) void this.loadSearchHistory();
           },
           onSearchFocusOut() {
@@ -2541,7 +2847,9 @@
           },
           onSearchDropdownScroll(event) {
             const element = event.currentTarget;
-            if (element.scrollTop + element.clientHeight >= element.scrollHeight - 72) void this.loadMoreSearch();
+            const movedDown = element.scrollTop > (this.searchDropdownLastScrollTop || 0);
+            this.searchDropdownLastScrollTop = element.scrollTop;
+            if (movedDown && element.scrollTop + element.clientHeight >= element.scrollHeight - 72) void this.loadMoreSearch();
           },
           onSearchDropdownWheel(event) {
             const element = event.currentTarget;
@@ -2593,26 +2901,42 @@
             const token = this.searchRequestToken;
             this.searchTerm = term;
             this.activeSearchSource = this.searchSource;
-            this.searchSessionId = crypto.randomUUID();
+            this.searchDropdownLastScrollTop = 0;
+            this.searchLastScrollY = window.scrollY || 0;
+            const cached = this.readSearchCache(this.searchCacheKey(term, this.activeSearchSource));
+            this.searchSessionId = cached?.searchId || crypto.randomUUID();
             this.searchSelectionRecorded = false;
+            this.searchHistoryRecordedId = '';
             this.searchDropdownVisible = true;
-            this.searchVideos = [];
-            this.localSearchPreview = [];
-            this.localSearchTotal = 0;
-            this.searchOffset = 0;
+            this.$nextTick(() => {
+              const results = document.querySelector('.search-dropdown-results');
+              if (results) results.scrollTop = 0;
+              this.searchDropdownLastScrollTop = 0;
+            });
+            this.searchVideos = cached?.videos?.slice() || [];
+            this.localSearchPreview = cached?.localVideos?.slice() || [];
+            this.localSearchTotal = Number(cached?.localTotal) || 0;
+            this.searchOffset = Number(cached?.offset) || 0;
             this.searchVisibleCount = 4;
-            this.searchTotal = 0;
-            this.searchHasMore = false;
-            this.searchResultsReady = false;
+            this.searchTotal = Number(cached?.total) || 0;
+            this.searchHasMore = Boolean(cached?.hasMore) || this.searchVideos.length > this.searchVisibleCount || Boolean(cached && !cached.complete) || Boolean(cached && this.activeSearchSource === 'youtube' && this.networkMode === 'online');
+            this.searchResultsReady = Boolean(cached?.complete) || this.searchVideos.length >= 4;
             this.searchStableCount = 0;
             this.searchLastSignature = '';
             this.searchError = '';
-            this.searchLoading = true;
-            this.searchSessionComplete = this.activeSearchSource !== 'youtube';
-            this.searchSessionAcknowledged = false;
-            this.searchDebounceTimer = setTimeout(() => this.pollFirstBatch(token), 250);
+            this.searchLoading = !cached || !cached.complete;
+            this.searchSessionComplete = cached ? Boolean(cached.complete) : this.activeSearchSource !== 'youtube';
+            this.searchSessionAcknowledged = Boolean(cached?.complete);
+            if (cached?.complete) {
+              this.searchLoading = false;
+              this.searchResultsReady = true;
+            } else if (cached) {
+              this.searchLivePollTimer = setTimeout(() => this.pollSearchSession(token), 0);
+            } else {
+              this.searchDebounceTimer = setTimeout(() => this.pollFirstBatch(token), 250);
+            }
             this.searchHistoryTimer = setTimeout(() => this.persistSearchHistory(token), 500);
-            if (this.activeSearchSource === 'youtube') this.searchCollectionTimer = setTimeout(() => this.startSearchCollection(token), 1000);
+            if (!cached && this.activeSearchSource === 'youtube') this.searchCollectionTimer = setTimeout(() => this.startSearchCollection(token), 1000);
           },
           async persistSearchHistory(token, selectedVideoId = '') {
             if (token !== this.searchRequestToken || !this.searchSessionId || this.searchHistoryRecordedId === this.searchSessionId) return;
@@ -2641,13 +2965,30 @@
               window.postMessage({ type: 'yourtube:collect-search', searchId: this.searchSessionId, query: this.searchTerm }, location.origin);
               this.pollSearchSession(token);
             } catch (error) {
-              if (token === this.searchRequestToken) this.searchError = `${error.message} Showing saved local matches.`;
+              if (token === this.searchRequestToken) {
+                this.searchError = `${error.message} Showing saved local matches.`;
+                this.searchSessionComplete = true;
+                this.searchResultsReady = true;
+                this.searchLoading = false;
+                this.searchHasMore = this.searchVideos.length > this.searchVisibleCount || this.searchOffset < this.searchTotal || this.activeSearchSource === 'youtube';
+                this.saveSearchCache();
+              }
             }
           },
           async pollSearchSession(token) {
             if (token !== this.searchRequestToken || !this.searchSessionId) return;
             try {
               const response = await fetch(`/api/search-sessions/${encodeURIComponent(this.searchSessionId)}?refresh=${Date.now()}`, { cache: 'no-store' });
+              if (!response.ok && response.status === 404) {
+                if (token === this.searchRequestToken) {
+                  this.searchSessionComplete = true;
+                  this.searchResultsReady = true;
+                  this.searchLoading = false;
+                  this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || this.activeSearchSource === 'youtube';
+                  this.saveSearchCache();
+                }
+                return;
+              }
               if (!response.ok) throw new Error('Background search status is unavailable.');
               const result = await response.json();
               if (token !== this.searchRequestToken) return;
@@ -2657,12 +2998,13 @@
               if (fresh.length) this.searchVideos.push(...fresh);
               this.searchSessionComplete = ['ready', 'displayed', 'stale'].includes(result.status);
               this.searchTotal = Math.max(this.searchTotal, sessionVideos.length, this.searchVideos.length);
-              if (this.searchVideos.length >= 12 || this.searchSessionComplete) {
+              this.searchOffset = Math.max(this.searchOffset, Math.min(this.searchVideos.length, this.searchTotal));
+              if (this.searchVideos.length >= 4 || this.searchSessionComplete) {
                 this.searchResultsReady = true;
                 this.searchLoading = false;
-                if (this.activeSearchSource === 'youtube' && !this.searchLivePollTimer) this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
               }
-              this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
+              this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete || (this.activeSearchSource === 'youtube' && this.networkMode === 'online');
+              this.saveSearchCache();
               if (['ready', 'displayed'].includes(result.status) && !this.searchSessionAcknowledged) {
                 this.searchSessionAcknowledged = true;
                 fetch(`/api/search-sessions/${encodeURIComponent(this.searchSessionId)}`, { method: 'POST' }).catch(() => {});
@@ -2710,56 +3052,25 @@
                 this.searchHasMore = Boolean(result.hasMore);
                 this.searchResultsReady = true;
                 this.searchLoading = false;
+                this.searchSessionComplete = true;
+                this.saveSearchCache();
                 return;
               }
-              const signature = batch.map(video => video.id).join('|');
-              if (batch.length >= 12) {
-                this.searchVideos = batch;
-                this.searchOffset = batch.length;
-                this.searchHasMore = Boolean(result.hasMore);
+              this.searchVideos = batch;
+              this.searchOffset = batch.length;
+              this.searchHasMore = Boolean(result.hasMore) || batch.length > this.searchVisibleCount || !this.searchSessionComplete || (this.activeSearchSource === 'youtube' && this.networkMode === 'online');
+              if (batch.length >= 4 || this.searchSessionComplete) {
                 this.searchResultsReady = true;
                 this.searchLoading = false;
-                if (this.activeSearchSource === 'youtube') this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
-                return;
               }
-              if (batch.length && signature === this.searchLastSignature) this.searchStableCount += 1;
-              else this.searchStableCount = 0;
-              this.searchLastSignature = signature;
-              if (batch.length && this.searchStableCount >= 2 && !result.hasMore && (this.activeSearchSource === 'local' || this.searchSessionComplete)) {
-                this.searchVideos = batch;
-                this.searchOffset = batch.length;
-                this.searchHasMore = Boolean(result.hasMore);
-                this.searchResultsReady = true;
-                this.searchLoading = false;
-                if (this.activeSearchSource === 'youtube') this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 900);
-                return;
-              }
-              this.searchPollTimer = setTimeout(() => this.pollFirstBatch(token), 1400);
+              this.saveSearchCache();
             } catch (error) {
               if (token !== this.searchRequestToken) return;
               this.searchError = error.message || 'Search is temporarily unavailable.';
-              this.searchPollTimer = setTimeout(() => this.pollFirstBatch(token), 2500);
+              this.searchLoading = false;
+              this.searchResultsReady = true;
+              this.searchHasMore = this.activeSearchSource === 'youtube' && this.networkMode === 'online';
             }
-          },
-          async pollLiveLocalSearch(token) {
-            if (token !== this.searchRequestToken || this.activeSearchSource !== 'youtube') return;
-            try {
-              const params = new URLSearchParams({ q: this.searchTerm, source: 'youtube', limit: '20', offset: '0', refresh: String(Date.now()) });
-              const response = await fetch(`/api/search?${params}`, { cache: 'no-store' });
-              if (response.ok) {
-                const result = await response.json();
-                if (token !== this.searchRequestToken) return;
-                this.localSearchTotal = Number(result.localTotal) || 0;
-                this.localSearchPreview = Array.isArray(result.localVideos) ? result.localVideos : [];
-                const existing = new Set(this.searchVideos.map(video => video.id));
-                const fresh = (Array.isArray(result.videos) ? result.videos : []).filter(video => video?.id && !video.downloaded && !existing.has(video.id) && existing.add(video.id));
-                if (fresh.length) this.searchVideos.push(...fresh);
-                this.searchTotal = Math.max(Number(result.total) || 0, this.searchTotal, this.searchVideos.length);
-                this.searchOffset = Math.max(this.searchOffset, Math.min(20, Number(result.total) || 0));
-                this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
-              }
-            } catch {}
-            if (token === this.searchRequestToken) this.searchLivePollTimer = setTimeout(() => this.pollLiveLocalSearch(token), 1200);
           },
           async loadMoreSearch() {
             if (!this.searchResultsReady || !this.searchHasMore || this.searchLoading) return;
@@ -2769,7 +3080,8 @@
             try {
               if (this.searchVisibleCount <= this.searchVideos.length) {
                 this.searchLoading = false;
-                this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete;
+                this.searchHasMore = this.searchVisibleCount < this.searchVideos.length || this.searchOffset < this.searchTotal || !this.searchSessionComplete || (this.activeSearchSource === 'youtube' && this.networkMode === 'online');
+                this.saveSearchCache();
                 return;
               }
               const params = new URLSearchParams({ q: this.searchTerm, source: this.activeSearchSource, limit: '12', offset: String(this.searchOffset), refresh: String(Date.now()) });
@@ -2785,13 +3097,24 @@
               this.searchOffset += Array.isArray(result.videos) ? result.videos.length : 0;
               this.searchTotal = Number(result.total) || this.searchTotal;
               this.searchHasMore = Boolean(result.hasMore) || this.searchVisibleCount < this.searchVideos.length || !this.searchSessionComplete;
+              this.saveSearchCache();
             } catch (error) { this.searchError = error.message || 'More search results could not be loaded.'; }
-            finally { if (token === this.searchRequestToken) this.searchLoading = false; }
+            finally {
+              if (token === this.searchRequestToken) this.searchLoading = false;
+            }
           },
           onSearchScroll() {
-            if (this.currentView !== 'search' || this.searchLoading || !this.searchHasMore) return;
+            const currentY = window.scrollY || 0;
+            const movedDown = currentY > (this.searchLastScrollY || 0);
+            this.searchLastScrollY = currentY;
+            if (this.currentView !== 'search' || this.searchLoading || !this.searchHasMore || !movedDown) return;
             const trigger = document.querySelector('#search-load-trigger');
-            if (trigger && trigger.getBoundingClientRect().top <= window.innerHeight + 120) this.loadMoreSearch();
+            if (trigger && trigger.getBoundingClientRect().top <= window.innerHeight + 120) void this.loadMoreSearch();
+          },
+          onSearchPageWheel(event) {
+            if (event.deltaY <= 0 || this.currentView !== 'search' || this.searchLoading || !this.searchHasMore) return;
+            const trigger = document.querySelector('#search-load-trigger');
+            if (trigger && trigger.getBoundingClientRect().top <= window.innerHeight + 120) void this.loadMoreSearch();
           },
           onVisibilityChange() { if (document.visibilityState === 'visible') this.refresh(); },
           selectHomepageChip(chip) {

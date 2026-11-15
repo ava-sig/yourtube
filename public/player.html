@@ -355,8 +355,14 @@
       .recommendation-download { --download-progress: 0%; position: absolute; top: 5px; right: 5px; z-index: 3; display: grid; width: 32px; height: 32px; padding: 2px; place-items: center; border: 0; border-radius: 50%; background: conic-gradient(#f33 var(--download-progress), #ffffff66 0); color: #fff; cursor: pointer; filter: drop-shadow(0 1px 3px #000b); }
       body.yourtube-mini-player-active #watch-app .recommendation-download { display: none; }
       .recommendation-mini-actions { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; background: #0008; opacity: 0; pointer-events: none; transition: opacity .16s ease; }
+      #search-dropdown .recommendation-mini-actions { align-items: flex-end; justify-content: flex-end; gap: 6px; padding: 6px; background: linear-gradient(transparent 38%, #0009); opacity: 1; pointer-events: none; }
+      #search-dropdown .recommendation-mini-action { width: 32px; height: 32px; flex-basis: 32px; pointer-events: auto; }
       body.yourtube-mini-player-active #watch-app .recommendation-media:hover .recommendation-mini-actions,
-      body.yourtube-mini-player-active #watch-app .recommendation-media:focus-within .recommendation-mini-actions { opacity: 1; pointer-events: auto; }
+      body.yourtube-mini-player-active #watch-app .recommendation-media:focus-within .recommendation-mini-actions,
+      body.yourtube-mini-player-active #search-dropdown .recommendation-media:hover .recommendation-mini-actions,
+      body.yourtube-mini-player-active #search-dropdown .recommendation-media:focus-within .recommendation-mini-actions,
+      #search-dropdown .recommendation-media:hover .recommendation-mini-actions,
+      #search-dropdown .recommendation-media:focus-within .recommendation-mini-actions { opacity: 1; pointer-events: auto; }
       .recommendation-mini-action { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; padding: 0; border: 1px solid #ffffff80; border-radius: 50%; background: #171717ed; color: #fff; font: inherit; font-size: 19px; font-weight: 750; line-height: 1; cursor: pointer; box-shadow: 0 2px 8px #0009; transition: transform .14s ease, background .14s ease; }
       .recommendation-mini-action:hover:not(:disabled) { transform: scale(1.08); background: #333; }
       .recommendation-mini-action:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
@@ -368,7 +374,7 @@
       .recommendation-mini-download.is-downloading svg { animation: download-control-pulse 1.15s ease-in-out infinite; }
       .recommendation-mini-download.is-complete { background: conic-gradient(#3baa63 100%, #3baa63 0); color: #77e69b; }
       .recommendation-mini-download.is-error { background: conic-gradient(#e04444 100%, #e04444 0); color: #ff8585; }
-      @media (hover: none) { body.yourtube-mini-player-active #watch-app .recommendation-mini-actions { opacity: 1; pointer-events: auto; background: linear-gradient(transparent 38%, #0005); } }
+      @media (hover: none) { body.yourtube-mini-player-active #watch-app .recommendation-mini-actions, #search-dropdown .recommendation-mini-actions { opacity: 1; pointer-events: auto; background: linear-gradient(transparent 38%, #0005); } }
       .recommendation-download::before { position: absolute; inset: 3px; border-radius: 50%; background: #171717ed; content: ''; }
       .recommendation-download:hover::before { background: #303030; }
       .recommendation-download:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
@@ -665,8 +671,12 @@
           <p id="paused-downloads-subtitle" class="paused-downloads-subtitle" hidden></p>
           <div id="paused-downloads" class="active-downloads" aria-live="polite"></div>
           <section id="recent-downloads-section" class="recent-downloads-section" hidden aria-labelledby="recent-downloads-heading">
-            <div class="recent-downloads-heading-row"><div class="recent-downloads-heading-copy"><span class="recent-downloads-kicker">Ready to watch</span><h2 class="recent-downloads-heading" id="recent-downloads-heading">Just finished</h2><p class="recent-downloads-caption">Your newest local copies · scroll to browse</p></div></div>
+            <div class="recent-downloads-heading-row"><div class="recent-downloads-heading-copy"><span class="recent-downloads-kicker">Ready to watch · Videos</span><h2 class="recent-downloads-heading" id="recent-downloads-heading">Just finished</h2><p class="recent-downloads-caption">Your newest local video copies · scroll to browse</p></div></div>
             <div id="recent-download-carousel" class="recent-download-carousel" role="region" tabindex="0" aria-label="Recently completed downloads"></div>
+          </section>
+          <section id="recent-shorts-section" class="recent-downloads-section" hidden aria-labelledby="recent-shorts-heading">
+            <div class="recent-downloads-heading-row"><div class="recent-downloads-heading-copy"><span class="recent-downloads-kicker">Ready to watch · Shorts</span><h2 class="recent-downloads-heading" id="recent-shorts-heading">Just finished Shorts</h2><p class="recent-downloads-caption">Your newest local Shorts · scroll to browse</p></div></div>
+            <div id="recent-shorts-carousel" class="recent-download-carousel" role="region" tabindex="0" aria-label="Recently completed Shorts"></div>
           </section>
         </section>
         <dialog id="recent-playlist-dialog" class="recent-playlist-dialog" aria-labelledby="recent-playlist-dialog-title">
@@ -878,6 +888,8 @@
       const deletePausedDownloadsButton = watchApp.querySelector('#delete-paused-downloads');
       const recentDownloadsSection = watchApp.querySelector('#recent-downloads-section');
       const recentDownloadCarousel = watchApp.querySelector('#recent-download-carousel');
+      const recentShortsSection = watchApp.querySelector('#recent-shorts-section');
+      const recentShortsCarousel = watchApp.querySelector('#recent-shorts-carousel');
       const recentDownloadsStatus = watchApp.querySelector('#recent-downloads-status');
       const recentPlaylistDialog = watchApp.querySelector('#recent-playlist-dialog');
       const recentPlaylistDialogTitle = watchApp.querySelector('#recent-playlist-dialog-title');
@@ -889,7 +901,7 @@
       let recentPlaylistTarget = null;
       let recentPlaylistSaving = false;
       let recentDownloadsRequest = 0;
-      let recentDownloadsSignature = '';
+      const recentDownloadsSignatures = { videos: '', shorts: '' };
       let activeDownloadsTimer = null;
       let recentDownloadsTimer = null;
       let recommendationSearchTimer = null;
@@ -1212,8 +1224,8 @@
       });
       function syncMiniActionButtons() {
         const ids = new Set(readPlaybackQueue().map(item => item.id));
-        watchApp.querySelectorAll('[data-download-video-id]').forEach(button => paintSidebarDownloadButton(button, button.dataset.downloadVideoId || ''));
-        watchApp.querySelectorAll('[data-mini-queue-video-id]').forEach(button => {
+        playerRouteRoot.querySelectorAll('[data-download-video-id]').forEach(button => paintSidebarDownloadButton(button, button.dataset.downloadVideoId || ''));
+        playerRouteRoot.querySelectorAll('[data-mini-queue-video-id]').forEach(button => {
           const id = button.dataset.miniQueueVideoId || '';
           const queued = ids.has(id);
           const current = id === videoId;
@@ -1911,6 +1923,7 @@
       let searchLastSignature = '';
       let cachedSearchVideos = [];
       let searchVisibleCount = 4;
+      let searchDropdownLastScrollTop = 0;
       let activeSearchId = '';
       let searchSelectionRecorded = false;
       try { searchSource = localStorage.getItem('yourtube-search-source') === 'local' ? 'local' : 'youtube'; } catch {}
@@ -1940,6 +1953,39 @@
         searchDropdown.hidden = false;
         searchDropdownStatus.textContent = `${searchSource === 'local' ? 'Local' : 'Collected YouTube stubs'} · “${query}”`;
       }
+      function searchCacheKey(query, source = searchSource) {
+        return `${source}:${String(query || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
+      }
+      function readSearchCache(query, source = searchSource) {
+        try {
+          let raw = '{}';
+          try { raw = localStorage.getItem('yourtube-search-results-v1') || sessionStorage.getItem('yourtube-search-results-v1') || '{}'; } catch {}
+          const entries = JSON.parse(raw) || {};
+          const cached = entries[searchCacheKey(query, source)];
+          return cached && Array.isArray(cached.videos) ? cached : null;
+        } catch { return null; }
+      }
+      function saveSearchCache() {
+        if (!activeSearchQuery || !activeSearchId) return;
+        try {
+          let raw = '{}';
+          try { raw = localStorage.getItem('yourtube-search-results-v1') || sessionStorage.getItem('yourtube-search-results-v1') || '{}'; } catch {}
+          const entries = JSON.parse(raw) || {};
+          const key = searchCacheKey(activeSearchQuery);
+          const previous = entries[key] || {};
+          const entry = {
+            searchId: activeSearchId, videos: cachedSearchVideos.slice(0, 80),
+            offset: Math.min(searchOffset, 80), total: searchTotal, hasMore: searchHasMore, complete: searchSessionComplete,
+            localVideos: previous.localVideos || [], localTotal: Number(previous.localTotal) || 0
+          };
+          if (entries[key] && Object.keys(entry).every(field => JSON.stringify(entries[key][field]) === JSON.stringify(entry[field]))) return;
+          entries[key] = { savedAt: Date.now(), ...entry };
+          const recent = Object.entries(entries).sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0)).slice(0, 12);
+          const serialized = JSON.stringify(Object.fromEntries(recent));
+          try { localStorage.setItem('yourtube-search-results-v1', serialized); } catch {}
+          sessionStorage.setItem('yourtube-search-results-v1', serialized);
+        } catch {}
+      }
       function renderSearchResults(videos) {
         const previousScrollTop = searchDropdownResults.scrollTop;
         const seen = new Set();
@@ -1953,9 +1999,16 @@
           return;
         }
         for (const video of cachedSearchVideos.slice(0, searchVisibleCount)) {
-          const link = document.createElement('a');
-          link.className = 'search-result';
-          link.href = `/watch/${encodeURIComponent(video.id)}`;
+          const row = document.createElement('div');
+          row.className = 'search-result';
+          const href = `/${video.kind === 'short' ? 'shorts' : 'watch'}/${encodeURIComponent(video.id)}`;
+          const media = document.createElement('div');
+          media.className = 'recommendation-media search-result-media';
+          const mediaLink = document.createElement('a');
+          mediaLink.className = 'recommendation-media-link search-result-media-link';
+          mediaLink.href = href;
+          mediaLink.dataset.videoId = video.id;
+          if (searchSource === 'youtube' && activeSearchId) mediaLink.dataset.searchId = activeSearchId;
           const thumb = document.createElement('div');
           thumb.className = 'search-result-thumb';
           const image = document.createElement('img');
@@ -1970,6 +2023,13 @@
             duration.textContent = video.duration;
             thumb.append(duration);
           }
+          mediaLink.append(thumb);
+          media.append(mediaLink);
+          createSidebarMiniActions(video, media, mediaLink, true);
+          const detailsLink = document.createElement('a');
+          detailsLink.className = 'search-result-copy search-result-text-link';
+          detailsLink.href = href;
+          if (searchSource === 'youtube' && activeSearchId) detailsLink.dataset.searchId = activeSearchId;
           const details = document.createElement('div');
           const titleText = document.createElement('div');
           titleText.className = 'search-result-title';
@@ -1997,8 +2057,9 @@
             source.textContent = 'More from your collected feed';
             details.append(source);
           }
-          link.append(thumb, details);
-          searchDropdownResults.append(link);
+          detailsLink.append(details);
+          row.append(media, detailsLink);
+          searchDropdownResults.append(row);
         }
         searchDropdownResults.scrollTop = previousScrollTop;
       }
@@ -2044,37 +2105,26 @@
             searchHasMore = Boolean(result.hasMore);
             searchResultsReady = true;
             searchLoading = false;
+            searchSessionComplete = true;
+            saveSearchCache();
             setSearchStatus(`${searchTotal} downloaded ${searchTotal === 1 ? 'video' : 'videos'}`);
             return;
           }
-          const signature = batch.map(video => video.id).join('|');
-          if (batch.length >= 4) {
-            renderSearchResults(batch);
-            searchOffset = batch.length;
-            searchHasMore = Boolean(result.hasMore);
+          renderSearchResults(batch);
+          searchOffset = batch.length;
+          searchHasMore = Boolean(result.hasMore) || batch.length > searchVisibleCount || !searchSessionComplete;
+          if (batch.length >= 4 || searchSessionComplete) {
             searchResultsReady = true;
             searchLoading = false;
-            setSearchStatus(`${searchTotal} collected YouTube stubs match`);
-            return;
           }
-          if (batch.length && signature === searchLastSignature) searchStableCount += 1;
-          else searchStableCount = 0;
-          searchLastSignature = signature;
-          if (batch.length && searchStableCount >= 2 && !result.hasMore && searchSessionComplete) {
-            renderSearchResults(batch);
-            searchOffset = batch.length;
-            searchHasMore = Boolean(result.hasMore);
-            searchResultsReady = true;
-            searchLoading = false;
-            setSearchStatus(`${searchTotal} matching stubs · showing the stable batch`);
-            return;
-          }
-          setSearchStatus('Waiting for matching stubs in the collected YouTube feed…', true);
-          searchPollTimer = setTimeout(() => pollFirstSearchBatch(token), 1400);
+          saveSearchCache();
+          setSearchStatus(batch.length >= 4 ? `${searchTotal} collected YouTube stubs match · scroll for more` : 'Waiting for matching stubs in the collected YouTube feed…', true);
         } catch (error) {
           if (token !== searchRequestToken) return;
-          setSearchStatus(`${error.message} Retrying…`, true);
-          searchPollTimer = setTimeout(() => pollFirstSearchBatch(token), 2500);
+          searchLoading = false;
+          searchResultsReady = true;
+          searchHasMore = searchSource === 'youtube' && networkMode === 'online';
+          setSearchStatus(`${error.message} Scroll down to retry.`, false);
         }
       }
       function beginTypedSearch(query) {
@@ -2084,24 +2134,35 @@
         searchRequestToken += 1;
         const token = searchRequestToken;
         activeSearchQuery = query;
-        activeSearchId = crypto.randomUUID();
+        const cached = readSearchCache(query);
+        activeSearchId = cached?.searchId || crypto.randomUUID();
         searchSelectionRecorded = false;
-        searchSessionComplete = searchSource !== 'youtube';
-        searchSessionAcknowledged = false;
-        searchSessionVideos = [];
+        searchSessionComplete = cached ? Boolean(cached.complete) : searchSource !== 'youtube';
+        searchSessionAcknowledged = Boolean(cached?.complete);
+        searchSessionVideos = cached?.videos?.slice() || [];
         searchVisibleCount = 4;
-        searchOffset = 0;
-        searchTotal = 0;
-        searchHasMore = false;
-        searchResultsReady = false;
-        searchLoading = true;
+        searchDropdownLastScrollTop = 0;
+        searchOffset = Number(cached?.offset) || 0;
+        searchTotal = Number(cached?.total) || 0;
+        searchHasMore = Boolean(cached?.hasMore) || searchSessionVideos.length > searchVisibleCount || Boolean(cached && !cached.complete) || Boolean(cached && searchSource === 'youtube' && networkMode === 'online');
+        searchResultsReady = Boolean(cached?.complete) || searchSessionVideos.length >= 4;
+        searchLoading = !cached || !cached.complete;
         searchStableCount = 0;
         searchLastSignature = '';
-        renderSearchResults([]);
+        renderSearchResults(searchSessionVideos);
+        searchDropdownResults.scrollTop = 0;
         showSearchDropdown(query);
-        setSearchStatus(searchSource === 'youtube' ? 'Gathering matching YouTube stubs…' : 'Searching downloaded videos…', true);
-        searchDebounceTimer = setTimeout(() => pollFirstSearchBatch(token), 250);
-        if (searchSource === 'youtube') searchCollectionTimer = setTimeout(() => startTypedSearchCollection(token), 1000);
+        if (cached?.complete) {
+          searchLoading = false;
+          setSearchStatus(`${searchTotal || cachedSearchVideos.length} cached ${searchSource === 'local' ? 'local results' : 'YouTube results'} · scroll for more`);
+        } else if (cached) {
+          setSearchStatus('Resuming saved results…', true);
+          searchPollTimer = setTimeout(() => pollTypedSearchSession(token), 0);
+        } else {
+          setSearchStatus(searchSource === 'youtube' ? 'Gathering matching YouTube stubs…' : 'Searching downloaded videos…', true);
+          searchDebounceTimer = setTimeout(() => pollFirstSearchBatch(token), 250);
+          if (searchSource === 'youtube') searchCollectionTimer = setTimeout(() => startTypedSearchCollection(token), 1000);
+        }
       }
       async function startTypedSearchCollection(token) {
         if (token !== searchRequestToken || searchSource !== 'youtube') return;
@@ -2115,39 +2176,56 @@
           window.postMessage({ type: 'yourtube:collect-search', searchId: activeSearchId, query: activeSearchQuery }, location.origin);
           pollTypedSearchSession(token);
         } catch (error) {
-          if (token === searchRequestToken) setSearchStatus(`${error.message} Showing saved local matches.`);
+          if (token === searchRequestToken) {
+            searchSessionComplete = true;
+            searchResultsReady = true;
+            searchLoading = false;
+            searchHasMore = searchVisibleCount < cachedSearchVideos.length || searchOffset < searchTotal || searchSource === 'youtube';
+            saveSearchCache();
+            setSearchStatus(`${error.message} Showing saved local matches.`);
+          }
         }
       }
       async function pollTypedSearchSession(token) {
         if (token !== searchRequestToken || !activeSearchId) return;
         try {
           const sessionResponse = await fetch(`/api/search-sessions/${encodeURIComponent(activeSearchId)}?refresh=${Date.now()}`, { cache: 'no-store' });
-          const session = sessionResponse.ok ? await sessionResponse.json() : null;
-          const params = new URLSearchParams({ q: activeSearchQuery, source: 'youtube', offset: '0', limit: '20', refresh: String(Date.now()) });
-          const localResponse = await fetch(`/api/search?${params}`, { cache: 'no-store' });
-          const local = localResponse.ok ? await localResponse.json() : { videos: [], total: 0, hasMore: false };
+          if (token !== searchRequestToken) return;
+          if (!sessionResponse.ok && sessionResponse.status === 404) {
+            searchSessionComplete = true;
+            searchResultsReady = true;
+            searchLoading = false;
+            searchHasMore = searchVisibleCount < cachedSearchVideos.length || searchOffset < searchTotal || searchSource === 'youtube';
+            saveSearchCache();
+            setSearchStatus(cachedSearchVideos.length ? `${searchTotal || cachedSearchVideos.length} cached YouTube results · scroll for more` : 'No matching YouTube results were collected.');
+            return;
+          }
+          if (!sessionResponse.ok) throw new Error('Search capture status is unavailable.');
+          const session = await sessionResponse.json();
           if (token !== searchRequestToken) return;
           searchSessionVideos = Array.isArray(session?.videos) ? session.videos.filter(video => video && !video.downloaded) : searchSessionVideos;
-          searchSessionComplete = session?.status === 'ready' || session?.status === 'displayed';
-          searchOffset = Math.max(searchOffset, Array.isArray(local.videos) ? local.videos.length : 0);
+          searchSessionComplete = ['ready', 'displayed', 'stale'].includes(session?.status);
           const existing = new Set(cachedSearchVideos.map(video => video.id));
-          const fresh = [...(Array.isArray(local.videos) ? local.videos : []), ...searchSessionVideos]
-            .filter(video => video?.id && !existing.has(video.id) && existing.add(video.id));
+          const fresh = searchSessionVideos.filter(video => video?.id && !existing.has(video.id) && existing.add(video.id));
           if (fresh.length) renderSearchResults([...cachedSearchVideos, ...fresh]);
           const totalVisible = cachedSearchVideos.length;
-          searchTotal = Math.max(Number(local.total) || 0, Number(session?.videos?.length) || 0, totalVisible);
-          searchHasMore = Boolean(local.hasMore) || searchVisibleCount < cachedSearchVideos.length || !searchSessionComplete;
+          searchTotal = Math.max(searchTotal, Number(session?.videos?.length) || 0, totalVisible);
+          searchOffset = Math.max(searchOffset, totalVisible);
+          searchHasMore = searchVisibleCount < cachedSearchVideos.length || searchOffset < searchTotal || !searchSessionComplete || (searchSource === 'youtube' && networkMode === 'online');
           if (totalVisible >= 4 || searchSessionComplete) {
             searchResultsReady = true;
             searchLoading = false;
             setSearchStatus(totalVisible ? `${searchTotal} collected YouTube results · scroll for more` : 'No matching YouTube results were collected.');
           }
+          saveSearchCache();
           if (searchSessionComplete && !searchSessionAcknowledged) {
             searchSessionAcknowledged = true;
             fetch(`/api/search-sessions/${encodeURIComponent(activeSearchId)}`, { method: 'POST' }).catch(() => {});
           }
-        } catch {}
-        if (token === searchRequestToken) searchPollTimer = setTimeout(() => pollTypedSearchSession(token), 1200);
+          if (!searchSessionComplete) searchPollTimer = setTimeout(() => pollTypedSearchSession(token), 1200);
+        } catch {
+          if (token === searchRequestToken) searchPollTimer = setTimeout(() => pollTypedSearchSession(token), 1800);
+        }
       }
       async function loadMoreSearchResults() {
         if (!searchResultsReady || !searchHasMore || searchLoading) return;
@@ -2158,6 +2236,8 @@
             searchVisibleCount += 4;
             renderSearchResults(cachedSearchVideos);
             searchLoading = false;
+            searchHasMore = searchVisibleCount < cachedSearchVideos.length || searchOffset < searchTotal || !searchSessionComplete || (searchSource === 'youtube' && networkMode === 'online');
+            saveSearchCache();
             setSearchStatus(`Showing ${Math.min(searchVisibleCount, cachedSearchVideos.length)} of ${Math.max(searchTotal, cachedSearchVideos.length)} results · scroll for 4 more`);
             return;
           }
@@ -2171,6 +2251,7 @@
           searchTotal = Number(result.total) || searchTotal;
           searchHasMore = Boolean(result.hasMore) || searchSessionVideos.length > cachedSearchVideos.length || !searchSessionComplete;
           searchLoading = false;
+          saveSearchCache();
           setSearchStatus(batch.length ? `Showing ${Math.min(searchVisibleCount, cachedSearchVideos.length)} of ${Math.max(searchTotal, cachedSearchVideos.length)} results · scroll for 4 more` : searchSessionComplete ? 'No more matching results.' : 'Waiting for the next YouTube results…', !batch.length && !searchSessionComplete);
         } catch (error) {
           if (token === searchRequestToken) {
@@ -2180,7 +2261,9 @@
         }
       }
       searchDropdownResults.addEventListener('scroll', () => {
-        if (searchDropdownResults.scrollTop + searchDropdownResults.clientHeight >= searchDropdownResults.scrollHeight - 60) loadMoreSearchResults();
+        const movedDown = searchDropdownResults.scrollTop > searchDropdownLastScrollTop;
+        searchDropdownLastScrollTop = searchDropdownResults.scrollTop;
+        if (movedDown && searchDropdownResults.scrollTop + searchDropdownResults.clientHeight >= searchDropdownResults.scrollHeight - 60) loadMoreSearchResults();
       }, { passive: true });
       searchDropdownResults.addEventListener('wheel', event => {
         if (event.deltaY <= 0 || searchLoading || !searchHasMore) return;
@@ -2192,7 +2275,7 @@
         }
       }, { passive: false });
       searchDropdownResults.addEventListener('click', async event => {
-        const link = event.target.closest('a.search-result');
+        const link = event.target.closest('a.search-result-media-link, a.search-result-text-link');
         if (!link || searchSource !== 'youtube' || searchSelectionRecorded || !activeSearchId) return;
         event.preventDefault();
         searchSelectionRecorded = true;
@@ -2355,6 +2438,14 @@
         if (!seconds) return 'now';
         if (seconds < 60) return `in ${seconds}s`;
         return `in ${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+      }
+
+      function activeYoutubeCooldown(rows = []) {
+        const until = rows.reduce((latest, item) => {
+          const candidate = Date.parse(item.youtubeCooldownUntil || '');
+          return Number.isFinite(candidate) ? Math.max(latest, candidate) : latest;
+        }, 0);
+        return until > Date.now() ? new Date(until).toISOString() : '';
       }
 
       function showProgress(result = {}) {
@@ -2619,6 +2710,9 @@
             if (localStatus.ok) result = await localStatus.json();
           } catch {}
           if (startToken !== playerStartToken) return;
+          if (explicitRetry && Date.parse(result.youtubeCooldownUntil || '') > Date.now()) {
+            throw new Error(`YouTube sign-in cooldown is active. Try again ${retryCountdown(result.youtubeCooldownUntil)}.`);
+          }
           let response;
           if (result.status !== 'ready') {
             response = await fetch(`/api/downloads/${activeVideoId}${explicitRetry ? '?retry=1' : ''}`, { method: 'POST' });
@@ -2682,6 +2776,8 @@
       }
 
       function renderActiveDownloads(rows) {
+        const youtubeCooldownUntil = activeYoutubeCooldown(rows);
+        const youtubeCooldownActive = Boolean(youtubeCooldownUntil);
         const activeRows = rows.filter(item => !['paused', 'pending', 'waiting-live'].includes(item.retryStatus));
         const queuedRows = rows.filter(item => ['pending', 'waiting-live'].includes(item.retryStatus));
         const pausedRows = rows.filter(item => ['paused', 'paused-offline'].includes(item.retryStatus));
@@ -2689,9 +2785,16 @@
         const orderedRows = orderRows(activeRows);
         const orderedQueuedRows = orderRows(queuedRows);
         const orderedPausedRows = orderRows(pausedRows);
-        watchApp.querySelector('#downloads-subtitle').textContent = orderedRows.length
-          ? `${orderedRows.length} ${orderedRows.length === 1 ? 'video is' : 'videos are'} being added to your local library, ordered by progress.`
-          : 'No videos are downloading right now.';
+        const integrityImports = orderedRows.filter(item => item.isIntegrityImport).length;
+        const integrityQueued = orderedRows.filter(item => item.integrityQueued).length;
+        const networkDownloads = orderedRows.length - integrityImports;
+        watchApp.querySelector('#downloads-subtitle').textContent = integrityImports && !networkDownloads
+          ? `${integrityImports} local ${integrityImports === 1 ? 'file is' : 'files are'} in the integrity queue${integrityQueued ? ` · ${integrityQueued} waiting` : ''}.`
+          : integrityImports
+            ? `${networkDownloads} media ${networkDownloads === 1 ? 'download' : 'downloads'} active · ${integrityImports} local ${integrityImports === 1 ? 'file is' : 'files are'} in the integrity queue${integrityQueued ? ` · ${integrityQueued} waiting` : ''}.`
+            : networkDownloads
+              ? `${networkDownloads} ${networkDownloads === 1 ? 'video is' : 'videos are'} being added to your local library, ordered by progress.`
+              : 'No videos are downloading right now.';
         const pausedHeading = watchApp.querySelector('#paused-downloads-heading');
         const pausedSubtitle = watchApp.querySelector('#paused-downloads-subtitle');
         queuedDownloadsHeadingRow.hidden = !orderedQueuedRows.length;
@@ -2699,7 +2802,9 @@
         pausedDownloadsHeadingRow.hidden = !orderedPausedRows.length;
         pausedSubtitle.hidden = !orderedPausedRows.length;
         pausedHeading.textContent = `Paused downloads · ${orderedPausedRows.length}`;
-        pausedSubtitle.textContent = 'Each paused item shows why it stopped. Retry after fixing the issue; Online mode is required.';
+        pausedSubtitle.textContent = youtubeCooldownActive
+          ? `YouTube sign-in cooldown is active for ${retryCountdown(youtubeCooldownUntil)}. Manual retries and new downloads are paused to avoid more blocked requests; retry after it ends.`
+          : 'Each paused item shows why it stopped. Retry after fixing the issue; Online mode is required.';
         activeDownloadsList.replaceChildren();
         queuedDownloadsList.replaceChildren();
         pausedDownloadsList.replaceChildren();
@@ -2734,13 +2839,13 @@
             overlay.className = 'active-download-paused-overlay';
             overlay.textContent = 'PAUSED';
             thumb.append(overlay);
-          } else if (!queued) {
+          } else if (!queued && !item.integrityQueued) {
             const actions = document.createElement('div');
             actions.className = 'active-download-thumb-actions';
             const pauseButton = document.createElement('button');
             pauseButton.className = 'active-download-thumb-action';
             pauseButton.type = 'button';
-            pauseButton.title = item.pauseRequested ? 'Pausing download…' : 'Pause download';
+            pauseButton.title = item.pauseRequested ? 'Pausing…' : item.isIntegrityImport ? 'Pause integrity check' : 'Pause download';
             pauseButton.setAttribute('aria-label', pauseButton.title);
             pauseButton.disabled = item.pauseRequested || item.finishRequested || item.endRequested || item.discardRequested;
             pauseButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14M15 5v14"/></svg>';
@@ -2774,8 +2879,12 @@
           const progress = Math.max(0, Math.min(100, Number(item.progress) || 0));
           const track = document.createElement('div');
           track.className = `active-download-progress${!paused && !queued && progress === 0 ? ' indeterminate' : ''}`;
+          track.hidden = Boolean(item.isIntegrityImport);
+          if (item.isIntegrityImport) track.style.display = 'none';
           track.setAttribute('role', 'progressbar');
-          track.setAttribute('aria-label', `Download progress for ${item.title || 'video'}`);
+          track.setAttribute('aria-label', item.isIntegrityImport
+            ? `Integrity check for ${item.title || 'video'}`
+            : `Download progress for ${item.title || 'video'}`);
           track.setAttribute('aria-valuemin', '0');
           track.setAttribute('aria-valuemax', '100');
           track.setAttribute('aria-valuenow', String(Math.round(progress)));
@@ -2787,11 +2896,13 @@
           status.className = 'active-download-status';
           const stageText = document.createElement('span');
           const attempts = Math.max(0, Number(item.retryAttempts) || 0);
-          stageText.textContent = paused ? item.stage || 'Paused' : queued
+          stageText.textContent = paused ? item.stage || 'Paused' : item.integrityQueued
+            ? 'Queued for integrity check'
+            : queued
             ? attempts ? `Retry scheduled · attempt ${attempts + 1} of 10` : item.stage || 'Queued for download'
             : item.stage || 'Preparing download…';
           const percentage = document.createElement('span');
-          percentage.textContent = paused ? 'Paused' : queued
+          percentage.textContent = item.integrityQueued ? 'Queued' : item.isIntegrityImport ? 'Checking' : paused ? 'Paused' : queued
             ? attempts ? `Next ${retryCountdown(item.retryAt)}` : 'Queued'
             : item.isLive ? 'LIVE' : progress > 0 ? `${Math.round(progress)}%` : 'Working…';
           status.append(stageText, percentage);
@@ -2863,9 +2974,10 @@
             const retryButton = document.createElement('button');
             retryButton.className = 'active-download-retry';
             retryButton.type = 'button';
-            retryButton.textContent = 'Retry';
-            retryButton.disabled = networkMode !== 'online';
-            if (retryButton.disabled) retryButton.title = 'Available when Online.';
+            retryButton.textContent = youtubeCooldownActive ? `Retry ${retryCountdown(youtubeCooldownUntil)}` : 'Retry';
+            retryButton.disabled = networkMode !== 'online' || youtubeCooldownActive;
+            if (youtubeCooldownActive) retryButton.title = `YouTube is asking for sign-in. Retry after ${new Date(youtubeCooldownUntil).toLocaleTimeString()}.`;
+            else if (retryButton.disabled) retryButton.title = 'Available when Online.';
             retryButton.addEventListener('click', async () => {
               retryButton.disabled = true;
               retryButton.textContent = 'Retrying…';
@@ -2873,14 +2985,15 @@
                 const response = await fetch(`/api/downloads/${item.id}?retry=1`, { method: 'POST' });
                 if (!response.ok) {
                   const result = await response.json();
+                  if (response.status === 429) await refreshActiveDownloads();
                   throw new Error(result.error || 'Could not retry this download.');
                 }
                 await refreshActiveDownloads();
               } catch (error) {
                 pausedSubtitle.textContent = error.message;
               } finally {
-                retryButton.disabled = false;
-                retryButton.textContent = 'Retry';
+                retryButton.disabled = networkMode !== 'online' || youtubeCooldownActive;
+                retryButton.textContent = youtubeCooldownActive ? `Retry ${retryCountdown(youtubeCooldownUntil)}` : 'Retry';
               }
             });
             info.append(retryButton);
@@ -3005,21 +3118,27 @@
         }, isError ? 9000 : 5500);
       }
 
-      function renderRecentDownloads(rows) {
-        const items = (Array.isArray(rows) ? rows : []).filter(item => /^[A-Za-z0-9_-]{11}$/.test(String(item.id || ''))).slice(0, 12);
+      function renderRecentDownloads(rows, kind) {
+        const isShorts = kind === 'shorts';
+        const section = isShorts ? recentShortsSection : recentDownloadsSection;
+        const carousel = isShorts ? recentShortsCarousel : recentDownloadCarousel;
+        const items = (Array.isArray(rows) ? rows : []).filter(item =>
+          /^[A-Za-z0-9_-]{11}$/.test(String(item.id || '')) && (item.kind === 'short') === isShorts
+        ).slice(0, 12);
         const signature = JSON.stringify(items.map(item => [item.id, item.title, item.channel, item.thumbnail, item.duration, item.acquiredAt]));
-        if (signature === recentDownloadsSignature) {
-          recentDownloadCarousel.querySelectorAll('[data-recent-acquired-at]').forEach(age => { age.textContent = recentDownloadAge(age.dataset.recentAcquiredAt); });
-          recentDownloadsSection.hidden = !items.length;
+        if (signature === recentDownloadsSignatures[kind]) {
+          carousel.querySelectorAll('[data-recent-acquired-at]').forEach(age => { age.textContent = recentDownloadAge(age.dataset.recentAcquiredAt); });
+          section.hidden = !items.length;
           return;
         }
-        recentDownloadsSignature = signature;
-        recentDownloadCarousel.replaceChildren();
-        recentDownloadsSection.hidden = !items.length;
+        recentDownloadsSignatures[kind] = signature;
+        carousel.replaceChildren();
+        section.hidden = !items.length;
         for (const item of items) {
           const id = String(item.id);
           const card = document.createElement('article');
           card.className = 'recent-download-card';
+          card.dataset.mediaKind = isShorts ? 'short' : 'video';
           const thumb = document.createElement('div');
           thumb.className = 'recent-download-thumb';
           const image = document.createElement('img');
@@ -3049,36 +3168,40 @@
             button.addEventListener('click', event => { event.stopPropagation(); void handler(button); });
             return button;
           };
-          const playButton = makeAction('Play locally', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>', 'play', () => navigateApp(`/watch/${encodeURIComponent(id)}`));
-          const queued = readPlaybackQueue().some(queuedItem => queuedItem.id === id);
-          const queueButton = makeAction(queued ? 'Already in Up next' : 'Add to Up next', queued
-            ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>'
-            : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>', '', async button => {
-            button.disabled = true;
-            button.dataset.recentQueueBusy = 'true';
-            button.title = 'Adding to Up next…';
-            try {
-              const response = await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: id }) });
-              const result = await response.json().catch(() => ({}));
-              if (!response.ok) throw new Error(result.error || 'Could not add this video to Up next.');
-              const alreadyQueued = Boolean(result.alreadyQueued);
-              button.title = alreadyQueued ? 'Already in Up next' : 'Added to Up next';
-              button.setAttribute('aria-label', `${button.title}: ${item.title || id}`);
-              button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
-              delete button.dataset.recentQueueBusy;
-              setRecentDownloadsStatus(`${alreadyQueued ? 'Already in Up next' : 'Added to Up next'} · ${item.title || id}`);
-              window.dispatchEvent(new CustomEvent('yourtube-queue-updated'));
-            } catch (error) {
-              delete button.dataset.recentQueueBusy;
-              button.disabled = false;
-              button.title = error.message || 'Could not add this video to Up next.';
-              button.setAttribute('aria-label', button.title);
-              setRecentDownloadsStatus(button.title, true);
-            }
-          }, queued);
-          queueButton.dataset.recentQueueId = id;
-          const playlistButton = makeAction('Add to playlist', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 11h12M4 16h8M19 13v8m-4-4h8"/></svg>', '', () => openRecentPlaylistDialog(item));
-          actions.append(playButton, queueButton, playlistButton);
+          const playPath = isShorts ? `/shorts/${encodeURIComponent(id)}` : `/watch/${encodeURIComponent(id)}`;
+          const playButton = makeAction('Play locally', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>', 'play', () => navigateApp(playPath));
+          actions.append(playButton);
+          if (!isShorts) {
+            const queued = readPlaybackQueue().some(queuedItem => queuedItem.id === id);
+            const queueButton = makeAction(queued ? 'Already in Up next' : 'Add to Up next', queued
+              ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>'
+              : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>', '', async button => {
+              button.disabled = true;
+              button.dataset.recentQueueBusy = 'true';
+              button.title = 'Adding to Up next…';
+              try {
+                const response = await fetch('/api/queue', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ videoId: id }) });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Could not add this video to Up next.');
+                const alreadyQueued = Boolean(result.alreadyQueued);
+                button.title = alreadyQueued ? 'Already in Up next' : 'Added to Up next';
+                button.setAttribute('aria-label', `${button.title}: ${item.title || id}`);
+                button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+                delete button.dataset.recentQueueBusy;
+                setRecentDownloadsStatus(`${alreadyQueued ? 'Already in Up next' : 'Added to Up next'} · ${item.title || id}`);
+                window.dispatchEvent(new CustomEvent('yourtube-queue-updated'));
+              } catch (error) {
+                delete button.dataset.recentQueueBusy;
+                button.disabled = false;
+                button.title = error.message || 'Could not add this video to Up next.';
+                button.setAttribute('aria-label', button.title);
+                setRecentDownloadsStatus(button.title, true);
+              }
+            }, queued);
+            queueButton.dataset.recentQueueId = id;
+            const playlistButton = makeAction('Add to playlist', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 11h12M4 16h8M19 13v8m-4-4h8"/></svg>', '', () => openRecentPlaylistDialog(item));
+            actions.append(queueButton, playlistButton);
+          }
           thumb.append(actions);
           const copy = document.createElement('div');
           copy.className = 'recent-download-card-copy';
@@ -3093,10 +3216,11 @@
           const age = document.createElement('span');
           age.className = 'recent-download-card-age';
           age.textContent = recentDownloadAge(item.acquiredAt);
+          age.dataset.recentAcquiredAt = item.acquiredAt || '';
           meta.append(author, age);
           copy.append(heading, meta);
           card.append(thumb, copy);
-          recentDownloadCarousel.append(card);
+          carousel.append(card);
         }
       }
 
@@ -3117,10 +3241,13 @@
       async function refreshRecentDownloads() {
         const request = ++recentDownloadsRequest;
         try {
-          const response = await fetch(`/api/downloads/recent?refresh=${Date.now()}`, { cache: 'no-store' });
+          const response = await fetch(`/api/downloads/recent?kind=split&refresh=${Date.now()}`, { cache: 'no-store' });
           if (!response.ok) return;
-          const rows = await response.json();
-          if (request === recentDownloadsRequest) renderRecentDownloads(rows);
+          const recent = await response.json();
+          if (request === recentDownloadsRequest) {
+            renderRecentDownloads(recent.videos, 'videos');
+            renderRecentDownloads(recent.shorts, 'shorts');
+          }
         } catch {}
       }
 
@@ -3523,7 +3650,7 @@
       }
 
       function syncSidebarDownloadButtons(videoId) {
-        watchApp.querySelectorAll(`[data-download-video-id="${videoId}"]`).forEach(button => paintSidebarDownloadButton(button, videoId));
+        playerRouteRoot.querySelectorAll(`[data-download-video-id="${videoId}"]`).forEach(button => paintSidebarDownloadButton(button, videoId));
       }
 
       function createSidebarDownloadControl(video, media) {
@@ -3545,9 +3672,9 @@
         return button;
       }
 
-      function createSidebarMiniActions(video, media, href) {
+      function createSidebarMiniActions(video, media, mediaLink, allowShort = false) {
         const id = String(video?.id || '');
-        if (!/^[A-Za-z0-9_-]{11}$/.test(id) || video?.kind === 'short') return null;
+        if (!/^[A-Za-z0-9_-]{11}$/.test(id) || (video?.kind === 'short' && !allowShort)) return null;
         const local = video.downloaded === true || Number(video.downloaded) === 1;
         const actions = document.createElement('div');
         actions.className = 'recommendation-mini-actions';
@@ -3569,32 +3696,38 @@
           download.dataset.downloadVideoId = id;
           download.dataset.requiresOnline = 'true';
           download.innerHTML = sidebarDownloadIcons.arrow;
+          download.title = 'Download locally';
+          download.setAttribute('aria-label', `Download ${video.title || 'video'} locally`);
           download.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             if (download.disabled || networkMode !== 'online') return;
-            void acquireSidebarVideo(video, { advancePlayback: false });
+            void acquireSidebarVideo(video, { queueWhenReady: false, advancePlayback: false });
           });
           paintSidebarDownloadButton(download, id);
           actions.append(download);
         }
-        const queue = document.createElement('button');
-        queue.className = 'recommendation-mini-action recommendation-mini-queue';
-        queue.type = 'button';
-        queue.dataset.miniQueueVideoId = id;
-        queue.dataset.localAvailable = String(local);
-        queue.textContent = '+';
-        queue.addEventListener('click', async event => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (queue.disabled) return;
-          queue.disabled = true;
-          queue.textContent = '…';
-          const added = await addToPlaybackQueue(video);
-          if (added && !local && networkMode === 'online') void acquireSidebarVideo(video, { queueWhenReady: false, advancePlayback: false });
-          syncMiniActionButtons();
-        });
-        actions.append(queue);
+        if (video?.kind !== 'short') {
+          const queue = document.createElement('button');
+          queue.className = 'recommendation-mini-action recommendation-mini-queue';
+          queue.type = 'button';
+          queue.dataset.miniQueueVideoId = id;
+          queue.dataset.localAvailable = String(local);
+          queue.textContent = '+';
+          queue.title = local ? 'Add to Up next' : 'Add to Up next and download';
+          queue.setAttribute('aria-label', local ? `Add ${video.title || 'video'} to Up next` : `Add ${video.title || 'video'} to Up next and download`);
+          queue.addEventListener('click', async event => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (queue.disabled) return;
+            queue.disabled = true;
+            queue.textContent = '…';
+            const added = await addToPlaybackQueue(video);
+            if (added && !local && networkMode === 'online') void acquireSidebarVideo(video, { queueWhenReady: false, advancePlayback: false });
+            syncMiniActionButtons();
+          });
+          actions.append(queue);
+        }
         media.append(actions);
         syncMiniActionButtons();
         return actions;
@@ -3622,7 +3755,7 @@
         sidebarDownloadStates.set(id, state);
         syncSidebarDownloadButtons(id);
         try {
-          let response = await fetch(`/api/downloads/${id}?retry=1`, { method: 'POST' });
+          let response = await fetch(`/api/downloads/${id}`, { method: 'POST' });
           let result = await response.json();
           if (!response.ok && response.status !== 202) throw new Error(result.error || 'Could not start the download.');
           while (result.status !== 'ready') {
@@ -3642,6 +3775,11 @@
           state.status = 'complete';
           state.progress = 100;
           state.stage = 'Downloaded';
+          video.downloaded = 1;
+          if (cachedSearchVideos.some(item => item.id === id)) {
+            renderSearchResults(cachedSearchVideos);
+            saveSearchCache();
+          }
           syncSidebarDownloadButtons(id);
           await wait(900);
           if (queueWhenReady) await queueSidebarDownload(id);
@@ -3737,7 +3875,7 @@
           mediaLink.append(thumbnail);
           media.append(mediaLink);
           createSidebarDownloadControl(item, media);
-          createSidebarMiniActions(item, media, href);
+          createSidebarMiniActions(item, media, mediaLink);
           const text = document.createElement('div');
           if (offset === 0) {
             const nowPlaying = document.createElement('div');
@@ -3875,7 +4013,7 @@
             mediaLink.append(thumbnail);
             media.append(mediaLink);
             createSidebarDownloadControl(video, media);
-            createSidebarMiniActions(video, media, href);
+            createSidebarMiniActions(video, media, mediaLink);
             const text = document.createElement('div');
             if (video.searchQuery) {
               const reason = document.createElement('div');

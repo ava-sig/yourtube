@@ -65,7 +65,8 @@ async function queueVideoFromYouTube(message, sender) {
   if (extensionMode !== 'online') throw new Error('Set YourTube Online to queue a new download.');
   await postSync(syncEndpoint({
     type: 'yourtube:sync', videos: [{ ...video, id }],
-    provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other'
+    provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other',
+    sourceContext: message.sourceContext || null
   }));
 
   const response = await fetch(`http://127.0.0.1:4173/api/downloads/${encodeURIComponent(id)}`, {
@@ -345,7 +346,7 @@ function syncEndpoint(message) {
         ? { captureId: message.captureId, channel: message.channel || {}, channelKey: message.channelKey, tab: message.tab, videos: message.videos || [], phase: message.phase, message: message.message || '', final: message.final === true, complete: message.complete === true, extensionVersion }
         : isHomepageCategory
           ? { captureId: message.captureId, category: message.category || {}, videos: message.videos || [], complete: message.complete === true, extensionVersion }
-          : { videos: message.videos || [], subscriptions: message.subscriptions || [], playlists: message.playlists || [], homepageLayout: message.homepageLayout || null, homepageCategories: message.homepageCategories || [], provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other', extensionVersion },
+          : { videos: message.videos || [], subscriptions: message.subscriptions || [], playlists: message.playlists || [], homepageLayout: message.homepageLayout || null, homepageCategories: message.homepageCategories || [], provisionCategory: message.provisionCategory === 'homepage' ? 'homepage' : 'other', sourceContext: message.sourceContext || null, extensionVersion },
     isSearch,
     isChannel,
     isHomepageCategory,
@@ -477,11 +478,22 @@ async function extensionDiagnosticsSnapshot() {
     else if (item.redirected) item.tabStatus = 'YouTube redirected · waiting';
     return item;
   }));
-  let currentPage = 'Unknown page';
+  let currentPage = 'Page URL unavailable';
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    const host = new URL(tab?.url || '').hostname;
-    currentPage = host === 'www.youtube.com' || host === 'm.youtube.com' ? 'YouTube' : host.includes('localhost') || host === '127.0.0.1' ? 'YourTube' : host || 'Unknown page';
+    const rawUrl = tab?.pendingUrl || tab?.url || '';
+    if (rawUrl) {
+      const pageUrl = new URL(rawUrl);
+      const host = pageUrl.hostname.toLowerCase();
+      if (host === 'youtube.com' || host.endsWith('.youtube.com')) currentPage = 'YouTube';
+      else if (['localhost', '127.0.0.1', '[::1]', '::1'].includes(host)) currentPage = 'YourTube';
+      else if (pageUrl.protocol === 'chrome:' || pageUrl.protocol === 'edge:') currentPage = ['newtab', 'new-tab-page', 'startpageshared'].includes(host) || pageUrl.pathname === '/newtab' ? 'New tab' : 'Browser page';
+      else if (pageUrl.protocol === 'about:') currentPage = pageUrl.pathname === 'blank' ? 'New tab' : 'Browser page';
+      else if (pageUrl.protocol === 'chrome-extension:') currentPage = 'Extension page';
+      else currentPage = host || tab.title || 'Browser page';
+    } else if (tab?.title && !/^(?:new tab|start page)$/i.test(tab.title.trim())) {
+      currentPage = tab.title.slice(0, 80);
+    }
   } catch {}
   const syncRetries = Array.isArray(stored[RETRY_KEY]) ? stored[RETRY_KEY] : [];
   const channelQueue = Array.isArray(stored[CHANNEL_QUEUE_KEY]) ? stored[CHANNEL_QUEUE_KEY] : [];

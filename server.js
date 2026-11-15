@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { inferVideoTopic, normalizeTopicLabel } from './lib/topic-classifier.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const repositoryDataDirectory = path.resolve(root, 'data');
@@ -64,6 +65,7 @@ const hostArgument = process.argv.slice(2).find(argument => argument.startsWith(
 const hostIndex = process.argv.indexOf('--host');
 const host = hostArgument || (hostIndex >= 0 ? process.argv[hostIndex + 1] : '') || process.env.HOST || '127.0.0.1';
 const jobs = new Map();
+const downloadStartingIds = new Set();
 const commentJobs = new Map();
 const channelLookups = new Map();
 let shortsApiCache = null;
@@ -138,19 +140,71 @@ function getStoredMediaExtension(id) {
 
 const integrityVerificationJobs = new Map();
 const integrityCheckProcesses = new Set();
+let integrityVerificationTail = Promise.resolve();
 
-async function checksumMediaFile(filePath, onProgress = null, totalBytes = 0) {
+function integrityPauseError() {
+  return Object.assign(new Error('The local integrity check was paused.'), { code: 'INTEGRITY_PAUSED' });
+}
+
+function throwIfIntegrityPaused(downloadJob) {
+  if (downloadJob?.pauseRequested) throw integrityPauseError();
+}
+
+function trackIntegrityProcess(child, downloadJob = null) {
+  integrityCheckProcesses.add(child);
+  if (downloadJob) {
+    downloadJob.integrityProcesses ||= new Set();
+    downloadJob.integrityProcesses.add(child);
+  }
+}
+
+function untrackIntegrityProcess(child, downloadJob = null) {
+  integrityCheckProcesses.delete(child);
+  downloadJob?.integrityProcesses?.delete(child);
+}
+
+function pauseIntegrityJob(downloadJob) {
+  if (!downloadJob || downloadJob.pauseRequested) return false;
+  downloadJob.pauseRequested = true;
+  downloadJob.stage = 'Pausing integrity check…';
+  for (const stream of downloadJob.integrityStreams || []) {
+    stream.destroy(integrityPauseError());
+  }
+  for (const child of downloadJob.integrityProcesses || []) {
+    try { child.kill('SIGINT'); } catch {}
+  }
+  return true;
+}
+
+async function checksumMediaFile(filePath, onProgress = null, totalBytes = 0, downloadJob = null) {
+  throwIfIntegrityPaused(downloadJob);
   const hash = createHash('sha256');
   const stream = createReadStream(filePath);
   let bytesRead = 0;
   return new Promise((resolve, reject) => {
+    if (downloadJob) {
+      downloadJob.integrityStreams ||= new Set();
+      downloadJob.integrityStreams.add(stream);
+    }
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      downloadJob?.integrityStreams?.delete(stream);
+      if (error) reject(error);
+      else resolve(result);
+    };
     stream.on('data', chunk => {
+      if (downloadJob?.pauseRequested) {
+        stream.destroy(integrityPauseError());
+        return;
+      }
       hash.update(chunk);
       bytesRead += chunk.length;
       onProgress?.(bytesRead, totalBytes);
     });
-    stream.once('error', reject);
-    stream.once('end', () => resolve(hash.digest('hex')));
+    stream.once('error', error => finish(error));
+    stream.once('end', () => finish(null, hash.digest('hex')));
   });
 }
 
@@ -196,13 +250,14 @@ async function hasReusableTranscriptionAudio(id, sourceChecksum) {
   try { await access(path.resolve(dataDirectory, row.audioPath)); return true; } catch { return false; }
 }
 
-function runFfprobeHasAudio(filePath) {
+function runFfprobeHasAudio(filePath, downloadJob = null) {
+  try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   if (!ffprobeAvailable) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
     const child = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=index', '-of', 'csv=p=0', filePath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    integrityCheckProcesses.add(child);
+    trackIntegrityProcess(child, downloadJob);
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -210,7 +265,7 @@ function runFfprobeHasAudio(filePath) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
       if (error) reject(error);
       else resolve(result);
     };
@@ -224,20 +279,23 @@ function runFfprobeHasAudio(filePath) {
     child.stdout.on('data', chunk => { stdout = `${stdout}${chunk}`.slice(-4000); });
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-2000); });
     child.once('error', error => finish(error));
-    child.once('close', code => code === 0
-      ? finish(null, Boolean(stdout.trim()))
-      : finish(Object.assign(new Error(stderr.trim() || 'Audio stream discovery failed.'), { code: 'AUDIO_PROBE_FAILED' })));
+    child.once('close', code => downloadJob?.pauseRequested
+      ? finish(integrityPauseError())
+      : code === 0
+        ? finish(null, Boolean(stdout.trim()))
+        : finish(Object.assign(new Error(stderr.trim() || 'Audio stream discovery failed.'), { code: 'AUDIO_PROBE_FAILED' })));
   });
 }
 
-function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = null, durationSeconds = 0) {
+function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = null, durationSeconds = 0, downloadJob = null) {
+  try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
     const child = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
       '-hide_banner', '-nostdin', '-v', 'error', '-stats_period', '0.5', '-progress', 'pipe:1', '-xerror', '-err_detect', 'explode',
       '-threads', '1', '-filter_threads', '1', '-i', filePath,
       '-map', '0:a:0', '-vn', '-sn', '-dn', '-ac', '1', '-ar', '16000', '-c:a', 'flac', '-compression_level', '5', outputPath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    integrityCheckProcesses.add(child);
+    trackIntegrityProcess(child, downloadJob);
     let stderr = '';
     let stdoutBuffer = '';
     let settled = false;
@@ -245,7 +303,7 @@ function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = nul
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
       if (error) reject(error);
       else resolve(result);
     };
@@ -274,9 +332,11 @@ function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = nul
     child.once('error', error => finish(Object.assign(new Error(error.code === 'ENOENT'
       ? 'ffmpeg is unavailable to prepare local transcription audio.'
       : 'Could not start audio preparation.'), { code: 'AUDIO_EXTRACTION_FAILED', cause: error })));
-    child.once('close', code => code === 0
-      ? finish(null, { status: 'awaiting_transcription' })
-      : finish(Object.assign(new Error(stderr.trim() || 'ffmpeg could not prepare audio for transcription.'), { code: 'AUDIO_EXTRACTION_FAILED' })));
+    child.once('close', code => downloadJob?.pauseRequested
+      ? finish(integrityPauseError())
+      : code === 0
+        ? finish(null, { status: 'awaiting_transcription' })
+        : finish(Object.assign(new Error(stderr.trim() || 'ffmpeg could not prepare audio for transcription.'), { code: 'AUDIO_EXTRACTION_FAILED' })));
   });
 }
 
@@ -300,7 +360,8 @@ process.once('exit', () => {
   }
 });
 
-function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, onProgress = null, audioOutputPath = '' } = {}) {
+function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, onProgress = null, audioOutputPath = '', downloadJob = null } = {}) {
+  try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
     const args = [
       '-hide_banner', '-nostdin', '-v', 'error', '-stats_period', '0.5', '-progress', 'pipe:1', '-xerror', '-err_detect', 'explode',
@@ -311,7 +372,7 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
     const child = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
       ...args
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    integrityCheckProcesses.add(child);
+    trackIntegrityProcess(child, downloadJob);
     let stderr = '';
     let stdoutBuffer = '';
     let settled = false;
@@ -319,6 +380,7 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      untrackIntegrityProcess(child, downloadJob);
       if (error && audioOutputPath) { try { unlinkSync(audioOutputPath); } catch {} }
       if (error) reject(error);
       else resolve(result);
@@ -353,13 +415,14 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-6000); });
     child.once('error', error => {
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
       finish(Object.assign(new Error(error.code === 'ENOENT'
         ? 'ffmpeg is unavailable for the full audio/video integrity check.'
         : 'Could not start the full audio/video integrity check.'), { code: 'INTEGRITY_TOOL_MISSING', cause: error }));
     });
     child.once('close', code => {
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
+      if (downloadJob?.pauseRequested) { finish(integrityPauseError()); return; }
       if (code === 0) { finish(null, { status: 'verified', detail: '' }); return; }
       const detail = stderr.trim().replace(/https?:\/\/\S+/g, '[URL]').slice(-900);
       finish(Object.assign(new Error(`The local file failed its full audio/video decode check${detail ? `: ${detail}` : '.'}`), { code: 'MEDIA_INTEGRITY' }));
@@ -367,12 +430,13 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
   });
 }
 
-function runFfprobeContainerCheck(filePath) {
+function runFfprobeContainerCheck(filePath, downloadJob = null) {
+  try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
     const child = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', filePath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    integrityCheckProcesses.add(child);
+    trackIntegrityProcess(child, downloadJob);
     let stdout = '';
     let stderr = '';
     const timeout = setTimeout(() => {
@@ -386,14 +450,15 @@ function runFfprobeContainerCheck(filePath) {
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-4000); });
     child.once('error', error => {
       clearTimeout(timeout);
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
       reject(Object.assign(new Error(error.code === 'ENOENT'
         ? 'Neither ffmpeg nor ffprobe is available to check this local media file.'
         : 'Could not start the media container check.'), { code: 'INTEGRITY_TOOL_MISSING', cause: error }));
     });
     child.once('close', code => {
       clearTimeout(timeout);
-      integrityCheckProcesses.delete(child);
+      untrackIntegrityProcess(child, downloadJob);
+      if (downloadJob?.pauseRequested) { reject(integrityPauseError()); return; }
       if (code !== 0) {
         reject(Object.assign(new Error(`The local file failed its media container check${stderr.trim() ? `: ${stderr.trim().slice(-700)}` : '.'}`), { code: 'MEDIA_INTEGRITY' }));
         return;
@@ -423,7 +488,7 @@ async function commitTranscriptionAudio(id, tempPath, sourceChecksum, downloadJo
       downloadJob.integrityPhase = 'Saving transcription audio checksum…';
       downloadJob.integrityProgress = total > 0 ? 85 + read / total * 15 : null;
     }
-  }, audioStat.size);
+  }, audioStat.size, downloadJob);
   await rename(tempPath, audioPath);
   try {
     saveTranscriptionAsset(id, {
@@ -455,7 +520,8 @@ async function ensureTranscriptionAudio(id, filePath, sourceChecksum, timeoutMs,
   if (existing?.sourceChecksum === sourceChecksum && existing.status === 'no_audio_track') return;
   if (await hasReusableTranscriptionAudio(id, sourceChecksum)) return;
   let hasAudio = null;
-  try { hasAudio = await runFfprobeHasAudio(filePath); } catch {}
+  try { hasAudio = await runFfprobeHasAudio(filePath, downloadJob); }
+  catch (error) { if (error.code === 'INTEGRITY_PAUSED') throw error; }
   if (hasAudio === false) {
     await recordTranscriptionAudioIssue(id, 'no_audio_track', sourceChecksum, 'This media file has no audio stream to transcribe.');
     return;
@@ -472,10 +538,11 @@ async function ensureTranscriptionAudio(id, filePath, sourceChecksum, timeoutMs,
     }
     await runFfmpegAudioExtract(filePath, tempPath, timeoutMs, progress => {
       if (downloadJob) downloadJob.integrityProgress = Number.isFinite(progress) ? progress * 0.75 : null;
-    }, durationSeconds);
+    }, durationSeconds, downloadJob);
     await commitTranscriptionAudio(id, tempPath, sourceChecksum, downloadJob);
   } catch (error) {
     await unlink(tempPath).catch(() => {});
+    if (error.code === 'INTEGRITY_PAUSED') throw error;
     const noAudio = /matches no streams|does not contain any stream|map .* matches no streams/i.test(String(error.message || ''));
     await recordTranscriptionAudioIssue(id, noAudio ? 'no_audio_track' : 'audio_extraction_failed', sourceChecksum,
       noAudio ? 'This media file has no audio stream to transcribe.' : error.message || 'Audio extraction failed.');
@@ -491,8 +558,7 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
   database.prepare(`INSERT OR IGNORE INTO downloads (video_id, status, message, progress, stage, updated_at, origin)
     VALUES (?, 'importing', 'Checking a local media file before saving it to the library.', 0, 'Checking file integrity', ?, 'media-folder')`).run(id, now);
   const previous = database.prepare(`SELECT integrity_status AS integrityStatus,
-    integrity_checked_at AS checkedAt, integrity_file_size AS fileSize,
-    integrity_file_mtime_ms AS fileMtimeMs, integrity_checksum AS checksum
+    integrity_checked_at AS checkedAt, integrity_checksum AS checksum
     FROM downloads WHERE video_id = ?`).get(id);
   const priorCheckValid = ['verified', 'container-checked'].includes(previous?.integrityStatus);
   if (downloadJob) {
@@ -502,7 +568,7 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
     downloadJob.stage = keepTranscriptionAudio
       ? 'Verifying media and preparing transcription audio…'
       : 'Verifying media integrity…';
-    saveDownload(id, 'downloading', '', downloadJob.progress, downloadJob.stage);
+    saveDownload(id, downloadJob.mediaFolderImport ? 'importing' : 'downloading', '', downloadJob.progress, downloadJob.stage);
   }
   const reportIntegrityProgress = (progress, phase) => {
     if (!downloadJob) return;
@@ -511,23 +577,29 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
   };
 
   if (priorCheckValid) {
+    throwIfIntegrityPaused(downloadJob);
     reportIntegrityProgress(0, 'Rechecking saved SHA-256 checksum…');
     const checksum = await checksumMediaFile(filePath, (read, total) => {
       reportIntegrityProgress(total > 0 ? read / total * 100 : null, 'Rechecking saved SHA-256 checksum…');
-    }, before.size);
+    }, before.size, downloadJob);
+    throwIfIntegrityPaused(downloadJob);
     const afterChecksum = await stat(filePath);
-    if (afterChecksum.size !== before.size || Math.abs(afterChecksum.mtimeMs - before.mtimeMs) >= 1) {
+    if (!sameMediaFileVersion(before, afterChecksum)) {
       throw Object.assign(new Error('The local media file changed while its checksum was being checked.'), { code: 'MEDIA_INTEGRITY' });
     }
     const sameSavedContent = previous.checksum
       ? previous.checksum === checksum
-      : previous.fileSize === before.size && Math.abs(previous.fileMtimeMs - before.mtimeMs) < 1;
+      : false;
     if (sameSavedContent) {
       database.prepare(`UPDATE downloads SET integrity_checksum = ?, integrity_file_size = ?, integrity_file_mtime_ms = ?
         WHERE video_id = ?`).run(checksum, afterChecksum.size, afterChecksum.mtimeMs, id);
       await ensureTranscriptionAudio(id, filePath, checksum,
         Math.min(2 * 60 * 60_000, Math.max(10 * 60_000, before.size / (1024 * 1024) * 1000)),
         durationLabelSeconds(database.prepare('SELECT duration FROM videos WHERE video_id = ?').get(id)?.duration), downloadJob);
+      const afterAssets = await stat(filePath).catch(() => null);
+      if (!sameMediaFileVersion(before, afterAssets)) {
+        throw Object.assign(new Error('The local media file changed while its saved checksum was being confirmed.'), { code: 'MEDIA_CHANGED' });
+      }
       return {
         status: previous.integrityStatus,
         detail: 'SHA-256 matches the previously integrity-checked media file.',
@@ -539,7 +611,9 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
   const timeoutMs = Math.min(2 * 60 * 60_000, Math.max(10 * 60_000, before.size / (1024 * 1024) * 1000));
   const videoDurationSeconds = durationLabelSeconds(database.prepare('SELECT duration FROM videos WHERE video_id = ?').get(id)?.duration);
   let audioTrackPresent = null;
-  try { audioTrackPresent = await runFfprobeHasAudio(filePath); } catch {}
+  try { audioTrackPresent = await runFfprobeHasAudio(filePath, downloadJob); }
+  catch (error) { if (error.code === 'INTEGRITY_PAUSED') throw error; }
+  throwIfIntegrityPaused(downloadJob);
   let tempAudioPath = '';
   let audioExtractionError = '';
   const decodeProgress = progress => reportIntegrityProgress(videoDurationSeconds > 0 ? progress * 0.75 : null,
@@ -550,12 +624,13 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
       tempAudioPath = makeTranscriptionAudioTempPath(id);
       try {
         result = await runFfmpegIntegrityDecode(filePath, timeoutMs, {
-          durationSeconds: videoDurationSeconds, onProgress: decodeProgress, audioOutputPath: tempAudioPath
+          durationSeconds: videoDurationSeconds, onProgress: decodeProgress, audioOutputPath: tempAudioPath, downloadJob
         });
       } catch (extractionError) {
+        if (extractionError.code === 'INTEGRITY_PAUSED') throw extractionError;
         tempAudioPath = '';
         try {
-          result = await runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds: videoDurationSeconds, onProgress: decodeProgress });
+          result = await runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds: videoDurationSeconds, onProgress: decodeProgress, downloadJob });
           const message = String(extractionError.message || '');
           if (!/matches no streams|does not contain any stream|map .* matches no streams/i.test(message)) audioExtractionError = message;
           else audioTrackPresent = false;
@@ -564,25 +639,32 @@ async function verifyLocalMediaIntegrityOnce(id, { downloadJob = null } = {}) {
         }
       }
     } else {
-      result = await runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds: videoDurationSeconds, onProgress: decodeProgress });
+      result = await runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds: videoDurationSeconds, onProgress: decodeProgress, downloadJob });
     }
   } else if (ffprobeAvailable) {
-    result = await runFfprobeContainerCheck(filePath);
+      result = await runFfprobeContainerCheck(filePath, downloadJob);
     if (keepTranscriptionAudio && audioTrackPresent !== false) audioExtractionError = 'ffmpeg is unavailable to prepare the transcription audio file.';
   } else {
     throw Object.assign(new Error('Install ffmpeg (or ffprobe) and restart YourTube before this media can be checked and played.'), { code: 'INTEGRITY_TOOL_MISSING' });
   }
+  const afterDecode = await stat(filePath).catch(() => null);
+  if (!sameMediaFileVersion(before, afterDecode)) {
+    if (tempAudioPath) await unlink(tempAudioPath).catch(() => {});
+    throw Object.assign(new Error('The local media file changed during integrity decoding. It will be checked again after the copy or download settles.'), { code: 'MEDIA_CHANGED' });
+  }
   const sourceHashStart = 75;
   const sourceHashEnd = tempAudioPath ? 85 : 100;
+  throwIfIntegrityPaused(downloadJob);
   reportIntegrityProgress(sourceHashStart, 'Saving media SHA-256 checksum…');
   let checksum;
   let after;
   try {
     checksum = await checksumMediaFile(filePath, (read, total) => {
       reportIntegrityProgress(total > 0 ? sourceHashStart + read / total * (sourceHashEnd - sourceHashStart) : null, 'Saving media SHA-256 checksum…');
-    }, before.size);
+    }, before.size, downloadJob);
+    throwIfIntegrityPaused(downloadJob);
     after = await stat(filePath);
-    if (after.size !== before.size || Math.abs(after.mtimeMs - before.mtimeMs) >= 1) {
+    if (!sameMediaFileVersion(before, after)) {
       throw Object.assign(new Error('The local media file changed while it was being checked.'), { code: 'MEDIA_INTEGRITY' });
     }
   } catch (error) {
@@ -620,7 +702,18 @@ function verifyLocalMediaIntegrity(id, options = {}) {
   const active = integrityVerificationJobs.get(id);
   if (active) return active;
   const { downloadJob = null } = options;
-  const verification = verifyLocalMediaIntegrityOnce(id, options)
+  if (downloadJob) {
+    downloadJob.integrityQueued = integrityVerificationJobs.size > 0;
+    downloadJob.integrityChecking = false;
+  }
+  const verification = integrityVerificationTail.catch(() => {}).then(async () => {
+    throwIfIntegrityPaused(downloadJob);
+    if (downloadJob) {
+      downloadJob.integrityQueued = false;
+      downloadJob.integrityChecking = true;
+    }
+    return verifyLocalMediaIntegrityOnce(id, options);
+  })
     .then(result => {
       if (downloadJob) {
         downloadJob.integrityProgress = 100;
@@ -633,6 +726,7 @@ function verifyLocalMediaIntegrity(id, options = {}) {
       if (integrityVerificationJobs.get(id) === verification) integrityVerificationJobs.delete(id);
     });
   integrityVerificationJobs.set(id, verification);
+  integrityVerificationTail = verification.catch(() => {});
   return verification;
 }
 
@@ -893,6 +987,18 @@ database.exec(`
     last_seen TEXT NOT NULL,
     PRIMARY KEY (video_id, category)
   );
+  CREATE TABLE IF NOT EXISTS video_provenance (
+    video_id TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_key TEXT NOT NULL DEFAULT '',
+    source_label TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    observations INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (video_id, source_type, source_key)
+  );
+  CREATE INDEX IF NOT EXISTS video_provenance_latest ON video_provenance (video_id, last_seen DESC);
   CREATE TABLE IF NOT EXISTS homepage_captures (
     capture_id TEXT PRIMARY KEY,
     captured_at TEXT NOT NULL,
@@ -1203,6 +1309,18 @@ for (const { id } of interruptedDownloads) {
     queueRestartInterrupted.run(id, new Date(now.getTime() + downloadRetryDelay).toISOString(), restartRecoveryMessage, updatedAt);
   }
 }
+const interruptedMediaFolderImports = database.prepare("SELECT video_id AS id FROM downloads WHERE status = 'importing'").all();
+if (interruptedMediaFolderImports.length) {
+  const recoveryTime = new Date().toISOString();
+  database.prepare(`UPDATE downloads SET status = 'error',
+    message = 'The local integrity check stopped with the previous server. YourTube will scan the media folder and resume it if the file is still present.',
+    progress = 0, stage = 'Waiting for media-folder scan', updated_at = ? WHERE status = 'importing'`).run(recoveryTime);
+}
+const clearInterruptedMediaImportRetries = database.prepare(`DELETE FROM download_retry_queue
+  WHERE video_id IN (SELECT video_id FROM downloads WHERE origin = 'media-folder'
+    AND status = 'error' AND stage = 'Waiting for media-folder scan'
+    AND message LIKE 'The local integrity check stopped with the previous server.%')`);
+clearInterruptedMediaImportRetries.run();
 database.prepare("UPDATE video_comments SET status = 'error', message = 'Comment lookup was interrupted. Reload to try again.', updated_at = ? WHERE status = 'loading'").run(new Date().toISOString());
 database.prepare("UPDATE video_duration_lookups SET status = 'pending', message = 'Lookup interrupted by restart.', updated_at = ? WHERE status = 'running' AND updated_at < ?")
   .run(new Date().toISOString(), new Date(Date.now() - 60_000).toISOString());
@@ -1221,7 +1339,8 @@ const upsertVideo = database.prepare(`
     avatar = CASE WHEN trim(excluded.avatar) <> '' THEN excluded.avatar ELSE videos.avatar END,
     duration = CASE WHEN trim(excluded.duration) <> '' THEN excluded.duration ELSE videos.duration END,
     meta = excluded.meta, kind = CASE WHEN videos.kind = 'short' OR excluded.kind = 'short' THEN 'short' ELSE excluded.kind END, section = excluded.section,
-    topic = excluded.topic, position = excluded.position, last_seen = excluded.last_seen
+    topic = CASE WHEN trim(excluded.topic) <> '' THEN excluded.topic ELSE videos.topic END,
+    position = excluded.position, last_seen = excluded.last_seen
 `);
 const upsertSubscription = database.prepare(`
   INSERT INTO subscriptions (channel_key, name, avatar, position, last_seen)
@@ -1445,7 +1564,7 @@ function excludeAcquisitionVideo(id, reason) {
 
   const dependentTables = [
     'channel_items', 'playlist_items', 'playback_queue', 'search_results',
-    'search_history_results', 'search_history_clicks', 'video_provisions',
+    'search_history_results', 'search_history_clicks', 'video_provisions', 'video_provenance',
     'video_duration_lookups', 'video_metadata', 'video_thumbnail_assets', 'video_comments', 'comment_backfill_queue', 'video_progress',
     'video_views', 'video_preferences', 'download_metadata', 'download_retry_queue',
     'playlist_download_queue', 'extension_duration_baseline', 'downloads'
@@ -1501,11 +1620,111 @@ function cleanVideo(value, position) {
       publishedAge: String(value.publishedAge || '').trim().slice(0, 100),
       kind: value.kind === 'short' ? 'short' : 'normal',
       section: value.section === 'news' ? 'news' : value.section === 'search' ? 'search' : value.section === 'playlist' ? 'playlist' : value.section === 'channel' ? 'channel' : 'home',
-      topic: String(value.topic || '').slice(0, 80),
+      topic: (inferVideoTopic({ topic: value.topic, title, channel, queries: value.topicQuery || value.searchQuery || value.query || '' })?.topic || '').slice(0, 80),
       position: Number.isInteger(value.position) ? Math.max(0, Math.min(value.position, 10000)) : position
     };
   } catch { return null; }
 }
+
+const videoProvenanceTypes = new Set(['homepage', 'homepage-section', 'search', 'channel', 'playlist', 'shorts', 'watch', 'youtube-page', 'direct-id', 'media-folder']);
+const saveVideoProvenance = database.prepare(`INSERT INTO video_provenance
+  (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+  VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+  ON CONFLICT(video_id, source_type, source_key) DO UPDATE SET
+    source_label = CASE WHEN excluded.source_label <> '' THEN excluded.source_label ELSE video_provenance.source_label END,
+    source_url = CASE WHEN excluded.source_url <> '' THEN excluded.source_url ELSE video_provenance.source_url END,
+    last_seen = excluded.last_seen,
+    observations = video_provenance.observations + 1`);
+
+function recordVideoProvenance(videoId, rawContext, seenAt, fallback = {}) {
+  const context = rawContext && typeof rawContext === 'object' ? rawContext : {};
+  const fallbackType = videoProvenanceTypes.has(fallback.sourceType) ? fallback.sourceType : 'youtube-page';
+  const requestedType = String(context.sourceType || '').trim();
+  const sourceType = videoProvenanceTypes.has(requestedType) ? requestedType : fallbackType;
+  const sourceKey = String(context.sourceKey || fallback.sourceKey || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 240);
+  const sourceLabel = String(context.sourceLabel || fallback.sourceLabel || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  let sourceUrl = '';
+  try {
+    const url = new URL(String(context.sourceUrl || fallback.sourceUrl || ''));
+    if (url.protocol === 'https:' && ['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname.toLowerCase())) {
+      sourceUrl = `https://www.youtube.com${url.pathname.slice(0, 300)}`;
+      if (sourceType === 'playlist') {
+        const listId = url.searchParams.get('list') || (sourceKey && !sourceKey.includes(':') ? sourceKey : '');
+        if (listId && /^[A-Za-z0-9_-]{5,120}$/.test(listId)) sourceUrl += `?list=${encodeURIComponent(listId)}`;
+      }
+    }
+  } catch {}
+  const labels = {
+    homepage: 'YouTube homepage', 'homepage-section': 'YouTube homepage section', search: 'YouTube search',
+    channel: 'YouTube channel', playlist: 'YouTube playlist', shorts: 'YouTube Shorts feed',
+    watch: 'YouTube watch page', 'youtube-page': 'YouTube page', 'direct-id': 'Direct video ID', 'media-folder': 'Media folder'
+  };
+  saveVideoProvenance.run(videoId, sourceType, sourceKey, sourceLabel || labels[sourceType], sourceUrl, seenAt, seenAt);
+}
+
+function backfillVideoProvenance() {
+  const marker = 'video_provenance_backfill_v1';
+  if (database.prepare('SELECT 1 FROM app_settings WHERE setting_key = ?').get(marker)) return;
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database.exec(`INSERT OR IGNORE INTO video_provenance
+      (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT video_id,
+        CASE category WHEN 'other' THEN 'youtube-page' WHEN 'direct' THEN 'direct-id' ELSE category END,
+        '',
+        CASE category WHEN 'homepage' THEN 'YouTube homepage' WHEN 'other' THEN 'YouTube page'
+          WHEN 'direct' THEN 'Direct video ID' WHEN 'media-folder' THEN 'Media folder'
+          WHEN 'search' THEN 'YouTube search' WHEN 'playlist' THEN 'YouTube playlist' ELSE 'YouTube page' END,
+        '', first_seen, last_seen, 1 FROM video_provisions;
+
+      INSERT OR IGNORE INTO video_provenance
+        (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT ci.video_id, 'channel', ci.channel_key || ':' || ci.tab_key,
+        'Channel · ' || COALESCE(NULLIF(ch.name, ''), ci.channel_key) || ' · ' ||
+          CASE ci.tab_key WHEN 'home' THEN 'Home' WHEN 'shorts' THEN 'Shorts' WHEN 'streams' THEN 'Live'
+            WHEN 'playlists' THEN 'Playlists' WHEN 'community' THEN 'Community' ELSE 'Videos' END,
+        COALESCE(ch.channel_url, ''), MIN(ci.added_at), MAX(ci.added_at), COUNT(*)
+      FROM channel_items ci LEFT JOIN channels ch ON ch.channel_key = ci.channel_key
+      GROUP BY ci.video_id, ci.channel_key, ci.tab_key;
+
+      INSERT OR IGNORE INTO video_provenance
+        (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT hp.video_id, 'homepage-section', hp.section_key, 'Homepage · ' || hs.title,
+        'https://www.youtube.com/', MIN(hc.first_seen), MAX(hc.last_seen), COUNT(*)
+      FROM homepage_placements hp JOIN homepage_sections hs ON hs.capture_id = hp.capture_id AND hs.section_key = hp.section_key
+      JOIN homepage_captures hc ON hc.capture_id = hp.capture_id
+      GROUP BY hp.video_id, hp.section_key, hs.title;
+
+      INSERT OR IGNORE INTO video_provenance
+        (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT cv.video_id, 'homepage-section', 'category:' || cv.category_key, 'Homepage category · ' || hc.title,
+        'https://www.youtube.com/', MIN(cv.first_seen), MAX(cv.last_seen), COUNT(*)
+      FROM homepage_category_videos cv JOIN homepage_categories hc ON hc.category_key = cv.category_key
+      GROUP BY cv.video_id, cv.category_key, hc.title;
+
+      INSERT OR IGNORE INTO video_provenance
+        (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT sr.video_id, 'search', ss.search_id, 'YouTube search · ' || ss.query,
+        'https://www.youtube.com/results', ss.updated_at, ss.updated_at, 1
+      FROM search_results sr JOIN search_sessions ss ON ss.search_id = sr.search_id;
+
+      INSERT OR IGNORE INTO video_provenance
+        (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
+      SELECT pi.video_id, 'playlist', p.playlist_id, 'YouTube playlist · ' || p.title,
+        'https://www.youtube.com/playlist?list=' || p.playlist_id, MIN(pi.added_at), MAX(pi.added_at), COUNT(*)
+      FROM playlist_items pi JOIN playlists p ON p.playlist_id = pi.playlist_id
+      WHERE p.source = 'youtube'
+      GROUP BY pi.video_id, p.playlist_id, p.title, p.source_url;`);
+    database.prepare(`INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, '1', ?)`)
+      .run(marker, new Date().toISOString());
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+backfillVideoProvenance();
 
 function recordExtensionDuration(extensionVersion, video, category, seenAt) {
   const version = String(extensionVersion || '').trim().slice(0, 40) || 'unknown';
@@ -2317,11 +2536,17 @@ function saveDownload(id, status, message = '', progress = 0, stage = '') {
   }
 }
 
-const mediaFolderStableMs = 2500;
+const mediaFolderStableMs = 10_000;
 const mediaFolderScanMs = 30_000;
+const mediaFolderQuietPeriodMs = 2 * 60_000;
+const mediaFolderMissingGraceMs = 5 * 60_000;
+let mediaFolderLastChangeAt = Date.now();
 const mediaFolderCandidates = new Map();
+const mediaFolderMissingCandidates = new Map();
+const mediaFolderDeferredRechecks = new Set();
 const mediaFolderFailedFingerprints = new Map();
 const mediaFolderImports = new Set();
+const mediaFolderImportJobs = new Map();
 const mediaFolderScanState = { available: false, lastScanAt: '', recognizedFiles: 0, unmatchedFiles: [], error: '' };
 let mediaFolderScanPromise = null;
 let mediaFolderScanAgain = false;
@@ -2330,9 +2555,52 @@ let mediaFolderWatcher = null;
 let shortsMediaFolderWatcher = null;
 let mediaFolderWatcherRetryTimer = null;
 
+function releaseDownloadJob(id) {
+  jobs.delete(id);
+  if (!mediaFolderDeferredRechecks.delete(id)) return;
+  mediaFolderCandidates.delete(id);
+  mediaFolderFailedFingerprints.delete(id);
+  mediaFolderMissingCandidates.delete(id);
+  scheduleMediaFolderScan(500);
+}
+
+function createMediaFolderIntegrityJob() {
+  return {
+    mediaFolderImport: true,
+    progress: 0,
+    integrityChecking: false,
+    integrityProgress: null,
+    integrityPhase: 'Preparing local integrity check…',
+    stage: 'Checking file integrity',
+    integrityProcesses: new Set(),
+    integrityStreams: new Set(),
+    pauseRequested: false
+  };
+}
+
+function markMediaIntegrityPaused(id) {
+  const now = new Date().toISOString();
+  const message = 'Integrity check paused. Choose Retry to resume checking this local file.';
+  saveDownload(id, 'paused', message, 0, 'Integrity check paused');
+  database.prepare(`INSERT INTO download_retry_queue (video_id, attempts, status, next_retry_at, last_error, updated_at)
+    VALUES (?, 0, 'paused', '', ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET attempts = 0, status = 'paused', next_retry_at = '',
+      last_error = excluded.last_error, updated_at = excluded.updated_at`).run(id, message, now);
+  return message;
+}
+
 function parseMediaFilename(name) {
   const match = /^([A-Za-z0-9_-]{11})\.(webm|mp4)$/.exec(String(name || ''));
   return match ? { id: match[1], extension: match[2].toLowerCase() } : null;
+}
+
+function sameMediaFileVersion(left, right) {
+  return Boolean(left && right
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs
+    && left.dev === right.dev
+    && left.ino === right.ino);
 }
 
 function scheduleMediaFolderScan(delay = 500) {
@@ -2344,7 +2612,7 @@ function scheduleMediaFolderScan(delay = 500) {
 }
 
 function markMediaFileMissing(id) {
-  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || '')) || jobs.has(id) || getStoredMediaPath(id)) return false;
+  if (!/^[A-Za-z0-9_-]{11}$/.test(String(id || '')) || jobs.has(id) || downloadStartingIds.has(id) || mediaFolderImports.has(id) || getStoredMediaPath(id)) return false;
   const result = database.prepare(`UPDATE downloads SET status = 'deleted',
     message = 'The media file is no longer in the media folder. Saved video metadata was retained.',
     progress = 0, stage = 'File missing from media folder', updated_at = ?
@@ -2371,24 +2639,35 @@ function ensureMediaFolderStub(id, now, kind = 'normal') {
     .run(id, `https://www.youtube.com/watch?v=${id}`, id, `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, kind, now, now);
   database.prepare(`INSERT OR IGNORE INTO video_provisions (video_id, category, first_seen, last_seen)
     VALUES (?, 'media-folder', ?, ?)`).run(id, now, now);
+  recordVideoProvenance(id, null, now, { sourceType: 'media-folder', sourceKey: id, sourceLabel: 'Media folder' });
   return true;
 }
 
 async function importMediaFolderFile(id, filePath, observedStats, fingerprint, kind = 'normal') {
-  if (mediaFolderImports.has(id) || jobs.has(id) || isAcquisitionExcluded(id)) return;
+  if (mediaFolderImports.has(id) || integrityVerificationJobs.has(id) || jobs.has(id) || downloadStartingIds.has(id) || isAcquisitionExcluded(id)) return;
   mediaFolderImports.add(id);
   try {
     const activeDownload = database.prepare("SELECT status FROM downloads WHERE video_id = ?").get(id);
     if (activeDownload?.status === 'downloading') return;
     const before = await stat(filePath).catch(() => null);
-    if (!before || before.size !== observedStats.size || Math.abs(before.mtimeMs - observedStats.mtimeMs) >= 1) return;
+    if (!before || !sameMediaFileVersion(before, observedStats)) return;
 
+    // The stable final file is now owned by the local integrity queue. Any
+    // leftover retry record must not compete with this work as a downloader job.
+    database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
     const now = new Date().toISOString();
     ensureMediaFolderStub(id, now, kind);
     const prior = database.prepare(`SELECT status, integrity_status AS integrityStatus FROM downloads WHERE video_id = ?`).get(id);
     if (prior?.status === 'ready' && ['verified', 'container-checked'].includes(prior.integrityStatus)) {
-      await verifyLocalMediaIntegrity(id);
-      mediaFolderCandidates.set(id, { fingerprint, firstSeenAt: Date.now(), checked: true });
+      try {
+        await verifyLocalMediaIntegrity(id);
+        mediaFolderCandidates.set(id, { fingerprint, firstSeenAt: Date.now(), checked: true });
+      } catch (error) {
+        const message = await recordMediaIntegrityFailure(id, error);
+        if (getStoredMediaPath(id)) mediaFolderFailedFingerprints.set(id, fingerprint);
+        else mediaFolderCandidates.delete(id);
+        console.warn(`[media-folder] Could not refresh integrity for ${id}:`, message);
+      }
       return;
     }
     if (mediaFolderFailedFingerprints.get(id) === fingerprint) return;
@@ -2398,13 +2677,23 @@ async function importMediaFolderFile(id, filePath, observedStats, fingerprint, k
       ON CONFLICT(video_id) DO UPDATE SET status = 'importing', message = excluded.message,
         progress = 0, stage = excluded.stage, updated_at = excluded.updated_at, origin = 'media-folder'`)
       .run(id, now);
+    const integrityJob = createMediaFolderIntegrityJob();
+    mediaFolderImportJobs.set(id, integrityJob);
     try {
-      await verifyLocalMediaIntegrity(id);
+      const verification = verifyLocalMediaIntegrity(id, { downloadJob: integrityJob });
+      if (integrityJob.integrityQueued) {
+        database.prepare(`UPDATE downloads SET stage = 'Queued for integrity check',
+          message = 'Waiting for the current local integrity check to finish.', updated_at = ? WHERE video_id = ?`)
+          .run(new Date().toISOString(), id);
+      }
+      await verification;
+      throwIfIntegrityPaused(integrityJob);
       const currentPath = getStoredMediaPath(id);
       const after = currentPath ? await stat(currentPath).catch(() => null) : null;
-      if (!after || after.size !== before.size || Math.abs(after.mtimeMs - before.mtimeMs) >= 1) {
+      if (!after || !sameMediaFileVersion(after, before)) {
         throw Object.assign(new Error('The media file changed while YourTube was checking it. It will be checked again once copying finishes.'), { code: 'MEDIA_CHANGED' });
       }
+      throwIfIntegrityPaused(integrityJob);
       const acquiredAt = new Date().toISOString();
       database.prepare(`UPDATE downloads SET status = 'ready', message = 'Imported from the YourTube media folder.',
         progress = 100, stage = 'Ready to play', updated_at = ?, acquired_at = ?, expires_at = '',
@@ -2417,7 +2706,10 @@ async function importMediaFolderFile(id, filePath, observedStats, fingerprint, k
       mediaFolderCandidates.set(id, { fingerprint, firstSeenAt: Date.now(), checked: true });
       console.log(`[media-folder] Added local media ${id} to the library.`);
     } catch (error) {
-      if (error.code === 'MEDIA_CHANGED') {
+      if (error.code === 'INTEGRITY_PAUSED') {
+        markMediaIntegrityPaused(id);
+        mediaFolderCandidates.set(id, { fingerprint, firstSeenAt: Date.now(), checked: true });
+      } else if (error.code === 'MEDIA_CHANGED') {
         database.prepare(`UPDATE downloads SET status = 'error', message = ?, progress = 0,
           stage = 'Waiting for a stable file', updated_at = ?, origin = 'media-folder' WHERE video_id = ?`)
           .run(String(error.message || 'The media file changed while it was being checked.').slice(0, 1000), new Date().toISOString(), id);
@@ -2431,12 +2723,19 @@ async function importMediaFolderFile(id, filePath, observedStats, fingerprint, k
   } catch (error) {
     console.warn(`[media-folder] Could not inspect ${id}:`, error.message || error);
   } finally {
+    mediaFolderImportJobs.delete(id);
     mediaFolderImports.delete(id);
+    if (mediaFolderDeferredRechecks.delete(id)) {
+      mediaFolderCandidates.delete(id);
+      mediaFolderFailedFingerprints.delete(id);
+      mediaFolderMissingCandidates.delete(id);
+    }
     scheduleMediaFolderScan(500);
   }
 }
 
 async function scanMediaFolderOnce() {
+  clearInterruptedMediaImportRetries.run();
   let entries;
   try {
     const directoryInfo = await stat(mediaDirectory);
@@ -2454,9 +2753,20 @@ async function scanMediaFolderOnce() {
     return;
   }
 
+  let shortsEntries;
+  try {
+    shortsEntries = await readdir(shortsMediaDirectory, { withFileTypes: true });
+  } catch (error) {
+    // A transiently missing or unreadable Shorts directory is not evidence that
+    // its files were deleted. Skip this scan so it cannot tombstone the whole
+    // Shorts library while a volume is being mounted or copied.
+    mediaFolderScanState.error = `The Shorts media folder could not be read: ${String(error.message || 'unknown filesystem error')}`;
+    mediaFolderScanState.lastScanAt = new Date().toISOString();
+    return;
+  }
+
   const mediaEntries = new Map();
   const unmatchedFiles = [];
-  const shortsEntries = await readdir(shortsMediaDirectory, { withFileTypes: true }).catch(() => []);
   for (const source of [
     { directory: mediaDirectory, entries, kind: 'normal' },
     { directory: shortsMediaDirectory, entries: shortsEntries, kind: 'short' }
@@ -2476,33 +2786,70 @@ async function scanMediaFolderOnce() {
   mediaFolderScanState.recognizedFiles = mediaEntries.size;
   mediaFolderScanState.unmatchedFiles = unmatchedFiles;
   const nowMs = Date.now();
+  const pausedMediaFolderImports = new Set(database.prepare(`SELECT d.video_id AS id
+    FROM downloads d JOIN download_retry_queue q ON q.video_id = d.video_id
+    WHERE d.origin = 'media-folder' AND d.status = 'paused' AND q.status = 'paused'`).all().map(row => row.id));
   let queuedImport = false;
   for (const [id, entry] of mediaEntries) {
-    if (jobs.has(id) || mediaFolderImports.has(id)) continue;
+    if (jobs.has(id) || downloadStartingIds.has(id) || mediaFolderImports.has(id) || mediaFolderImportJobs.has(id) || pausedMediaFolderImports.has(id)) continue;
     const info = await stat(entry.filePath).catch(() => null);
     if (!info || info.size <= 0) continue;
-    const fingerprint = `${entry.filePath}:${info.size}:${info.mtimeMs}`;
+    const fingerprint = `${entry.filePath}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
     const previous = mediaFolderCandidates.get(id);
+    const priorDownload = database.prepare(`SELECT status, stage FROM downloads WHERE video_id = ?`).get(id);
+    const restoreExistingLibraryItem = ['deleted', 'expired'].includes(priorDownload?.status)
+      || priorDownload?.status === 'error' && priorDownload.stage === 'Waiting for media-folder scan';
     if (!previous || previous.fingerprint !== fingerprint) {
       mediaFolderCandidates.set(id, { fingerprint, firstSeenAt: nowMs, checked: false });
       queuedImport = true;
       continue;
     }
-    if (previous.checked || mediaFolderFailedFingerprints.get(id) === fingerprint) continue;
+    // A checked fingerprint only means this file was checked once. If the
+    // library row was later marked deleted/expired while a copy was restored
+    // into the media folder, revalidate it and restore its ready state.
+    if (previous.checked && !restoreExistingLibraryItem) continue;
+    if (mediaFolderFailedFingerprints.get(id) === fingerprint && !restoreExistingLibraryItem) continue;
     if (nowMs - previous.firstSeenAt < mediaFolderStableMs) { queuedImport = true; continue; }
-    if (jobs.size > 0) { queuedImport = true; continue; }
-    if (mediaFolderImports.size >= 1) { queuedImport = true; continue; }
+    // Keep a small visible queue of local integrity work. Verification itself is
+    // serialized by verifyLocalMediaIntegrity; the cap avoids creating thousands
+    // of pending jobs when a large media volume is attached.
+    if (mediaFolderImports.size >= 3) { queuedImport = true; continue; }
     void importMediaFolderFile(id, entry.filePath, info, fingerprint, entry.kind);
   }
 
   if (!mediaDirectoryIsExternal) {
     const readyRows = database.prepare("SELECT video_id AS id FROM downloads WHERE status = 'ready'").all();
+    const readyIds = new Set(readyRows.map(row => row.id));
+    for (const id of mediaFolderMissingCandidates.keys()) {
+      if (!readyIds.has(id)) mediaFolderMissingCandidates.delete(id);
+    }
     for (const row of readyRows) {
-      if (!mediaEntries.has(row.id)) markMediaFileMissing(row.id);
+      if (mediaEntries.has(row.id)) {
+        mediaFolderMissingCandidates.delete(row.id);
+        continue;
+      }
+      // During a bulk copy, files arrive in waves. Do not interpret the gaps
+      // between those arrivals as deletions; wait for a quiet folder window.
+      if (nowMs - mediaFolderLastChangeAt < mediaFolderQuietPeriodMs) {
+        queuedImport = true;
+        continue;
+      }
+      const firstMissingAt = mediaFolderMissingCandidates.get(row.id);
+      if (!firstMissingAt) {
+        mediaFolderMissingCandidates.set(row.id, nowMs);
+        queuedImport = true;
+        continue;
+      }
+      if (nowMs - firstMissingAt < mediaFolderMissingGraceMs) {
+        queuedImport = true;
+        continue;
+      }
+      if (markMediaFileMissing(row.id)) mediaFolderMissingCandidates.delete(row.id);
     }
   }
   mediaFolderScanState.lastScanAt = new Date().toISOString();
-  if (queuedImport) scheduleMediaFolderScan(jobs.size > 0 || mediaFolderImports.size > 0 ? 15_000 : mediaFolderStableMs);
+  if (queuedImport) scheduleMediaFolderScan(mediaFolderImports.size > 0 ? 15_000 : mediaFolderStableMs);
+  else if (mediaFolderMissingCandidates.size) scheduleMediaFolderScan(15_000);
 }
 
 function mediaFolderScan() {
@@ -2533,12 +2880,22 @@ function attachMediaFolderWatcher() {
     if (existing) return;
     try {
       const watcher = watchFileSystem(directory, { persistent: false }, (eventType, filename) => {
+        mediaFolderLastChangeAt = Date.now();
         const name = filename?.toString() || '';
         const parsed = parseMediaFilename(name);
-        if (eventType === 'rename' && parsed) {
-          setTimeout(() => {
-            if (mediaFolderScanState.available && !getStoredMediaPath(parsed.id)) markMediaFileMissing(parsed.id);
-          }, 250).unref?.();
+        if (parsed) {
+          const activeJob = jobs.get(parsed.id);
+          if (downloadStartingIds.has(parsed.id) || activeJob?.integrityChecking || mediaFolderImports.has(parsed.id)) {
+            // A copy that overlaps a download start or the final integrity pass
+            // must be checked again after that operation releases the file.
+            mediaFolderDeferredRechecks.add(parsed.id);
+          } else if (!activeJob && !mediaFolderImports.has(parsed.id)) {
+            // USB/rsync tools may preserve mtime. Invalidate the observed file
+            // signature so the stored SHA-256 is compared with the new bytes.
+            mediaFolderCandidates.delete(parsed.id);
+            mediaFolderFailedFingerprints.delete(parsed.id);
+            mediaFolderMissingCandidates.delete(parsed.id);
+          }
         }
         scheduleMediaFolderScan(600);
       });
@@ -2567,9 +2924,13 @@ function mediaFolderStatus() {
     COALESCE(v.channel, '') AS channel, d.status, d.stage AS phase, d.message, d.updated_at AS updatedAt
     FROM downloads d LEFT JOIN videos v ON v.video_id = d.video_id WHERE d.status = 'importing'
     ORDER BY d.updated_at DESC LIMIT 20`).all();
-  const checkingFiles = [...mediaFolderImports].slice(0, 20).map(videoId => {
+  const integrityJobs = [...mediaFolderImportJobs.entries()];
+  const checkingFiles = integrityJobs.slice(0, 20).map(([videoId, job]) => {
     const video = database.prepare('SELECT title, channel FROM videos WHERE video_id = ?').get(videoId);
-    return { videoId, title: video?.title || videoId, channel: video?.channel || '' };
+    return {
+      videoId, title: video?.title || videoId, channel: video?.channel || '',
+      status: job.integrityChecking ? 'checking' : 'queued'
+    };
   });
   return {
     available: mediaFolderScanState.available,
@@ -2578,7 +2939,8 @@ function mediaFolderStatus() {
     recognizedFiles: mediaFolderScanState.recognizedFiles,
     unmatchedFiles: mediaFolderScanState.unmatchedFiles,
     error: mediaFolderScanState.error,
-    checkingCount: mediaFolderImports.size,
+    checkingCount: integrityJobs.filter(([, job]) => job.integrityChecking).length,
+    queuedCount: integrityJobs.filter(([, job]) => job.integrityQueued).length,
     checkingFiles,
     importing: imports
   };
@@ -2633,9 +2995,10 @@ function getDownload(id) {
     m.status AS metadataStatus, m.phase AS metadataPhase, m.message AS metadataMessage
     FROM downloads d LEFT JOIN download_retry_queue r ON r.video_id = d.video_id
     LEFT JOIN download_metadata m ON m.video_id = d.video_id WHERE d.video_id = ?`).get(id) || null;
-  const job = jobs.get(id);
+  const job = jobs.get(id) || mediaFolderImportJobs.get(id);
   return result ? {
     ...result,
+    youtubeCooldownUntil: getEnforcedYoutubeDownloadCooldownUntil(),
     mediaExtension: getStoredMediaExtension(id),
     integrityChecking: Boolean(job?.integrityChecking),
     integrityProgress: Number.isFinite(job?.integrityProgress) ? job.integrityProgress : null,
@@ -2647,14 +3010,21 @@ const maxDownloadRetryDelay = 30 * 60_000;
 const maxDownloadAttempts = 10;
 const youtubeCooldownKey = 'youtube_download_cooldown_until';
 const youtubeCooldownDuration = 30 * 60_000;
+function getYoutubeDownloadCooldownUntil() {
+  const value = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
+  return Number.isFinite(value) && value > Date.now() ? new Date(value).toISOString() : '';
+}
 const downloadProtectionMode = ['off', 'auto', 'always'].includes(process.env.YOURTUBE_DOWNLOAD_PROTECTIONS)
   ? process.env.YOURTUBE_DOWNLOAD_PROTECTIONS
   : 'off';
 function areDownloadProtectionsActive() {
   if (downloadProtectionMode === 'always') return true;
   if (downloadProtectionMode !== 'auto') return false;
-  const until = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
+  const until = Date.parse(getYoutubeDownloadCooldownUntil());
   return Number.isFinite(until) && until > Date.now();
+}
+function getEnforcedYoutubeDownloadCooldownUntil() {
+  return areDownloadProtectionsActive() ? getYoutubeDownloadCooldownUntil() : '';
 }
 const retryDelayForAttempt = attempts => Math.min(maxDownloadRetryDelay, downloadRetryDelay * (2 ** Math.max(0, Math.min(8, (Number(attempts) || 1) - 1))));
 function startYoutubeDownloadCooldown() {
@@ -2775,57 +3145,94 @@ async function recordMediaIntegrityFailure(id, error, { paused = false, progress
   return message;
 }
 
+let playlistDownloadQueueRunning = false;
+
 async function runPlaylistDownloadQueue() {
-  if (networkMode === 'offline' || offlinePreparationRequested || jobs.size) return false;
-  const next = database.prepare(`SELECT q.video_id AS id FROM playlist_download_queue q
-    ORDER BY q.queue_id LIMIT 1`).get();
-  if (!next) return false;
-  const { id } = next;
-  if (mediaFolderImports.has(id)) return false;
-  if (getStoredMediaPath(id)) {
-    const previousStatus = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id)?.status;
-    if (previousStatus !== 'ready' || !hasSavedIntegrityChecksum(id)) {
-      try { await verifyLocalMediaIntegrity(id); }
-      catch (error) {
-        database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
-        await recordMediaIntegrityFailure(id, error);
-        return true;
-      }
-    }
-    database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
-    database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
-    saveDownload(id, 'ready', '', 100, 'Ready to play');
-    return true;
-  }
-  if (isAcquisitionExcluded(id) || !database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(id)) {
-    const message = isAcquisitionExcluded(id) ? 'This video is excluded from YourTube acquisition.' : 'Video stub is no longer available.';
-    database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
-    database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = ?, updated_at = ? WHERE video_id = ?")
-      .run(message, new Date().toISOString(), id);
-    saveDownload(id, 'paused', message, 0, 'Needs attention before retry');
-    return true;
-  }
-  const now = new Date().toISOString();
-  database.prepare("UPDATE download_retry_queue SET status = 'running', next_retry_at = ?, updated_at = ? WHERE video_id = ?")
-    .run(now, now, id);
+  if (playlistDownloadQueueRunning) return false;
+  playlistDownloadQueueRunning = true;
   try {
-    const result = await beginDownload(id);
-    database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
-    if (!result) {
-      database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = 'Video stub is no longer available.', updated_at = ? WHERE video_id = ?")
-        .run(new Date().toISOString(), id);
-      saveDownload(id, 'paused', 'Video stub is no longer available.', 0, 'Needs attention before retry');
+    if (networkMode === 'offline' || offlinePreparationRequested || jobs.size) return false;
+    const next = database.prepare(`SELECT q.video_id AS id FROM playlist_download_queue q
+      ORDER BY q.queue_id LIMIT 1`).get();
+    if (!next) return false;
+    const { id } = next;
+    if (mediaFolderImports.has(id)) return false;
+    if (getStoredMediaPath(id)) {
+      const currentDownload = database.prepare('SELECT status, stage FROM downloads WHERE video_id = ?').get(id);
+      if (currentDownload?.status === 'importing' && currentDownload.stage === 'Queued for integrity check'
+        && !mediaFolderImportJobs.has(id) && !integrityVerificationJobs.has(id)) return false;
+      // Leave this playlist item queued while a different local file owns the
+      // serialized integrity worker. It is local verification work, not a retry.
+      if (integrityVerificationJobs.size && !integrityVerificationJobs.has(id)) return false;
+      const previous = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id);
+      if (previous?.status !== 'ready' || !hasSavedIntegrityChecksum(id)) {
+        // Let the media-folder scanner own this check and keep the playlist
+        // entry parked until the local file has passed integrity validation.
+        return handoffRetryToLocalIntegrity(id);
+      }
+      database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
+      database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
+      saveDownload(id, 'ready', '', 100, 'Ready to play');
       return true;
     }
-    return true;
-  } catch (error) {
-    database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
-    recordDownloadFailure(id, error.message);
-    return true;
+    if (isAcquisitionExcluded(id) || !database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(id)) {
+      const message = isAcquisitionExcluded(id) ? 'This video is excluded from YourTube acquisition.' : 'Video stub is no longer available.';
+      database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
+      database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = ?, updated_at = ? WHERE video_id = ?")
+        .run(message, new Date().toISOString(), id);
+      saveDownload(id, 'paused', message, 0, 'Needs attention before retry');
+      return true;
+    }
+    const now = new Date().toISOString();
+    database.prepare("UPDATE download_retry_queue SET status = 'running', next_retry_at = ?, updated_at = ? WHERE video_id = ?")
+      .run(now, now, id);
+    try {
+      const result = await beginDownload(id);
+      database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
+      if (!result) {
+        database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = 'Video stub is no longer available.', updated_at = ? WHERE video_id = ?")
+          .run(new Date().toISOString(), id);
+        saveDownload(id, 'paused', 'Video stub is no longer available.', 0, 'Needs attention before retry');
+        return true;
+      }
+      return true;
+    } catch (error) {
+      database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
+      recordDownloadFailure(id, error.message);
+      return true;
+    }
+  } finally {
+    playlistDownloadQueueRunning = false;
   }
 }
 
+function handoffRetryToLocalIntegrity(id) {
+  if (jobs.has(id)) return false;
+  const filePath = getStoredMediaPath(id);
+  if (!filePath) return false;
+  database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
+  if (mediaFolderImports.has(id) || integrityVerificationJobs.has(id)) return true;
+  const previous = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id);
+  if (previous?.status === 'ready' && hasSavedIntegrityChecksum(id)) return true;
+  const now = new Date().toISOString();
+  database.prepare(`UPDATE downloads SET status = 'importing',
+    message = 'Local media is present. Waiting for its integrity check.', progress = 0,
+    stage = 'Queued for integrity check', updated_at = ? WHERE video_id = ?`).run(now, id);
+  mediaFolderCandidates.delete(id);
+  mediaFolderFailedFingerprints.delete(id);
+  scheduleMediaFolderScan(0);
+  return true;
+}
+
 async function runDownloadRetries() {
+  // Local integrity recovery is independent of network mode and YouTube's
+  // cooldown. Reconcile any present files before evaluating download retries.
+  const retryCandidates = database.prepare(`SELECT q.video_id AS id FROM download_retry_queue q
+    LEFT JOIN downloads d ON d.video_id = q.video_id
+    WHERE q.status IN ('pending', 'waiting-live')
+      AND COALESCE(d.status, '') IN ('error', 'importing', 'ready')
+    ORDER BY q.updated_at LIMIT 50`).all();
+  for (const { id } of retryCandidates) handoffRetryToLocalIntegrity(id);
   if (networkMode === 'offline' || offlinePreparationRequested) return;
   const cooldownUntil = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
   const protectionsActive = areDownloadProtectionsActive();
@@ -2844,9 +3251,15 @@ async function runDownloadRetries() {
   const due = database.prepare(`SELECT video_id AS id FROM download_retry_queue
     WHERE status IN ('pending', 'waiting-live') AND next_retry_at <= ?
       AND video_id NOT IN (SELECT video_id FROM playlist_download_queue)
+      AND NOT EXISTS (SELECT 1 FROM downloads d WHERE d.video_id = download_retry_queue.video_id
+        AND d.origin = 'media-folder' AND d.status = 'error' AND d.stage = 'Waiting for media-folder scan')
     ORDER BY next_retry_at LIMIT ${protectionsActive ? 1 : 3}`).all(now);
   for (const { id } of due) {
     if (jobs.has(id)) continue;
+    // A retry row can survive a server interruption even when the final media
+    // file is already on disk. Hand it to local integrity work before marking
+    // it running, so this does not become another yt-dlp attempt.
+    if (handoffRetryToLocalIntegrity(id)) continue;
     database.prepare("UPDATE download_retry_queue SET status = 'running', updated_at = ? WHERE video_id = ? AND status IN ('pending', 'waiting-live')").run(now, id);
     try {
       const result = await beginDownload(id);
@@ -3073,6 +3486,21 @@ function saveVideoMetadataFromInfo(id, info) {
   const metricKeys = ['view_count', 'like_count', 'comment_count', 'channel_follower_count'];
   for (const key of metricKeys) {
     if (metadata[key] === null && previous[key] !== undefined && previous[key] !== null) metadata[key] = previous[key];
+  }
+  const topicInference = inferVideoTopic({
+    topic: info.topic,
+    title: metadata.title || title,
+    channel: metadata.channel || channel,
+    categories: [...(Array.isArray(metadata.categories) ? metadata.categories : []), ...(Array.isArray(previous.categories) ? previous.categories : [])],
+    tags: [...(Array.isArray(metadata.tags) ? metadata.tags : []), ...(Array.isArray(previous.tags) ? previous.tags : [])],
+    description: metadata.description || previous.description || '',
+    artist: metadata.artist,
+    album: metadata.album,
+    track: metadata.track
+  });
+  if (topicInference) {
+    metadata.topicClassification = { ...topicInference, version: 1, classifiedAt: capturedAt };
+    database.prepare('UPDATE videos SET topic = ? WHERE video_id = ? AND trim(topic) = ?').run(topicInference.topic, id, '');
   }
   const observedMetrics = Object.fromEntries(metricKeys.filter(key => metadata[key] !== null).map(key => [key, metadata[key]]));
   if (Object.values(observedMetrics).some(value => Number.isFinite(Number(value)))) {
@@ -3851,6 +4279,7 @@ async function runDownloadedMetadataQueue() {
 
 async function beginDownload(id) {
   if (mediaFolderImports.has(id)) return getDownload(id) || { status: 'importing', message: 'Checking the media file already present in the library folder.' };
+  if (downloadStartingIds.has(id)) return { status: 'downloading', message: 'Preparing the local media destination.' };
   if (getStoredMediaPath(id)) {
     const previousStatus = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id)?.status;
     if (previousStatus !== 'ready' || !hasSavedIntegrityChecksum(id)) {
@@ -3876,16 +4305,52 @@ async function beginDownload(id) {
   const format = ffmpegAvailable
     ? `bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]${allowMp4Fallback ? '/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]' : ''}`
     : `best[ext=webm]${allowMp4Fallback ? '/best[ext=mp4]' : ''}`;
-  const outputDirectory = await ensureVideoMediaDirectory(id);
+  downloadStartingIds.add(id);
+  let outputDirectory;
+  try {
+    outputDirectory = await ensureVideoMediaDirectory(id);
+  } catch (error) {
+    downloadStartingIds.delete(id);
+    mediaFolderDeferredRechecks.delete(id);
+    throw error;
+  }
+  if (jobs.has(id) || mediaFolderImports.has(id)) {
+    downloadStartingIds.delete(id);
+    return getDownload(id) || { status: 'importing', message: 'Another local media operation is already active.' };
+  }
+  if (getStoredMediaPath(id)) {
+    downloadStartingIds.delete(id);
+    mediaFolderDeferredRechecks.delete(id);
+    mediaFolderCandidates.delete(id);
+    mediaFolderFailedFingerprints.delete(id);
+    try {
+      database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
+      saveDownload(id, 'importing', 'A local copy appeared while the download was being prepared. Checking that file first.', 0, 'Queued for integrity check');
+      database.prepare("UPDATE downloads SET origin = 'media-folder' WHERE video_id = ?").run(id);
+    } catch (error) {
+      scheduleMediaFolderScan(500);
+      throw error;
+    }
+    scheduleMediaFolderScan(0);
+    return { status: 'importing', message: 'A local copy appeared while the download was being prepared. Checking that file first.', stage: 'Queued for integrity check' };
+  }
   const args = [
     '--ignore-config', '--no-cookies', '--no-playlist', '--no-color', '--newline', '--progress', '--progress-delta', '0.5',
     '--progress-template', 'download:YT_PROGRESS:%(progress._percent_str)s', '--format', format,
     '--print', 'before_dl:YT_LIVE:%(live_status)s', '--merge-output-format', 'webm/mp4', '--output', path.join(outputDirectory, '%(id)s.%(ext)s'), video.url
   ];
-  saveDownload(id, 'downloading', '', 0, 'Checking video formats…');
-  const startedAt = database.prepare('SELECT started_at AS value FROM downloads WHERE video_id = ?').get(id)?.value || new Date().toISOString();
-  const job = { status: 'downloading', progress: 0, stage: 'Checking video formats…', startedAt, transferStarted: false, offlinePauseRequested: false, pauseRequested: false, finishRequested: false, finishPhase: '', isLive: false, endRequested: false, discardRequested: false };
-  jobs.set(id, job);
+  let job;
+  try {
+    saveDownload(id, 'downloading', '', 0, 'Checking video formats…');
+    const startedAt = database.prepare('SELECT started_at AS value FROM downloads WHERE video_id = ?').get(id)?.value || new Date().toISOString();
+    job = { status: 'downloading', progress: 0, stage: 'Checking video formats…', startedAt, transferStarted: false, offlinePauseRequested: false, pauseRequested: false, finishRequested: false, finishPhase: '', isLive: false, endRequested: false, discardRequested: false };
+    jobs.set(id, job);
+  } catch (error) {
+    downloadStartingIds.delete(id);
+    mediaFolderDeferredRechecks.delete(id);
+    throw error;
+  }
+  downloadStartingIds.delete(id);
   const downloadProcess = spawn(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   job.process = downloadProcess;
   let ytOutput = '';
@@ -3944,13 +4409,13 @@ async function beginDownload(id) {
     const message = error.code === 'ENOENT' ? 'yt-dlp is not installed or not available on PATH.' : 'Could not start yt-dlp.';
     saveDownload(id, 'error', message, 0, 'Could not start download');
     recordDownloadFailure(id, message);
-    jobs.delete(id);
+    releaseDownloadJob(id);
   });
   downloadProcess.on('close', async code => {
     if (!jobs.has(id)) return;
     if (job.acquisitionExclusionReason) {
       try { await discardDownloadFiles(id); } catch (error) { console.error(`Could not clear excluded media fragments for ${id}:`, error); }
-      jobs.delete(id);
+      releaseDownloadJob(id);
       excludeAcquisitionVideo(id, job.acquisitionExclusionReason);
       return;
     }
@@ -3980,7 +4445,7 @@ async function beginDownload(id) {
           markDownloadPausedByUser(id, job.progress, message);
         }
       }
-      jobs.delete(id);
+      releaseDownloadJob(id);
       return;
     }
     if (job.endRequested) {
@@ -3992,13 +4457,13 @@ async function beginDownload(id) {
       } catch (error) {
         if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY') {
           await recordMediaIntegrityFailure(id, error, { progress: job.progress });
-          jobs.delete(id);
+          releaseDownloadJob(id);
           return;
         }
         const message = `Could not finish and save this live capture: ${error.message} The captured files are paused; retry to continue downloading.`;
         markDownloadPausedByUser(id, job.progress, message);
       }
-      jobs.delete(id);
+      releaseDownloadJob(id);
       return;
     }
     if (job.pauseRequested) {
@@ -4012,7 +4477,7 @@ async function beginDownload(id) {
       } else {
         markDownloadPausedByUser(id, job.progress);
       }
-      jobs.delete(id);
+      releaseDownloadJob(id);
       return;
     }
     if (job.offlinePauseRequested) {
@@ -4027,14 +4492,14 @@ async function beginDownload(id) {
         if (offlinePreparationRequested || networkMode === 'offline') markDownloadPausedOffline(id);
         else queueCancelledDownloadForOnline(id);
       }
-      jobs.delete(id);
+      releaseDownloadJob(id);
       return;
     }
     if (job.discardRequested) {
       try { await discardDownloadFiles(id); } catch (error) { console.error(`Could not discard live capture ${id}:`, error); }
       database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
       saveDownload(id, 'discarded', 'Live capture discarded.', 0, 'Discarded');
-      jobs.delete(id);
+      releaseDownloadJob(id);
       return;
     }
     try {
@@ -4045,7 +4510,7 @@ async function beginDownload(id) {
     } catch (error) {
       if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY' || error.code === 'MEDIA_MISSING') {
         await recordMediaIntegrityFailure(id, error, { progress: job.progress });
-        jobs.delete(id);
+        releaseDownloadJob(id);
         return;
       }
       const unsupported = /requested format is not available|no video formats found|requested format not available/i.test(ytOutput);
@@ -4064,7 +4529,7 @@ async function beginDownload(id) {
       saveDownload(id, 'error', message, job.progress, 'Download failed');
       recordDownloadFailure(id, message);
     }
-    jobs.delete(id);
+    releaseDownloadJob(id);
   });
   return { status: 'downloading', message: '' };
 }
@@ -4743,6 +5208,11 @@ const server = createServer(async (request, response) => {
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.position, v.last_seen AS seenAt, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt,
         (SELECT vp.category FROM video_provisions vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, vp.category LIMIT 1) AS sourceProvisionCategory,
         (SELECT vp.last_seen FROM video_provisions vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, vp.category LIMIT 1) AS sourceProvisionSeenAt,
+        (SELECT vp.source_type FROM video_provenance vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, length(vp.source_key) DESC, vp.source_type LIMIT 1) AS sourceType,
+        (SELECT vp.source_key FROM video_provenance vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, length(vp.source_key) DESC, vp.source_type LIMIT 1) AS sourceKey,
+        (SELECT vp.source_label FROM video_provenance vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, length(vp.source_key) DESC, vp.source_type LIMIT 1) AS sourceDetailLabel,
+        (SELECT vp.source_url FROM video_provenance vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, length(vp.source_key) DESC, vp.source_type LIMIT 1) AS sourceUrl,
+        (SELECT vp.last_seen FROM video_provenance vp WHERE vp.video_id = v.video_id ORDER BY vp.last_seen DESC, length(vp.source_key) DESC, vp.source_type LIMIT 1) AS sourceDetailSeenAt,
         (SELECT ci.channel_key FROM channel_items ci WHERE ci.video_id = v.video_id ORDER BY ci.added_at DESC, ci.channel_key LIMIT 1) AS sourceChannelKey,
         (SELECT ci.tab_key FROM channel_items ci WHERE ci.video_id = v.video_id ORDER BY ci.added_at DESC, ci.channel_key LIMIT 1) AS sourceTab,
         (SELECT ci.added_at FROM channel_items ci WHERE ci.video_id = v.video_id ORDER BY ci.added_at DESC, ci.channel_key LIMIT 1) AS sourceSeenAt,
@@ -4757,7 +5227,12 @@ const server = createServer(async (request, response) => {
       ORDER BY v.last_seen DESC, v.position ASC, v.first_seen DESC, v.video_id
     `).all(mediaDiscoveryPaused() ? 1 : 0);
     sendJson(response, 200, rows.map(video => {
-      if (video.sourceChannelKey && video.sourceSeenAt &&
+      const detailedSourceAt = Date.parse(video.sourceDetailSeenAt || '');
+      const channelSourceAt = Date.parse(video.sourceSeenAt || '');
+      if (video.sourceDetailLabel && (!Number.isFinite(channelSourceAt) || !Number.isFinite(detailedSourceAt) || detailedSourceAt >= channelSourceAt)) {
+        video.sourceLabel = `From ${video.sourceDetailLabel}`;
+        video.sourceSeenAt = video.sourceDetailSeenAt;
+      } else if (video.sourceChannelKey && video.sourceSeenAt &&
           (!video.sourceProvisionSeenAt || video.sourceSeenAt >= video.sourceProvisionSeenAt)) {
         const tabLabel = ({ home: 'Home', videos: 'Videos', shorts: 'Shorts', streams: 'Live', playlists: 'Playlists', community: 'Community' })[video.sourceTab] || 'Videos';
         video.sourceLabel = `From ${video.sourceChannelKey} · ${tabLabel}`;
@@ -4770,6 +5245,21 @@ const server = createServer(async (request, response) => {
       if (!getStoredMediaPath(video.id)) video.downloaded = 0;
       return video;
     }).filter(video => !mediaDiscoveryPaused() || Number(video.downloaded) === 1));
+    return;
+  }
+
+  const provenanceMatch = /^\/api\/videos\/([A-Za-z0-9_-]{11})\/provenance$/.exec(url.pathname);
+  if (request.method === 'GET' && provenanceMatch) {
+    const id = provenanceMatch[1];
+    if (!database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(id)) {
+      sendJson(response, 404, { error: 'Video metadata is not in the local library.' });
+      return;
+    }
+    const sources = database.prepare(`SELECT source_type AS type, source_key AS key, source_label AS label,
+        source_url AS url, first_seen AS firstSeen, last_seen AS lastSeen, observations
+      FROM video_provenance WHERE video_id = ?
+      ORDER BY last_seen DESC, length(source_key) DESC, source_type, source_key`).all(id);
+    sendJson(response, 200, { id, sources });
     return;
   }
 
@@ -4926,7 +5416,7 @@ const server = createServer(async (request, response) => {
         (SELECT COUNT(*) FROM homepage_category_videos cv WHERE cv.category_key = c.category_key) AS videoCount
       FROM homepage_categories c WHERE c.last_seen = (SELECT MAX(last_seen) FROM homepage_categories)
       ORDER BY c.sort_position, c.title COLLATE NOCASE`).all();
-    sendJson(response, 200, rows);
+    sendJson(response, 200, localizeCachedImages(rows));
     return;
   }
 
@@ -5000,6 +5490,10 @@ const server = createServer(async (request, response) => {
           if (video.kind === 'short') isolateShortFromStandardFlows(video.id);
           database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, 'homepage', ?, ?)
             ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(video.id, now, now);
+          recordVideoProvenance(video.id, raw.provenance, now, {
+            sourceType: 'homepage-section', sourceKey: `category:${categoryKey}`,
+            sourceLabel: `Homepage category · ${title}`, sourceUrl: 'https://www.youtube.com/'
+          });
           insertCategoryVideo.run(categoryKey, video.id, position, now, now);
           acceptedVideos += 1;
         });
@@ -5738,7 +6232,7 @@ const server = createServer(async (request, response) => {
         p.created_at AS createdAt, p.updated_at AS updatedAt,
         (SELECT COUNT(*) FROM playlist_items i JOIN videos v ON v.video_id = i.video_id
           WHERE i.playlist_id = p.playlist_id AND v.kind <> 'short') AS capturedCount
-      FROM playlists p
+      FROM playlists p WHERE p.kind <> 'download-group'
       ORDER BY CASE p.source WHEN 'local' THEN 0 ELSE 1 END, p.updated_at DESC, p.title COLLATE NOCASE
     `).all();
     sendJson(response, 200, rows);
@@ -6056,8 +6550,14 @@ const server = createServer(async (request, response) => {
     const activeDownloads = database.prepare(`SELECT COUNT(*) AS total FROM downloads d
       LEFT JOIN download_retry_queue q ON q.video_id = d.video_id
       WHERE d.status = 'downloading' OR q.status = 'waiting-live'`).get().total;
-    const pausedDownloads = database.prepare("SELECT COUNT(*) AS total FROM download_retry_queue WHERE status IN ('paused', 'paused-offline')").get().total;
-    const queuedDownloads = database.prepare("SELECT COUNT(*) AS total FROM download_retry_queue WHERE status = 'pending'").get().total;
+    const pausedDownloads = database.prepare(`SELECT COUNT(*) AS total FROM download_retry_queue q
+      WHERE q.status IN ('paused', 'paused-offline') AND NOT EXISTS (
+        SELECT 1 FROM downloads d WHERE d.video_id = q.video_id AND d.status = 'importing'
+      )`).get().total;
+    const queuedDownloads = database.prepare(`SELECT COUNT(*) AS total FROM download_retry_queue q
+      WHERE q.status = 'pending' AND NOT EXISTS (
+        SELECT 1 FROM downloads d WHERE d.video_id = q.video_id AND d.status = 'importing'
+      )`).get().total;
     const activeChannelCaptures = database.prepare("SELECT COUNT(*) AS total FROM channel_captures WHERE status IN ('opening', 'queued', 'collecting')").get().total;
     const durationLookupActive = Boolean(database.prepare("SELECT 1 FROM video_duration_lookups WHERE status = 'running' LIMIT 1").get());
     const pendingDurations = database.prepare(`SELECT COUNT(*) AS total FROM videos v
@@ -6078,7 +6578,7 @@ const server = createServer(async (request, response) => {
       message: currentMetadata?.message || ''
     };
     sendJson(response, 200, { localFiles, localVideos, localShorts, mediaBytes, mediaIntegrity, mediaFolder: mediaFolderStatus(), historicalViews, extensionVideos, activeDownloads, pausedDownloads, queuedDownloads,
-      activeChannelCaptures, durationLookupActive, pendingDurations, durationBaseline, downloadMetadata });
+      youtubeCooldownUntil: getEnforcedYoutubeDownloadCooldownUntil(), activeChannelCaptures, durationLookupActive, pendingDurations, durationBaseline, downloadMetadata });
     return;
   }
 
@@ -6115,7 +6615,8 @@ const server = createServer(async (request, response) => {
     const downloadRetryCounts = database.prepare(`SELECT
       COALESCE(SUM(CASE WHEN status IN ('pending', 'waiting-live') THEN 1 ELSE 0 END), 0) AS queued,
       COALESCE(SUM(CASE WHEN status IN ('paused', 'paused-offline', 'paused-limit', 'exhausted') THEN 1 ELSE 0 END), 0) AS paused
-      FROM download_retry_queue`).get();
+      FROM download_retry_queue q
+      WHERE NOT EXISTS (SELECT 1 FROM downloads d WHERE d.video_id = q.video_id AND d.status = 'importing')`).get();
     const activeMediaSamples = database.prepare(`SELECT v.video_id AS videoId, v.title, v.channel, d.status,
       d.stage AS phase, d.message, d.progress, 0 AS attempts, '' AS nextAttemptAt, d.updated_at AS updatedAt
       FROM downloads d JOIN videos v ON v.video_id = d.video_id WHERE d.status = 'downloading'
@@ -6127,6 +6628,7 @@ const server = createServer(async (request, response) => {
       FROM download_retry_queue q JOIN videos v ON v.video_id = q.video_id
       LEFT JOIN downloads d ON d.video_id = q.video_id
       WHERE q.status IN ('pending', 'waiting-live', 'paused', 'paused-offline', 'paused-limit', 'exhausted')
+        AND COALESCE(d.status, '') <> 'importing'
       ORDER BY CASE q.status WHEN 'pending' THEN 0 WHEN 'waiting-live' THEN 1 ELSE 2 END, q.next_retry_at, q.updated_at DESC LIMIT 4`).all();
     const staleChannelBefore = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
     const channelCounts = database.prepare(`SELECT
@@ -6427,7 +6929,8 @@ const server = createServer(async (request, response) => {
       q.attempts, q.next_retry_at AS nextAttemptAt, q.updated_at AS updatedAt
       FROM download_retry_queue q LEFT JOIN videos v ON v.video_id = q.video_id
       LEFT JOIN downloads d ON d.video_id = q.video_id
-      WHERE q.status IN ('pending', 'waiting-live') ORDER BY q.next_retry_at, q.updated_at`).all()
+      WHERE q.status IN ('pending', 'waiting-live') AND COALESCE(d.status, '') <> 'importing'
+      ORDER BY q.next_retry_at, q.updated_at`).all()
       .map(item => ({ ...item, retryAction: item.status === 'pending' ? { type: 'media', id: item.videoId } : null }));
     const heldMedia = database.prepare(`SELECT q.video_id AS videoId, v.title, v.channel, q.status,
       COALESCE(d.stage, 'Paused') AS phase,
@@ -6435,7 +6938,8 @@ const server = createServer(async (request, response) => {
       q.attempts, q.next_retry_at AS nextAttemptAt, q.updated_at AS updatedAt
       FROM download_retry_queue q LEFT JOIN videos v ON v.video_id = q.video_id
       LEFT JOIN downloads d ON d.video_id = q.video_id
-      WHERE q.status IN ('paused', 'paused-offline', 'paused-limit', 'exhausted') ORDER BY q.updated_at DESC`).all()
+      WHERE q.status IN ('paused', 'paused-offline', 'paused-limit', 'exhausted')
+        AND COALESCE(d.status, '') <> 'importing' ORDER BY q.updated_at DESC`).all()
       .map(item => ({ ...item, retryAction: { type: 'media', id: item.videoId } }));
     const localMetadata = database.prepare(`SELECT d.video_id AS videoId, v.title, v.channel,
       COALESCE(m.status, 'pending') AS status, COALESCE(m.phase, 'queued') AS phase,
@@ -6625,11 +7129,11 @@ const server = createServer(async (request, response) => {
       database.exec('BEGIN IMMEDIATE');
       try {
         incomingVideos.forEach((raw, position) => {
-          const video = cleanVideo({ ...raw, section: 'search', topic: '' }, position);
+          const video = cleanVideo({ ...raw, section: 'search', topic: '', topicQuery: query }, position);
           if (!video) return;
           recordExtensionDuration(parsed.extensionVersion, video, 'search', now);
           database.prepare(`INSERT INTO videos (video_id, url, title, channel, channel_key, channel_url, thumbnail, avatar, duration, meta, kind, section, topic, position, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'search', '', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'search', ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET url = excluded.url, title = excluded.title, channel = excluded.channel,
               channel_key = CASE WHEN excluded.channel_key <> '' THEN excluded.channel_key ELSE videos.channel_key END,
               channel_url = CASE WHEN excluded.channel_url <> '' THEN excluded.channel_url ELSE videos.channel_url END,
@@ -6637,8 +7141,9 @@ const server = createServer(async (request, response) => {
                 THEN videos.thumbnail ELSE excluded.thumbnail END,
               avatar = excluded.avatar,
               duration = CASE WHEN trim(excluded.duration) <> '' THEN excluded.duration ELSE videos.duration END,
-              meta = excluded.meta, last_seen = excluded.last_seen`)
-            .run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar, video.duration, video.meta, video.kind, video.position, now, now);
+              meta = excluded.meta, topic = CASE WHEN trim(excluded.topic) <> '' THEN excluded.topic ELSE videos.topic END,
+              last_seen = excluded.last_seen`)
+            .run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar, video.duration, video.meta, video.kind, video.topic, video.position, now, now);
           if (video.kind === 'short') {
             database.prepare("UPDATE videos SET kind = 'short' WHERE video_id = ?").run(video.id);
             isolateShortFromStandardFlows(video.id);
@@ -6648,6 +7153,10 @@ const server = createServer(async (request, response) => {
             ON CONFLICT(search_id, video_id) DO UPDATE SET position = excluded.position`).run(searchId, video.id, video.position);
           database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, 'search', ?, ?)
             ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(video.id, now, now);
+          recordVideoProvenance(video.id, raw.provenance, now, {
+            sourceType: 'search', sourceKey: searchId, sourceLabel: `YouTube search · ${query}`,
+            sourceUrl: 'https://www.youtube.com/results'
+          });
           acceptedVideos += 1;
         });
         // A user may open a result while the YouTube tab is still collecting.
@@ -6755,6 +7264,11 @@ const server = createServer(async (request, response) => {
           }
           saveVideoPublication(video.id, video);
           saveItem.run(channelKey, video.id, session.tab, video.position, now);
+          const channelTabLabel = ({ home: 'Home', videos: 'Videos', shorts: 'Shorts', streams: 'Live', playlists: 'Playlists', community: 'Community' })[session.tab] || 'Videos';
+          recordVideoProvenance(video.id, raw.provenance, now, {
+            sourceType: 'channel', sourceKey: `${channelKey}:${session.tab}`,
+            sourceLabel: `Channel · ${name || channelKey} · ${channelTabLabel}`, sourceUrl: channelUrl
+          });
           const savedDuration = database.prepare('SELECT duration FROM videos WHERE video_id = ?').get(video.id)?.duration || '';
           if (/^UPCOMING$/i.test(String(savedDuration).trim())) {
             const retryAt = new Date(Date.now() + 6 * 60 * 60_000).toISOString();
@@ -6939,6 +7453,7 @@ const server = createServer(async (request, response) => {
         .run(id, `https://www.youtube.com/watch?v=${id}`, id, `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, now, now);
       database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, 'direct', ?, ?)
         ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(id, now, now);
+      recordVideoProvenance(id, null, now, { sourceType: 'direct-id', sourceKey: id, sourceLabel: 'Direct video ID' });
       const video = database.prepare(`SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey,
           v.channel_url AS channelUrl, v.thumbnail, ${channelAvatarSelect('v')} AS avatar, v.duration,
           COALESCE(w.view_count, 0) AS viewCount, COALESCE(pref.liked, 0) AS liked
@@ -7078,8 +7593,40 @@ const server = createServer(async (request, response) => {
   const pauseMatch = /^\/api\/downloads\/([A-Za-z0-9_-]{11})\/pause$/.exec(url.pathname);
   if (request.method === 'POST' && pauseMatch) {
     const id = pauseMatch[1];
+    const integrityJob = mediaFolderImportJobs.get(id);
+    if (integrityJob) {
+      if (!integrityJob.pauseRequested) {
+        integrityJob.stage = 'Pausing integrity check…';
+        pauseIntegrityJob(integrityJob);
+        saveDownload(id, 'importing', 'Pausing the local media integrity check.', 0, integrityJob.stage);
+      }
+      sendJson(response, 202, { status: 'importing', stage: integrityJob.stage, pauseRequested: true });
+      return;
+    }
     const job = jobs.get(id);
-    if (!job) { sendJson(response, 404, { error: 'This download is no longer active.' }); return; }
+    if (!job) {
+      const download = database.prepare('SELECT status, origin FROM downloads WHERE video_id = ?').get(id);
+      if (download?.status === 'importing' && getStoredMediaPath(id)) {
+        const message = markMediaIntegrityPaused(id);
+        sendJson(response, 202, { status: 'paused', stage: 'Integrity check paused', message, pauseRequested: false });
+        return;
+      }
+      if (download?.origin === 'media-folder' && download.status === 'paused') {
+        const message = markMediaIntegrityPaused(id);
+        sendJson(response, 202, { status: 'paused', stage: 'Integrity check paused', message, pauseRequested: false });
+        return;
+      }
+      if (download?.status === 'importing' && download?.origin === 'media-folder') {
+        const message = 'The imported media file is no longer present in the configured media folder. Refresh the Downloads view after the folder is available.';
+        database.prepare(`UPDATE downloads SET status = 'error', message = ?, progress = 0,
+          stage = 'Local file missing', updated_at = ? WHERE video_id = ? AND status = 'importing'`)
+          .run(message, new Date().toISOString(), id);
+        sendJson(response, 202, { status: 'error', message });
+        return;
+      }
+      sendJson(response, 409, { error: 'This item is not an active download or local integrity check.' });
+      return;
+    }
     if (job.pauseRequested || job.offlinePauseRequested || job.endRequested || job.finishRequested || job.discardRequested) {
       sendJson(response, 202, { status: 'downloading', stage: job.stage, pauseRequested: job.pauseRequested });
       return;
@@ -7157,13 +7704,39 @@ const server = createServer(async (request, response) => {
     const id = url.pathname.split('/').at(-1);
     if (jobs.has(id)) { sendJson(response, 202, getDownload(id) || { status: 'downloading', message: '' }); return; }
     if (getStoredMediaPath(id)) {
-      const previousStatus = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id)?.status;
+      const previousDownload = database.prepare('SELECT status, origin FROM downloads WHERE video_id = ?').get(id);
+      const previousStatus = previousDownload?.status;
       if (previousStatus !== 'ready' || !hasSavedIntegrityChecksum(id)) {
-        try { await verifyLocalMediaIntegrity(id); }
+        const isMediaFolderCheck = previousDownload?.origin === 'media-folder';
+        if (isMediaFolderCheck && mediaFolderImportJobs.has(id)) {
+          sendJson(response, 202, getDownload(id) || { status: 'importing', message: 'Local integrity check is already running.' });
+          return;
+        }
+        const integrityJob = isMediaFolderCheck ? createMediaFolderIntegrityJob() : null;
+        if (integrityJob) {
+          mediaFolderImports.add(id);
+          mediaFolderImportJobs.set(id, integrityJob);
+          saveDownload(id, 'importing', 'Checking a local media file before saving it to the library.', 0, integrityJob.stage);
+        }
+        try {
+          await verifyLocalMediaIntegrity(id, integrityJob ? { downloadJob: integrityJob } : {});
+          throwIfIntegrityPaused(integrityJob);
+        }
         catch (error) {
+          if (error.code === 'INTEGRITY_PAUSED') {
+            const message = markMediaIntegrityPaused(id);
+            sendJson(response, 202, getDownload(id) || { status: 'paused', message });
+            return;
+          }
           await recordMediaIntegrityFailure(id, error);
           sendJson(response, 202, getDownload(id) || { status: 'error', message: error.message });
           return;
+        } finally {
+          if (integrityJob) {
+            mediaFolderImportJobs.delete(id);
+            mediaFolderImports.delete(id);
+            scheduleMediaFolderScan(500);
+          }
         }
       }
       saveDownload(id, 'ready', '', 100, 'Ready to play');
@@ -7171,9 +7744,9 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (networkMode === 'offline' || offlinePreparationRequested) { sendJson(response, 409, { error: 'New downloads are unavailable while Offline mode is active or preparing.', mode: reportedNetworkMode() }); return; }
-    const blockedUntil = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
+    const blockedUntil = Date.parse(getYoutubeDownloadCooldownUntil());
     if (areDownloadProtectionsActive() && Number.isFinite(blockedUntil) && blockedUntil > Date.now()) {
-      sendJson(response, 429, { error: 'YouTube is asking this connection to sign in. Automatic downloads are paused to avoid repeated requests.', retryAt: new Date(blockedUntil).toISOString() });
+      sendJson(response, 429, { error: 'YouTube sign-in cooldown is active. Manual retries and new downloads are unavailable until it ends.', retryAt: new Date(blockedUntil).toISOString() });
       return;
     }
     const retry = database.prepare('SELECT status, next_retry_at FROM download_retry_queue WHERE video_id = ?').get(id);
@@ -7231,6 +7804,96 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/downloads/delete-group') {
+    try {
+      const body = await readBody(request);
+      const videoIds = [...new Set((Array.isArray(body.videoIds) ? body.videoIds : [])
+        .map(value => String(value || '')).filter(id => /^[A-Za-z0-9_-]{11}$/.test(id)))].slice(0, 2000);
+      let deleted = 0;
+      for (const id of videoIds) {
+        if (jobs.has(id) || downloadStartingIds.has(id) || mediaFolderImports.has(id) || mediaFolderImportJobs.has(id) || integrityVerificationJobs.has(id)) continue;
+        const current = database.prepare("SELECT status FROM downloads WHERE video_id = ?").get(id);
+        if (current?.status !== 'ready') continue;
+        downloadStartingIds.add(id);
+        try {
+          await discardDownloadFiles(id);
+          const result = database.prepare(`UPDATE downloads SET status = 'deleted', message = 'The local media copy was deleted; saved video metadata was retained.',
+            progress = 0, stage = 'Deleted locally', updated_at = ? WHERE video_id = ? AND status = 'ready'`).run(new Date().toISOString(), id);
+          if (result.changes) {
+            database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
+            deleted += 1;
+          }
+        } catch (error) {
+          console.error(`Could not delete grouped local media ${id}:`, error);
+        } finally {
+          downloadStartingIds.delete(id);
+        }
+      }
+      sendJson(response, 200, { deleted, requested: videoIds.length });
+    } catch (error) {
+      const tooLarge = error instanceof RangeError;
+      sendJson(response, tooLarge ? 413 : 400, { error: tooLarge ? 'Request too large' : 'Grouped media could not be deleted.' });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/downloads/play-group') {
+    try {
+      const body = await readBody(request);
+      const groupKey = String(body.groupKey || '').trim().slice(0, 240);
+      const title = cleanRepeatedLabel(body.title).slice(0, 120);
+      const requestedItems = Array.isArray(body.items) ? body.items.slice(0, 1000) : [];
+      if (!groupKey || !title || !requestedItems.length) {
+        sendJson(response, 400, { error: 'A downloaded group with playable videos is required.' }); return;
+      }
+      const seen = new Set();
+      const items = [];
+      for (const candidate of requestedItems) {
+        const id = String(candidate?.videoId || '');
+        if (!/^[A-Za-z0-9_-]{11}$/.test(id) || seen.has(id)) continue;
+        seen.add(id);
+        const video = database.prepare(`SELECT v.video_id AS id, v.kind, v.thumbnail
+          FROM videos v JOIN downloads d ON d.video_id = v.video_id
+          WHERE v.video_id = ? AND d.status = 'ready'`).get(id);
+        if (!video || video.kind === 'short' || !getStoredMediaPath(id)) continue;
+        items.push(video);
+      }
+      if (!items.length) { sendJson(response, 409, { error: 'This group has no locally playable videos.' }); return; }
+
+      const playlistId = `download-group-${createHash('sha256').update(groupKey).digest('hex').slice(0, 40)}`;
+      const now = new Date().toISOString();
+      const insertPlaylistItem = database.prepare(`INSERT INTO playlist_items (playlist_id, video_id, position, source_key, added_at)
+        VALUES (?, ?, ?, ?, ?)`);
+      const insertQueueItem = database.prepare(`INSERT INTO playback_queue
+        (video_id, position, added_at, source_playlist_id, source_playlist_position) VALUES (?, ?, ?, ?, ?)`);
+      const resultItems = [];
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        database.prepare(`INSERT INTO playlists (playlist_id, title, source, kind, thumbnail, declared_item_count, is_complete, created_at, updated_at)
+          VALUES (?, ?, 'local', 'download-group', ?, ?, 1, ?, ?)
+          ON CONFLICT(playlist_id) DO UPDATE SET title = excluded.title, thumbnail = excluded.thumbnail,
+            declared_item_count = excluded.declared_item_count, is_complete = 1, updated_at = excluded.updated_at`)
+          .run(playlistId, title, items[0].thumbnail || '', items.length, now, now);
+        database.prepare('DELETE FROM playlist_items WHERE playlist_id = ?').run(playlistId);
+        database.exec('DELETE FROM playback_queue');
+        items.forEach((item, position) => {
+          insertPlaylistItem.run(playlistId, item.id, position, `download-group:${item.id}`, now);
+          const queued = insertQueueItem.run(item.id, position, now, playlistId, position);
+          resultItems.push({ id: item.id, queueItemId: Number(queued.lastInsertRowid), position });
+        });
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+      sendJson(response, 200, { playlistId, title, queued: resultItems.length, items: resultItems });
+    } catch (error) {
+      const tooLarge = error instanceof RangeError;
+      sendJson(response, tooLarge ? 413 : 400, { error: tooLarge ? 'Request too large' : 'This downloaded group could not be opened for playback.' });
+    }
+    return;
+  }
+
   const downloadDeleteMatch = /^\/api\/downloads\/([A-Za-z0-9_-]{11})$/.exec(url.pathname);
   if (request.method === 'DELETE' && downloadDeleteMatch) {
     const id = downloadDeleteMatch[1];
@@ -7259,29 +7922,44 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/downloads/recent') {
     const recentCutoff = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const recentKind = url.searchParams.get('kind');
     await reconcileRecentlyReacquiredMedia(recentCutoff);
-    const rows = database.prepare(`
-      SELECT v.video_id AS id, v.title, v.channel, v.thumbnail, v.avatar, v.duration,
-        d.acquired_at AS acquiredAt, COALESCE(w.view_count, 0) AS viewCount
-      FROM downloads d JOIN videos v ON v.video_id = d.video_id
-      LEFT JOIN video_views w ON w.video_id = v.video_id
-      WHERE d.status = 'ready' AND d.acquired_at >= ?
-      ORDER BY d.acquired_at DESC, v.video_id
-      LIMIT 12
-    `).all(recentCutoff).filter(row => Boolean(getStoredMediaPath(row.id)));
-    sendJson(response, 200, localizeCachedImages(rows));
+    const recentRowsForKind = kind => {
+      const kindClause = kind === 'shorts' ? "AND v.kind = 'short'" : kind === 'videos' ? "AND COALESCE(v.kind, '') <> 'short'" : '';
+      return database.prepare(`
+        SELECT v.video_id AS id, v.title, v.channel, v.thumbnail, v.avatar, v.duration, v.kind,
+          d.acquired_at AS acquiredAt, COALESCE(w.view_count, 0) AS viewCount
+        FROM downloads d JOIN videos v ON v.video_id = d.video_id
+        LEFT JOIN video_views w ON w.video_id = v.video_id
+        WHERE d.status = 'ready' AND d.acquired_at >= ? ${kindClause}
+        ORDER BY d.acquired_at DESC, v.video_id
+        LIMIT 12
+      `).all(recentCutoff).filter(row => Boolean(getStoredMediaPath(row.id)));
+    };
+    if (recentKind === 'split') {
+      sendJson(response, 200, {
+        videos: localizeCachedImages(recentRowsForKind('videos')),
+        shorts: localizeCachedImages(recentRowsForKind('shorts'))
+      });
+    } else {
+      sendJson(response, 200, localizeCachedImages(recentRowsForKind(recentKind)));
+    }
     return;
   }
 
   if (request.method === 'GET' && url.pathname === '/api/downloads') {
     const rows = database.prepare(`
-      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount, COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.completed, 0) AS completed, d.integrity_status AS integrityStatus, d.integrity_checksum AS integrityChecksum,
+      SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount, COALESCE(pref.liked, 0) AS liked,
+        COALESCE(CAST(json_extract(CASE WHEN json_valid(vm.metadata_json) THEN vm.metadata_json ELSE '{}' END, '$.like_count') AS INTEGER), CAST(json_extract(CASE WHEN json_valid(vm.metadata_json) THEN vm.metadata_json ELSE '{}' END, '$.publicMetrics.like_count') AS INTEGER), 0) AS likeCount,
+        COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.completed, 0) AS completed, d.integrity_status AS integrityStatus, d.integrity_checksum AS integrityChecksum, d.integrity_file_size AS fileSizeBytes,
         ta.status AS transcriptionStatus, ta.audio_relative_path AS transcriptionAudioPath,
         ta.audio_format AS transcriptionAudioFormat, ta.audio_sample_rate AS transcriptionAudioSampleRate,
         ta.audio_channels AS transcriptionAudioChannels, ta.audio_size AS transcriptionAudioSize,
         ta.audio_checksum AS transcriptionAudioChecksum, ta.source_checksum AS transcriptionSourceChecksum,
         ta.error AS transcriptionAudioError, m.status AS metadataStatus, m.phase AS metadataPhase, m.message AS metadataMessage
       FROM downloads d JOIN videos v ON v.video_id = d.video_id LEFT JOIN video_views w ON w.video_id = v.video_id
+      LEFT JOIN video_preferences pref ON pref.video_id = v.video_id
+      LEFT JOIN video_metadata vm ON vm.video_id = v.video_id
       LEFT JOIN download_metadata m ON m.video_id = d.video_id
       LEFT JOIN transcription_assets ta ON ta.video_id = d.video_id
       LEFT JOIN video_progress p ON p.video_id = v.video_id
@@ -7290,7 +7968,43 @@ const server = createServer(async (request, response) => {
       const mediaPath = getStoredMediaPath(row.id);
       return mediaPath ? { ...row, mediaExtension: path.extname(mediaPath).slice(1).toLowerCase() } : null;
     }).filter(Boolean);
-    sendJson(response, 200, rows);
+    const topicsByVideo = new Map(rows.map(row => {
+      const topic = normalizeTopicLabel(row.topic);
+      return [row.id, new Set(topic ? [topic] : [])];
+    }));
+    const provisionsByVideo = new Map(rows.map(row => [row.id, new Set()]));
+    for (let offset = 0; offset < rows.length; offset += 500) {
+      const ids = rows.slice(offset, offset + 500).map(row => row.id);
+      const placeholders = ids.map(() => '?').join(',');
+      const capturedTopics = database.prepare(`
+        SELECT id, topic FROM (
+          SELECT hp.video_id AS id,
+            CASE WHEN trim(hs.topic) <> '' THEN trim(hs.topic)
+              WHEN hs.kind IN ('topic', 'feed') THEN trim(hs.title) ELSE '' END AS topic
+          FROM homepage_placements hp
+          JOIN homepage_sections hs ON hs.capture_id = hp.capture_id AND hs.section_key = hp.section_key
+          WHERE hp.video_id IN (${placeholders})
+            AND lower(trim(hs.title)) NOT IN ('for you', 'top news', 'shorts', 'explore more topics', 'watch again', 'continue watching', 'recommended for you', 'because you watched', 'recently uploaded', 'new to you', 'subscriptions', 'your videos', 'history')
+          UNION ALL
+          SELECT video_id AS id, trim(hc.title) AS topic
+          FROM homepage_category_videos hcv
+          JOIN homepage_categories hc ON hc.category_key = hcv.category_key
+          WHERE hcv.video_id IN (${placeholders})
+            AND lower(trim(hc.title)) NOT IN ('all', 'watched', 'recently uploaded')
+        ) WHERE trim(topic) <> ''
+      `).all(...ids, ...ids);
+      for (const item of capturedTopics) {
+        const topic = normalizeTopicLabel(item.topic);
+        if (topic) topicsByVideo.get(item.id)?.add(topic);
+      }
+      const provenance = database.prepare(`SELECT video_id AS id, category FROM video_provisions WHERE video_id IN (${placeholders})`).all(...ids);
+      for (const item of provenance) provisionsByVideo.get(item.id)?.add(item.category);
+    }
+    for (const row of rows) {
+      row.topics = [...(topicsByVideo.get(row.id) || [])];
+      row.sourceCategories = [...(provisionsByVideo.get(row.id) || [])];
+    }
+    sendJson(response, 200, localizeCachedImages(rows));
     return;
   }
 
@@ -7322,9 +8036,10 @@ const server = createServer(async (request, response) => {
 
   if (request.method === 'GET' && url.pathname === '/api/downloads/active') {
     const rows = database.prepare(`
-      SELECT v.video_id AS id, v.title, v.channel, v.thumbnail, v.duration,
+      SELECT v.video_id AS id, v.title, v.channel, v.thumbnail, v.duration, d.status AS status,
         d.progress, d.updated_at AS updatedAt, d.started_at AS startedAt,
-        CASE WHEN q.status IN ('paused-offline', 'paused-limit') THEN 'paused' ELSE q.status END AS retryStatus,
+        CASE WHEN d.status = 'importing' THEN 'integrity'
+          WHEN q.status IN ('paused-offline', 'paused-limit') THEN 'paused' ELSE q.status END AS retryStatus,
         CASE WHEN q.status = 'paused-offline' THEN 'Paused for Offline mode'
           WHEN q.status = 'paused-limit' THEN 'Paused during YouTube cooldown'
           ELSE d.stage END AS stage,
@@ -7332,14 +8047,17 @@ const server = createServer(async (request, response) => {
         q.next_retry_at AS retryAt
       FROM downloads d JOIN videos v ON v.video_id = d.video_id
       LEFT JOIN download_retry_queue q ON q.video_id = d.video_id
-      WHERE d.status = 'downloading' OR q.status IN ('pending', 'waiting-live', 'paused', 'paused-offline', 'paused-limit')
+      WHERE d.status IN ('downloading', 'importing') OR q.status IN ('pending', 'waiting-live', 'paused', 'paused-offline', 'paused-limit')
       ORDER BY d.updated_at DESC
     `).all();
     const withLiveStats = await Promise.all(rows.map(async row => {
-      const job = jobs.get(row.id);
+      const job = jobs.get(row.id) || mediaFolderImportJobs.get(row.id);
       return {
         ...row,
+        youtubeCooldownUntil: getEnforcedYoutubeDownloadCooldownUntil(),
+        isIntegrityImport: row.status === 'importing' || Boolean(job?.integrityQueued || job?.integrityChecking),
         isLive: Boolean(job?.isLive),
+        integrityQueued: Boolean(job?.integrityQueued || row.status === 'importing' && !job),
         integrityChecking: Boolean(job?.integrityChecking),
         integrityProgress: Number.isFinite(job?.integrityProgress) ? job.integrityProgress : null,
         integrityPhase: job?.integrityPhase || '',
@@ -7387,6 +8105,10 @@ const server = createServer(async (request, response) => {
           }
           database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, ?, ?, ?)
             ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(video.id, provisionCategory, now, now);
+          const fallbackSource = provisionCategory === 'homepage'
+            ? { sourceType: 'homepage', sourceKey: 'homepage', sourceLabel: 'YouTube homepage', sourceUrl: 'https://www.youtube.com/' }
+            : { sourceType: 'youtube-page', sourceLabel: 'YouTube page' };
+          recordVideoProvenance(video.id, raw.provenance || parsed.sourceContext, now, fallbackSource);
           const sourceChannelKey = cleanChannelKey(raw.sourceChannelKey);
           const sourceTab = ['home', 'videos', 'shorts', 'streams', 'playlists', 'community'].includes(raw.sourceTab) ? raw.sourceTab : '';
           if (sourceChannelKey && sourceTab) {
@@ -7452,6 +8174,10 @@ const server = createServer(async (request, response) => {
           playlist.items.forEach((video, position) => {
             const itemPosition = Number.isInteger(video.position) ? video.position : position;
             recordExtensionDuration(extensionVersion, video, 'playlist', now);
+            recordVideoProvenance(video.id, null, now, {
+              sourceType: 'playlist', sourceKey: playlist.id,
+              sourceLabel: `YouTube playlist · ${playlist.title || 'YouTube playlist'}`, sourceUrl: playlist.sourceUrl
+            });
             upsertPlaylistVideo.run(video.id, video.url, video.title, video.channel, video.channelKey, video.channelUrl, video.thumbnail, video.avatar,
               video.duration, video.meta, video.kind, position, now, now);
             if (video.kind === 'short') database.prepare("UPDATE videos SET kind = 'short' WHERE video_id = ?").run(video.id);
@@ -7574,7 +8300,9 @@ for (const retry of database.prepare("SELECT video_id AS id, attempts, status FR
       .run(startupNow.toISOString(), retry.id);
   }
 }
-for (const failed of database.prepare("SELECT video_id AS id, message FROM downloads WHERE status = 'error' AND video_id NOT IN (SELECT video_id FROM download_retry_queue)").all()) {
+for (const failed of database.prepare(`SELECT video_id AS id, message FROM downloads
+  WHERE status = 'error' AND video_id NOT IN (SELECT video_id FROM download_retry_queue)
+    AND NOT (COALESCE(origin, '') = 'media-folder' AND COALESCE(stage, '') = 'Waiting for media-folder scan')`).all()) {
   if (failed.message === 'Download was interrupted. Try again.') {
     const now = new Date();
     const updatedAt = now.toISOString();
