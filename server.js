@@ -66,6 +66,8 @@ const hostIndex = process.argv.indexOf('--host');
 const host = hostArgument || (hostIndex >= 0 ? process.argv[hostIndex + 1] : '') || process.env.HOST || '127.0.0.1';
 const jobs = new Map();
 const downloadStartingIds = new Set();
+const downloadedMediaFileSizeCache = new Map();
+const downloadedMediaFileSizeCacheTtlMs = 30_000;
 const commentJobs = new Map();
 const channelLookups = new Map();
 let shortsApiCache = null;
@@ -7948,7 +7950,8 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'GET' && url.pathname === '/api/downloads') {
-    const rows = database.prepare(`
+    const includeFileStats = url.searchParams.get('includeFileStats') === '1';
+    const sourceRows = database.prepare(`
       SELECT v.video_id AS id, v.url, v.title, v.channel, v.channel_key AS channelKey, v.channel_url AS channelUrl, v.thumbnail, v.avatar, v.duration, v.meta, v.kind, v.section, v.topic, v.published_at AS publishedAt, v.published_at_precision AS publishedAtPrecision, v.published_age AS publishedAge, d.acquired_at AS acquiredAt, d.expires_at AS expiresAt, 1 AS downloaded, COALESCE(w.view_count, 0) AS viewCount, COALESCE(pref.liked, 0) AS liked,
         COALESCE(CAST(json_extract(CASE WHEN json_valid(vm.metadata_json) THEN vm.metadata_json ELSE '{}' END, '$.like_count') AS INTEGER), CAST(json_extract(CASE WHEN json_valid(vm.metadata_json) THEN vm.metadata_json ELSE '{}' END, '$.publicMetrics.like_count') AS INTEGER), 0) AS likeCount,
         COALESCE(p.current_time, 0) AS currentTime, COALESCE(p.completed, 0) AS completed, d.integrity_status AS integrityStatus, d.integrity_checksum AS integrityChecksum, d.integrity_file_size AS fileSizeBytes,
@@ -7964,10 +7967,31 @@ const server = createServer(async (request, response) => {
       LEFT JOIN transcription_assets ta ON ta.video_id = d.video_id
       LEFT JOIN video_progress p ON p.video_id = v.video_id
       WHERE d.status = 'ready' ORDER BY d.acquired_at DESC
-    `).all().map(row => {
-      const mediaPath = getStoredMediaPath(row.id);
-      return mediaPath ? { ...row, mediaExtension: path.extname(mediaPath).slice(1).toLowerCase() } : null;
-    }).filter(Boolean);
+    `).all();
+    const rows = [];
+    for (let offset = 0; offset < sourceRows.length; offset += 64) {
+      const batch = await Promise.all(sourceRows.slice(offset, offset + 64).map(async row => {
+        const mediaPath = getStoredMediaPath(row.id, row.kind);
+        if (!mediaPath) {
+          downloadedMediaFileSizeCache.delete(row.id);
+          return null;
+        }
+        let fileSizeBytes = Math.max(0, Number(row.fileSizeBytes) || 0);
+        if (includeFileStats && fileSizeBytes === 0) {
+          const cached = downloadedMediaFileSizeCache.get(row.id);
+          if (cached?.path === mediaPath && Date.now() - cached.checkedAt < downloadedMediaFileSizeCacheTtlMs) fileSizeBytes = cached.size;
+          else {
+            try {
+              const mediaStat = await stat(mediaPath);
+              fileSizeBytes = mediaStat.size;
+              downloadedMediaFileSizeCache.set(row.id, { path: mediaPath, size: fileSizeBytes, checkedAt: Date.now() });
+            } catch {}
+          }
+        }
+        return { ...row, fileSizeBytes, mediaExtension: path.extname(mediaPath).slice(1).toLowerCase() };
+      }));
+      rows.push(...batch.filter(Boolean));
+    }
     const topicsByVideo = new Map(rows.map(row => {
       const topic = normalizeTopicLabel(row.topic);
       return [row.id, new Set(topic ? [topic] : [])];
