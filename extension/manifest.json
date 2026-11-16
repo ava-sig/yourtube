@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YourTube Local Feed",
-  "version": "0.5.39",
-  "description": "Capture YouTube pages for YourTube and inspect local capture queues and failures.",
+  "version": "0.5.40",
+  "description": "Capture YouTube details and acquire videos from YouTube or X into YourTube.",
   "permissions": ["storage", "alarms", "clipboardWrite", "activeTab"],
   "action": { "default_title": "YourTube capture diagnostics", "default_popup": "popup.html" },
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
@@ -11,6 +11,11 @@
     {
       "matches": ["https://www.youtube.com/*", "https://m.youtube.com/*"],
       "js": ["capture.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://x.com/*", "https://www.x.com/*", "https://mobile.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*", "https://mobile.twitter.com/*"],
+      "js": ["external-media.js"],
       "run_at": "document_idle"
     },
     {

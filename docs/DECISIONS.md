@@ -94,11 +94,19 @@ These notes capture the current choices and their practical consequences. They d
 
 ## Preserve progress and distinguish counters
 
-**Decision:** Save the latest playback position and a per-video play-start count. Resume unfinished playback and use local progress in Up next.
+**Decision:** Save the latest playback position and a per-video play-start count, then separately accumulate playback time and content time in per-player sessions. Resume unfinished playback and use local progress in Up next.
 
 **Reason:** The local library should remember where playback stopped without relying on YouTube's profile.
 
-**Consequence:** The count represents starts, not watch duration. The current schema stores a count and latest timestamp per video plus one progress snapshot; it does not preserve a full per-session playback event log. Any historical time-of-day analysis is therefore approximate.
+**Consequence:** Playback time counts only intervals where the media timeline advances, excluding seeks and stalls. Content time is the timeline distance advanced, so replayed ranges count again; playback rate changes content time without inflating wall-clock playback time. The same element keeps counting in the mini-player. Concurrent browser sessions count independently, so the aggregate is media playback time, not proof of human attention. Each session stores cumulative totals and start/update timestamps rather than a record for every sample. Totals begin with this implementation; previous view counts and latest progress snapshots cannot be converted into accurate historical playback time. Existing view-start counts remain a separate metric.
+
+## Estimate avoided YouTube ad load
+
+**Decision:** Show an explicitly labeled estimate based on cumulative local playback: about three ad breaks and two to three minutes of ad time per ten minutes played. Show the break estimate in the persistent sidebar and both the break and time range in History; disclose the assumptions on hover.
+
+**Reason:** Local playback has no ad interruptions, but YourTube cannot know which ads or placements a user would otherwise have received.
+
+**Consequence:** This is a modeled comparison, not a measured or guaranteed count. Actual ad load varies by video, viewer, device, and region. Concurrent local playback sessions contribute separately because the underlying playback total counts them separately.
 
 ## Keep acquisition provenance
 
@@ -205,3 +213,11 @@ These notes capture the current choices and their practical consequences. They d
 **Reason:** The project is intended to be usable by people for private, noncommercial viewing while reserving commercial licensing for the copyright holder.
 
 **Consequence:** This is source available, not OSI-approved open source. The license governs the YourTube code only; it does not grant rights to third-party video content or platform services.
+
+## Keep external media IDs separate from YourTube IDs
+
+**Decision:** Give media from other providers a stable YourTube-local ID and store the provider name, provider-native content ID, canonical source URL, extractor ID, and capture issues in `external_media_sources`. Do not place X post IDs in YouTube ID fields or use yt-dlp's extractor ID as the local media key. X video posts are manually acquired through a browser overlay, classified as Shorts, and stored through the existing integrity-checked media pipeline.
+
+**Reason:** Provider IDs have different formats and identity rules. A mapping table keeps the app's video, playback, checksum, and filename references stable while preserving the exact source identity and making future adapters possible.
+
+**Consequence:** X posts can have a post ID, a different yt-dlp media ID, and a YourTube-local ID; all are retained with explicit roles. The browser sends only rendered post metadata and the canonical status URL, never cookies or direct media URLs. This first adapter does not passively collect X feed stubs or comments/replies. X metadata can omit title, author, poster, avatar, or duration, and yt-dlp support or X access policies can change; the app records those gaps and surfaces download errors instead of treating the X pipeline as equivalent to YouTube's richer rendered-page capture.

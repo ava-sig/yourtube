@@ -1,10 +1,77 @@
 # YourTube
 
-YourTube is a single-user, local-first video library. A browser extension reads structured details from YouTube pages you already have open; a local Node.js server stores video stubs, metadata, playback history, and downloaded WebM files; a Vue interface lets you browse and play that library.
+YourTube is a single-user, local-first media library. A browser extension reads structured details from YouTube pages you already have open and provides manual X video acquisition; a local Node.js server stores media stubs, metadata, playback history, and downloaded files; a Vue interface lets you browse and play that library.
 
-The extension does not copy YouTube's page or send browser cookies or account credentials to the server. It records where captured stubs appeared, including YouTube pages, searches, playlists, channels, and homepage sections. The server uses `yt-dlp` without cookies. A YourTube watch page plays the local file and reports acquisition errors instead of silently falling back to YouTube playback.
+The extension does not copy YouTube's page or send browser cookies or account credentials to the server. It records where captured stubs appeared, including YouTube pages, searches, playlists, channels, and homepage sections. It also provides a manual download control over video players on X posts; that adapter captures visible post details but does not capture X pages passively. The server uses `yt-dlp` without cookies. A YourTube watch page plays the local file and reports acquisition errors instead of silently falling back to online playback.
 
 Local playback continues while navigating between YourTube pages. Away from the watch view, the same video element appears in a movable mini player; the shared **Add to queue** list is available there and on playlists and Up next cards.
+
+## Screenshots
+
+An interactive tour of the app. Open a caption to see a screen, then select the image to view it at full size.
+
+<details open>
+<summary><strong>Downloads in progress</strong> · Live transfer progress alongside Up next</summary>
+<br>
+<a href="screenshots/downloads-active-progress.jpg"><img src="screenshots/downloads-active-progress.jpg" alt="YourTube download dashboard with active progress bars and the Up next column" width="100%"></a>
+<p>Watch transfers advance while browsing the rest of the library, with the queue kept in view.</p>
+</details>
+
+<details>
+<summary><strong>Recently finished</strong> · Play or queue newly acquired media</summary>
+<br>
+<a href="screenshots/downloads-recently-finished.jpg"><img src="screenshots/downloads-recently-finished.jpg" alt="Recently finished video and Shorts carousels on the downloads page" width="100%"></a>
+<p>Separate carousels keep finished videos and Shorts close at hand.</p>
+</details>
+
+<details>
+<summary><strong>Background preparation</strong> · See what the library is collecting</summary>
+<br>
+<a href="screenshots/background-preparation.jpg"><img src="screenshots/background-preparation.jpg" alt="Background preparation dashboard showing metadata stages and live library telemetry" width="100%"></a>
+<p>Metadata preparation is visible as a sequence of stages, with queue status and local-library telemetry beside it.</p>
+</details>
+
+<details>
+<summary><strong>Browse by topic</strong> · Sort and filter the downloaded library</summary>
+<br>
+<a href="screenshots/library-by-topic.jpg"><img src="screenshots/library-by-topic.jpg" alt="Downloaded library grouped by topic with sorting and source filters" width="100%"></a>
+<p>Group locally available media by topic, then sort by views, availability, likes, recency, or file size.</p>
+</details>
+
+<details>
+<summary><strong>Downloaded library</strong> · A visual catalog of local media</summary>
+<br>
+<a href="screenshots/downloaded-library.jpg"><img src="screenshots/downloaded-library.jpg" alt="Grid of downloaded videos with titles, channels, durations, and local metadata" width="100%"></a>
+<p>Browse local files with their saved thumbnails, durations, source details, and metadata status.</p>
+</details>
+
+<details>
+<summary><strong>Local playback</strong> · Keep the player, queue, and conversation together</summary>
+<br>
+<a href="screenshots/local-playback-and-queue.jpg"><img src="screenshots/local-playback-and-queue.jpg" alt="Local media player with a styled Up next playlist and saved comments" width="100%"></a>
+<p>The local player stays in context with a queue you can manage and a locally saved conversation view.</p>
+</details>
+
+<details>
+<summary><strong>Shorts with comments</strong> · Vertical playback and nested conversation</summary>
+<br>
+<a href="screenshots/shorts-player-and-navigation.jpg"><img src="screenshots/shorts-player-and-navigation.jpg" alt="YourTube Shorts player with app navigation and saved comments" width="100%"></a>
+<p>Shorts have their own vertical playback flow, with navigation and saved comments available alongside the player.</p>
+</details>
+
+<details>
+<summary><strong>Shorts conversation</strong> · Read saved comments while watching</summary>
+<br>
+<a href="screenshots/shorts-local-conversation.jpg"><img src="screenshots/shorts-local-conversation.jpg" alt="Shorts viewing layout with a locally saved, nested conversation" width="100%"></a>
+<p>Comment threads are stored with the library and presented as a readable conversation rather than a flat list.</p>
+</details>
+
+<details>
+<summary><strong>Library insights</strong> · Playback, acquisition, and saved metadata</summary>
+<br>
+<a href="screenshots/library-insights.jpg"><img src="screenshots/library-insights.jpg" alt="Expanded YourTube library statistics for playback time, sources, downloads, comments, and avatars" width="100%"></a>
+<p>See playback time, source mix, repeat downloads, saved comments, and other library-level measures in one place.</p>
+</details>
 
 ## Start YourTube
 
@@ -14,7 +81,9 @@ Requirements: Node.js 22.5 or newer, `yt-dlp`, and `ffmpeg` for merging separate
 npm start
 ```
 
-For development, run `npm run dev`. Node watches `server.js` and restarts the server when the backend changes. Refresh the browser after frontend edits; changes under `data/` do not trigger a restart. This uses Node's native `--watch-path` support; see the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--watch-path).
+For development, run `npm run dev`. Node watches `server.js` and restarts the server when the backend changes. The watcher uses a 2.5-second shutdown checkpoint so hot reloads don't wait through the production grace period; interrupted downloads and metadata work resume after restart. Refresh the browser after frontend edits; changes under `data/` do not trigger a restart. This uses Node's native `--watch-path` support; see the [Node.js CLI documentation](https://nodejs.org/api/cli.html#--watch-path).
+
+Stop the server with **Ctrl-C**. `npm start` gives active tasks up to 30 seconds to stop cleanly, preserves partial downloads, and saves restart state before closing SQLite. Interrupted downloads and background metadata work resume on the next start; integrity checks restart from the beginning. Set `YOURTUBE_SHUTDOWN_TIMEOUT_MS` to change the grace period in milliseconds (minimum one second). Pressing Ctrl-C again forces remaining processes to stop after the recovery state is saved.
 
 Open <http://127.0.0.1:4173>. The server binds to loopback by default. To use YourTube from another device on your trusted home network:
 
@@ -60,11 +129,22 @@ docker compose up -d --build
 
 ## Load the extension
 
-In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files. On extension updates, the worker reloads open YourTube tabs that are not currently playing audio, so they receive a fresh bridge instead of retaining an invalidated content-script context. The current source manifest is version **0.5.39**. Its toolbar popup shows server connectivity, network mode, queue counts, active browser captures, recent extension events, and the oldest video-length jobs. The Browser work section can pause new video-length capture tabs and set their concurrency from one to five; existing tabs stay open. If its background worker does not respond, the popup probes localhost directly and tells you to reload the extension instead of reporting a false server outage.
+In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this project's `extension` directory. Reload the unpacked extension after changing its files. On extension updates, the worker reloads open YourTube tabs that are not currently playing audio, so they receive a fresh bridge instead of retaining an invalidated content-script context. The current source manifest is version **0.5.40**. Its toolbar popup shows server connectivity, network mode, queue counts, active browser captures, recent extension events, and the oldest video-length jobs. The Browser work section can pause new video-length capture tabs and set their concurrency from one to five; existing tabs stay open. If its background worker does not respond, the popup probes localhost directly and tells you to reload the extension instead of reporting a false server outage.
 
 For Safari, regenerate or update the Safari Web Extension package from the `extension` directory after changing its manifest. The localhost match patterns omit a port for Safari compatibility; the bridge itself only runs on YourTube's `localhost:4173` or `127.0.0.1:4173` origin.
 
 Open YouTube in the same browser profile where the extension is installed. The extension captures rendered cards, subscriptions, playlist/Mix structures, channel sections, and page-visible metadata. It sends structured records to `127.0.0.1:4173`; it does not send credentials. Homepage and search captures update the local stub database asynchronously. Channel-page prefetch uses one channel tab at a time; missing video-length jobs can use up to five configurable inactive metadata-capture tabs alongside channel work.
+
+On X, hover a post containing a video and use the YourTube circle over its player. It captures the post URL, visible text, author, poster image, avatar, and duration when those details are rendered. The item is treated as a Short and stored under `data/media/shorts/`. X post IDs and yt-dlp extractor IDs are external identities; YourTube assigns its own stable 11-character local ID and records the mapping in `external_media_sources`. Cards show an X mark and a link to the source post. The Downloads page can filter by YouTube or X. X capture is user-triggered; it does not collect feed stubs or send cookies. The same cookie-free yt-dlp run that downloads the media also stores available extractor metadata before transfer; the background metadata stage then caches captured images. Older incomplete X items get a metadata-only refresh when ingested again. Missing details use fallbacks, and duration can be probed from the local media. X replies are not captured. X can change its player and access behavior, and cookie-free yt-dlp acquisition may fail or be rate-limited; those jobs use the regular visible retry/paused states.
+
+You can also submit one supported URL directly from a terminal after starting YourTube:
+
+```sh
+npm run ingest -- https://x.com/creator/status/1234567890
+npm run ingest -- https://www.youtube.com/watch?v=VIDEO_ID
+```
+
+The command creates or reuses the local record and queues acquisition through the same server pipeline. It accepts YouTube video URLs and X/Twitter status URLs; other yt-dlp sites need a source adapter before they can be ingested safely. The server stays responsible for download progress, integrity checking, and retries. Set `YOURTUBE_URL` to another local YourTube address when the server does not use `127.0.0.1:4173`.
 
 ## Local data
 

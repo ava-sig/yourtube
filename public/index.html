@@ -358,6 +358,7 @@
       .video-menu-separator { height: 1px; margin: 5px 3px; background: #454545; }
       .thumb-wrap { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: #272727; }
       .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .source-platform-badge { position: absolute; top: 8px; right: 8px; display: inline-flex; min-width: 28px; height: 24px; align-items: center; justify-content: center; padding: 0 7px; border: 1px solid #ffffff4a; border-radius: 7px; background: #101114e8; color: #fff; font-size: 12px; font-weight: 750; line-height: 1; box-shadow: 0 1px 5px #0008; }
       .mix-card-badge { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border: 1px solid #ffffff30; border-radius: 6px; background: #141414df; color: #fff; font-size: 11px; font-weight: 750; letter-spacing: .02em; box-shadow: 0 1px 5px #0008; }
       .duration { position: absolute; right: 6px; bottom: 6px; padding: 2px 4px; border-radius: 4px; background: #000c; font-size: 12px; }
       .duration.duration-upcoming { background: #a8242a; color: #fff; font-weight: 700; letter-spacing: .035em; }
@@ -520,6 +521,9 @@
             <div class="sidebar-stat sidebar-stat-detail"><span>Local Shorts</span><strong>{{ formatCount(stats.localShorts) }}</strong></div>
             <div class="sidebar-stat" :title="`${formatBytes(stats.mediaBytes)} on disk`"><span>Media on disk</span><strong>{{ formatBytes(stats.mediaBytes) }}</strong></div>
             <div class="sidebar-stat"><span>Historical views</span><strong>{{ formatCount(stats.historicalViews) }}</strong></div>
+            <div class="sidebar-stat" title="Cumulative wall time while local media advanced. Mini-player playback counts; concurrent sessions count separately."><span>Total playback</span><strong>{{ formatPlaybackTotal(stats.totalPlaybackMs) }}</strong></div>
+            <div class="sidebar-stat"><span>Ad breaks avoided <button class="ad-info-trigger" type="button" aria-label="How ad avoidance is estimated" data-tooltip-title="About your estimate" :data-estimate-lower="adAvoidanceLower(stats.adAvoidanceEstimate)" :data-estimate-higher="adAvoidanceHigher(stats.adAvoidanceEstimate)" :data-info-tooltip="adAvoidanceTooltip(stats.adAvoidanceEstimate)">i</button></span><strong>≈ {{ formatCount(stats.adAvoidanceEstimate?.breaks) }}</strong></div>
+            <div class="sidebar-stat"><span>Content advanced <button class="ad-info-trigger" type="button" aria-label="How content advanced is measured" data-tooltip-title="Playback time and video timeline" data-info-tooltip="Playback time measures wall-clock time, while content advanced measures movement along the video timeline. At 1× they naturally match; faster or slower playback and replayed sections should make them diverge. Seeking is excluded.">i</button></span><strong>{{ formatPlaybackTotal(stats.totalContentMs) }}</strong></div>
             <div class="sidebar-stat" title="Unique video stubs received from the browser extension"><span>Videostubs from Extension</span><strong>{{ formatCount(stats.extensionVideos) }}</strong></div>
             <div class="sidebar-stat" :title="durationBaselineTitle(stats.durationBaseline)"><span>Extension video-length baseline</span><strong>{{ formatDurationBaseline(stats.durationBaseline) }}</strong></div>
           </footer>
@@ -665,6 +669,12 @@
                 <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'channel' }" type="button" :aria-pressed="String(downloadedKindFilter === 'channel')" @click="setDownloadedKindFilter('channel')">By Channel <span class="download-kind-filter-count">{{ downloadedKindCounts.channels }}</span></button>
                 <button class="download-kind-filter" :class="{ active: downloadedKindFilter === 'topic' }" type="button" :aria-pressed="String(downloadedKindFilter === 'topic')" @click="setDownloadedKindFilter('topic')">By Topic <span class="download-kind-filter-count">{{ downloadedKindCounts.topics }}</span></button>
               </div>
+              <div class="download-kind-filters source-kind-filters" role="group" aria-label="Filter downloaded media by source">
+                <span class="downloaded-group-controls-label">Source</span>
+                <button class="download-kind-filter" :class="{ active: downloadedSourceFilter === 'all' }" type="button" :aria-pressed="String(downloadedSourceFilter === 'all')" @click="setDownloadedSourceFilter('all')">All sources <span class="download-kind-filter-count">{{ downloadedSourceCounts.all }}</span></button>
+                <button class="download-kind-filter" :class="{ active: downloadedSourceFilter === 'youtube' }" type="button" :aria-pressed="String(downloadedSourceFilter === 'youtube')" @click="setDownloadedSourceFilter('youtube')">YouTube <span class="download-kind-filter-count">{{ downloadedSourceCounts.youtube }}</span></button>
+                <button class="download-kind-filter" :class="{ active: downloadedSourceFilter === 'x' }" type="button" :aria-pressed="String(downloadedSourceFilter === 'x')" @click="setDownloadedSourceFilter('x')">𝕏 <span class="download-kind-filter-count">{{ downloadedSourceCounts.x }}</span></button>
+              </div>
               <div v-if="['channel', 'topic'].includes(downloadedKindFilter)" class="downloaded-group-controls" role="group" :aria-label="`Sort and filter downloaded ${downloadedKindFilter === 'channel' ? 'channels' : 'topics'}`">
                 <span class="downloaded-group-controls-label">Order {{ downloadedKindFilter === 'channel' ? 'channels' : 'topics' }} by</span>
                 <button class="download-kind-filter" :class="{ active: downloadedGroupSort(downloadedKindFilter) === 'mostViewed' }" type="button" :aria-pressed="String(downloadedGroupSort(downloadedKindFilter) === 'mostViewed')" @click="setDownloadedGroupSort('mostViewed')">Most viewed</button>
@@ -719,6 +729,85 @@
           <div v-else-if="currentView === 'history'">
             <section class="feed-section">
               <div class="section-head"><h2>History</h2></div>
+              <section class="viewing-overview" :class="{ 'is-expanded': historyOverviewExpanded }" aria-label="Your playback totals">
+                <div class="viewing-overview-heading">
+                  <h3>Time with your library</h3>
+                  <button class="viewing-overview-toggle" type="button" :aria-expanded="String(historyOverviewExpanded)" :aria-label="historyOverviewExpanded ? 'Collapse library statistics' : 'Expand library statistics'" @click="toggleHistoryOverview">
+                    <span>{{ historyOverviewExpanded ? 'Less detail' : 'Explore your library' }}</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                </div>
+                <div class="viewing-overview-metrics">
+                  <article class="viewing-overview-metric">
+                    <span class="overview-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></span>
+                    <span class="overview-metric-label">Playback time</span>
+                    <strong>{{ formatPlaybackTotal(stats.totalPlaybackMs) }}</strong>
+                  </article>
+                  <article class="viewing-overview-metric">
+                    <span class="overview-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18V6m0 12h16"/><path d="m7 14 3-4 3 2 4-6"/><circle cx="17" cy="6" r="1.2"/></svg></span>
+                    <span class="overview-metric-label">Content advanced <button class="ad-info-trigger" type="button" aria-label="How content advanced is measured" data-tooltip-title="Playback time and video timeline" data-info-tooltip="Playback time measures wall-clock time, while content advanced measures movement along the video timeline. At 1× they naturally match; faster or slower playback and replayed sections should make them diverge. Seeking is excluded.">i</button></span>
+                    <strong>{{ formatPlaybackTotal(stats.totalContentMs) }}</strong>
+                  </article>
+                  <article class="viewing-overview-metric viewing-overview-metric-ads">
+                    <span class="overview-metric-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/><path d="M8 9h8M8 12.5h5"/></svg></span>
+                    <span class="overview-metric-label">Ad breaks avoided <button class="ad-info-trigger" type="button" aria-label="How ad avoidance is estimated" data-tooltip-title="About your estimate" :data-estimate-lower="adAvoidanceLower(stats.adAvoidanceEstimate)" :data-estimate-higher="adAvoidanceHigher(stats.adAvoidanceEstimate)" :data-info-tooltip="adAvoidanceTooltip(stats.adAvoidanceEstimate)">i</button></span>
+                    <strong>≈ {{ formatCount(stats.adAvoidanceEstimate?.breaks) }}</strong>
+                  </article>
+                </div>
+                <div v-if="historyOverviewExpanded" class="history-overview-details" aria-live="polite">
+                  <div v-if="historyOverviewLoading && !historyOverview" class="history-overview-loading"><span class="spinner"></span><span>Gathering your library details…</span></div>
+                  <div v-else-if="historyOverviewError && !historyOverview" class="history-overview-error"><span>{{ historyOverviewError }}</span><button type="button" @click="loadHistoryOverview">Try again</button></div>
+                  <template v-else-if="historyOverview">
+                    <div class="history-overview-grid">
+                      <article class="history-detail-card history-detail-watch">
+                        <span class="history-detail-kicker">TIME SPENT</span>
+                        <h4>Playback by format</h4>
+                        <div class="history-detail-pair"><span>Videos</span><strong>{{ formatPlaybackTotal(historyOverview.playback.videoMs) }}</strong></div>
+                        <div class="history-detail-pair"><span>Shorts</span><strong>{{ formatPlaybackTotal(historyOverview.playback.shortsMs) }}</strong></div>
+                        <div class="history-detail-average"><span>Daily average watch time</span><strong>{{ formatPlaybackTotal(historyOverview.playback.dailyAverageMs) }}</strong></div>
+                        <small v-if="historyOverview.playback.trackedSince">Calendar-day average since {{ historyTrackingDate(historyOverview.playback.trackedSince) }}.</small>
+                        <small v-else>Playback tracking starts with your first local session.</small>
+                      </article>
+                      <article class="history-detail-card">
+                        <span class="history-detail-kicker">YOUR LIBRARY</span>
+                        <h4>Media source</h4>
+                        <div v-if="historyOverview.sources.mix.length" class="history-source-list">
+                          <div v-for="source in historyOverview.sources.mix" :key="source.provider" class="history-source-row">
+                            <div><span class="history-source-name"><span class="history-source-brand" :class="`history-source-${source.provider}`" aria-hidden="true"><svg v-if="source.provider === 'youtube'" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="4"/><path d="m10 9 5 3-5 3z"/></svg><svg v-else-if="source.provider === 'x'" viewBox="0 0 24 24"><path d="M5 4 19 20M19 4 5 20"/></svg><span v-else>{{ source.label.slice(0, 1) }}</span></span>{{ source.label }}</span><strong>{{ source.percent }}%</strong></div>
+                            <div class="history-source-track"><span :style="{ width: sourceMixWidth(source.percent) }"></span></div>
+                            <small>{{ formatCount(source.count) }} items · {{ formatBytes(source.bytes) }}</small>
+                          </div>
+                        </div>
+                        <p v-else class="history-detail-empty">No local media yet.</p>
+                        <small>Share is by currently available item count.</small>
+                      </article>
+                      <article class="history-detail-card history-detail-acquisition">
+                        <span class="history-detail-kicker">ACQUISITION</span>
+                        <h4>Saved media</h4>
+                        <div class="history-detail-pair"><span>Media downloaded</span><strong>{{ formatBytes(historyOverview.acquisition.totalBytes) }}</strong></div>
+                        <div class="history-detail-pair"><span>From repeat downloads</span><strong>{{ formatBytes(historyOverview.acquisition.redownloadBytes) }}</strong></div>
+                        <div class="history-detail-pair"><span>Same media downloaded again</span><strong>{{ formatCount(historyOverview.acquisition.repeatDownloads) }} times</strong></div>
+                        <small>Download history starts {{ historyTrackingDate(historyOverview.acquisition.trackedSince) }}. Earlier transfer totals were not stored.</small>
+                      </article>
+                      <article class="history-detail-card history-detail-community">
+                        <span class="history-detail-kicker">LOCAL METADATA</span>
+                        <h4>Comments &amp; people</h4>
+                        <div class="history-detail-pair"><span>Media you liked</span><strong>{{ formatCount(historyOverview.liked) }}</strong></div>
+                        <div class="history-detail-pair"><span>Saved comments</span><strong>{{ formatCount(historyOverview.comments.count) }}</strong></div>
+                        <div class="history-detail-reading"><span>Reading time, in one sitting</span><strong>{{ formatReadingEstimate(historyOverview.comments.readingMinutes) }}</strong><small title="Estimate assumes an average reading speed of 238 words per minute.">At 238 words per minute · {{ formatCount(historyOverview.comments.words) }} words</small></div>
+                        <div class="history-detail-pair"><span>Commenter avatars saved</span><strong>{{ formatCount(historyOverview.comments.commenterAvatars) }}</strong></div>
+                        <small>Comments are locally saved snapshots and may be capped per video.</small>
+                      </article>
+                    </div>
+                    <div v-if="historyOverview.comments.samples.length" class="history-comment-samples">
+                      <div class="history-comment-samples-head"><h4>A few voices from your library</h4><span>Saved comment snapshots</span></div>
+                      <blockquote v-for="(comment, index) in historyOverview.comments.samples" :key="`${index}-${comment.author}`">
+                        <p>“{{ comment.text }}{{ comment.text.length >= 170 ? '…' : '' }}”</p><cite>{{ comment.author }}</cite>
+                      </blockquote>
+                    </div>
+                  </template>
+                </div>
+              </section>
               <div v-if="historyVideos.length === 0" class="notice"><strong>No watched videos yet</strong>Videos you play here will appear in this list, most recently watched first.</div>
               <div v-else class="video-grid"><video-card v-for="video in historyVideos" :key="video.id" :video="video" source="Downloaded" /></div>
             </section>
@@ -893,7 +982,7 @@
       <article class="video-card" :class="{ 'menu-open': menuOpen, 'is-offline-stub': offlineStub }">
         <div class="video-card-thumb">
           <a class="video-card-link" :href="videoHref" @click="handleVideoLink">
-            <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="video.mixId" class="mix-card-badge" aria-label="YouTube Mix">Mix</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
+            <div class="thumb-wrap"><img :src="thumbnailSrc(video)" loading="lazy" @error="thumbnailError($event, video)" /><span v-if="video.sourceProvider === 'x'" class="source-platform-badge" :title="video.sourceIssues?.length ? video.sourceIssues.map(issue => issue.message).join(' · ') : 'Captured from X'" aria-label="Captured from X">𝕏</span><span v-if="video.mixId" class="mix-card-badge" aria-label="YouTube Mix">Mix</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 300 && expirySeconds <= 3600" class="expiry-countdown" :aria-label="`Deleting in ${formatExpiry(expirySeconds)}`">Deleting in {{ formatExpiry(expirySeconds) }}</span><span v-if="video.duration" class="duration" :class="{ 'duration-upcoming': String(video.duration).toUpperCase() === 'UPCOMING' }">{{ video.duration }}</span></div>
           </a>
           <button v-if="offlineStub" class="offline-stub-overlay" type="button" :disabled="$root.networkModeUpdating" @click="$root.switchOnlineAndPlay(video, { shorts: isShort })"><span>Not stored on this device</span><strong>{{ $root.networkModeUpdating ? 'Going online…' : 'Go online' }}</strong><small>Download and play locally</small></button>
           <div class="video-card-mini-actions" role="group" :aria-label="`Actions for ${video.title || 'video'}`">
@@ -902,7 +991,7 @@
             <button v-if="!isShort" class="video-card-mini-action video-card-mini-action-queue" type="button" :disabled="!video.downloaded && $root.networkMode !== 'online'" :aria-label="video.downloaded ? `Add ${video.title || 'video'} to queue` : `Add ${video.title || 'video'} to queue and download`" :title="video.downloaded ? 'Add to queue' : $root.networkMode !== 'online' ? 'Go online to queue and download' : 'Add to queue and start download'" @click.stop.prevent="$root.miniPlayerAction('queue', video)"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-add"></use></svg></button>
           </div>
         </div>
-        <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="videoHref" @click="handleVideoLink">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-more"></use></svg></button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop.prevent="$root.openChannel(video.channelKey)">{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="showFileSize" class="meta">File size · {{ Number(video.fileSizeBytes) > 0 ? $root.formatBytes(video.fileSizeBytes) : 'not recorded' }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="publishedLabel" class="meta">{{ publishedLabel }}</div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
+        <div class="card-info"><img v-if="video.avatar && !avatarFailed" class="avatar" :src="video.avatar" loading="lazy" :alt="video.channel ? `${video.channel} avatar` : ''" @error="avatarFailed = true" /><span v-else class="avatar-fallback" aria-hidden="true">{{ avatarInitials(video.channel) }}</span><div class="card-details"><div class="card-title-row"><a class="video-title" :href="videoHref" @click="handleVideoLink">{{ video.title || video.url }}</a><button class="video-menu-trigger" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" :aria-label="`More actions for ${video.title || 'video'}`" @click.stop.prevent="toggleMenu"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-more"></use></svg></button></div><a v-if="channelHref(video)" class="channel channel-link" :href="channelHref(video)" @click.stop.prevent="$root.openChannel(video.channelKey)">{{ video.channel || 'Channel unavailable' }}</a><div v-else class="channel">{{ video.channel || 'Channel unavailable' }}</div><a v-if="video.sourceProvider === 'x' && video.sourceUrl" class="meta source-origin-link" :href="video.sourceUrl" target="_blank" rel="noreferrer" @click.stop>𝕏 post · {{ video.sourceId }}</a><div v-if="video.viewCount > 0 || (showExpiry && autoDeleteEnabled && expirySeconds > 0)" class="meta"><span v-if="video.viewCount > 0">{{ viewedLabel(video.viewCount) }}</span><span v-if="showExpiry && autoDeleteEnabled && expirySeconds > 0">{{ video.viewCount > 0 ? ' · ' : '' }}Autodeletion in {{ String(Math.floor(expirySeconds / 3600)).padStart(2, '0') }}:{{ String(Math.floor(expirySeconds % 3600 / 60)).padStart(2, '0') }}</span></div><div v-if="video.lastViewedAt" class="meta">Last watched {{ new Date(video.lastViewedAt).toLocaleString() }}</div><div v-if="showFileSize" class="meta">File size · {{ Number(video.fileSizeBytes) > 0 ? $root.formatBytes(video.fileSizeBytes) : 'not recorded' }}</div><div v-if="sourceLabel" class="meta">{{ sourceLabel }}<span v-if="pulledAgo"> · Pulled {{ pulledAgo }}</span></div><div v-if="publishedLabel" class="meta">{{ publishedLabel }}</div><div v-if="video.metadataStatus && video.metadataStatus !== 'ready'" class="meta" :title="video.metadataMessage || ''">{{ video.metadataStatus === 'running' ? (video.metadataMessage || 'Preparing local metadata…') : video.metadataStatus === 'retry' ? 'Local metadata will retry' : 'Local metadata queued' }}</div><div v-if="video.meta" class="meta">{{ video.meta }}</div>
             <div v-if="menuOpen" class="video-card-menu" role="menu" @click.stop>
               <button v-if="!isShort" class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('queue')"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-add"></use></svg><span>Add to queue</span></button>
               <button v-if="!isShort" class="video-menu-item" type="button" role="menuitem" @click.stop.prevent="runAction('watch-later')"><svg class="ui-icon" aria-hidden="true"><use href="#yt-icon-clock"></use></svg><span>Save to Watch later</span></button>
@@ -924,7 +1013,7 @@
       const cardTemplate = document.querySelector('#video-card-template').innerHTML;
       createApp({
         components: { VideoCard: { props: { video: Object, source: String, offlineStub: { type: Boolean, default: false }, canDelete: { type: Boolean, default: false }, showExpiry: { type: Boolean, default: false }, showFileSize: { type: Boolean, default: false }, autoDeleteEnabled: { type: Boolean, default: false }, shortsMode: { type: Boolean, default: false } }, emits: ['delete', 'postpone'], template: cardTemplate, data: () => ({ now: Date.now(), expiryTimer: null, postponing: false, menuOpen: false, avatarFailed: false }), computed: { isShort() { return this.shortsMode || this.video?.kind === 'short'; }, videoHref() { return this.isShort ? `/shorts/${encodeURIComponent(this.video.id)}` : `/watch/${encodeURIComponent(this.video.id)}`; }, sourceLabel() { if (/downloaded|liked/i.test(this.source || '')) return ''; if (this.video.sourceLabel) return this.video.sourceLabel; return `From ${this.source || 'homepage'}`; }, expirySeconds() { return this.video.expiresAt ? Math.ceil((Date.parse(this.video.expiresAt) - this.now) / 1000) : 0; }, pulledAgo() { const timestamp = Date.parse(this.video.sourceSeenAt || this.video.seenAt || this.video.acquiredAt || ''); if (!Number.isFinite(timestamp)) return ''; const elapsed = Math.max(0, this.now - timestamp); if (elapsed > (23 * 60 + 59) * 60_000) return `${Math.max(1, Math.round(elapsed / 86_400_000))}D ago`; const minutes = Math.max(1, Math.floor(elapsed / 60_000)); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); const remainder = minutes % 60; return remainder ? `${hours}h${remainder}m ago` : `${hours}h ago`; }, publishedLabel() { const raw = String(this.video.publishedAt || ''); const precision = this.video.publishedAtPrecision || (/T/.test(raw) ? 'exact' : 'date'); const exactTime = precision === 'exact' ? Date.parse(raw) : NaN; if (Number.isFinite(exactTime) && exactTime <= this.now) { const elapsed = this.now - exactTime; if (elapsed < 86_400_000) { const minutes = Math.max(1, Math.floor(elapsed / 60_000)); return `First published on YouTube ${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} ago`; } return `First published on YouTube ${new Date(exactTime).toLocaleString()}`; } const age = this.video.publishedAge || this.video.meta?.match(/\b(?:\d+\s+)?(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago\b/i)?.[0] || ''; if (age) return `First published on YouTube ${age}`; if (precision === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return `First published on YouTube ${new Date(`${raw}T00:00:00`).toLocaleDateString()}`; return ''; } }, mounted() { if (this.showExpiry || (this.sourceLabel && (this.video.sourceSeenAt || this.video.seenAt)) || this.video.publishedAt || this.video.publishedAge) this.expiryTimer = setInterval(() => { this.now = Date.now(); }, this.showExpiry ? 1000 : 30_000); document.addEventListener('click', this.closeMenuOnOutsideClick); }, beforeUnmount() { clearInterval(this.expiryTimer); document.removeEventListener('click', this.closeMenuOnOutsideClick); }, methods: { toggleMenu() { this.menuOpen = !this.menuOpen; }, handleVideoLink(event) { if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); event.stopPropagation(); if (this.offlineStub) this.$root.switchOnlineAndPlay(this.video, { shorts: this.isShort }); else this.$root.openVideoCard(this.video, event); }, closeMenuOnOutsideClick(event) { if (this.menuOpen && !this.$el.contains(event.target)) this.menuOpen = false; }, runAction(action) { this.menuOpen = false; this.$root.performVideoAction(action, this.video); }, channelHref(video) { if (!video?.channelKey) return ''; const key = String(video.channelKey); const path = key.startsWith('@') ? `@${encodeURIComponent(key.slice(1))}` : key.split('/').map(encodeURIComponent).join('/'); return `/channel/${path}/videos`; }, avatarInitials(channel) { return String(channel || '?').trim().split(/\s+/).map(word => word[0]).join('').slice(0, 2).toUpperCase() || '?'; }, thumbnailSrc(video) { return video.thumbnail || '/image-placeholder.svg'; }, thumbnailError(event) { const image = event.currentTarget; if (image.dataset.placeholderTried) image.remove(); else { image.dataset.placeholderTried = 'true'; image.src = '/image-placeholder.svg'; } }, viewedLabel(count) { const value = Number(count) || 0; return `Viewed ${value} ${value === 1 ? 'time' : 'times'}`; }, formatExpiry(seconds) { const value = Math.max(0, Number(seconds) || 0); const hours = Math.floor(value / 3600); const minutes = Math.floor(value % 3600 / 60); const secs = value % 60; return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`; }, postpone(video) { if (this.postponing) return; this.postponing = true; this.$emit('postpone', video); setTimeout(() => { this.postponing = false; }, 3000); } } } },
-        data: () => ({ videos: [], likedVideos: [], likedLoading: false, likedError: '', likedLoadToken: 0, likedLoadedAt: 0, shortsVideos: [], shortsSource: 'live', shortsLiveSessionStartedAt: 0, liveShortsSessionIds: [], liveShortsPlaylistIds: [], liveShortsPlaylistActive: false, shortsLoading: false, shortsLoadToken: 0, homepageCategories: [], homepageCategoryVideos: [], homepageCategoryLoading: false, homepageCategoryError: '', homepageCategoryOffset: 0, homepageCategoryHasMore: false, homepageCategoryTotal: 0, homepageCategoryLoadedAt: '', homepageCategoryRequestToken: 0, homepageLayout: { captureId: '', capturedAt: '', sections: [] }, downloadedVideos: [], historyVideos: [], playlists: [], dailyMix: { items: [], localCount: 0 }, dailyMixLoading: false, dailyMixError: '', dailyMixLoadPromise: null, selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, deletingPlaylistId: '', playlistSaving: false, playlistPlayLoading: false, playlistRedownloadLoading: false, playlistRedownloadResult: null, playlistRedownloadPlaylistId: '', playlistDuplicating: false, playlistOperationError: '', playlistOperationPlaylistId: '', playlistStatus: '', playlistCaptureStatus: '', playlistCaptureError: '', playlistCaptureRequestId: '', playlistCaptureRequestedId: '', playlistCaptureTimeout: null, playlistPollTimer: null, playlistLoadToken: 0, playlistPollInFlight: false, showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', downloadedKindFilter: 'all', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], searchResultCache: null, localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', serverReachable: true, serverFailureCount: 0, networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, skipCommentAvatars: false, skipCommentAvatarUpdating: false, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundRetrying: {}, backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, localVideos: 0, localShorts: 0, mediaBytes: 0, mediaIntegrity: { verified: 0, containerChecked: 0, unchecked: 0, failed: 0 }, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, noticeTimers: {}, dismissedNetworkNotice: '', refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchHistoryTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchHistoryRecordedId: '', searchHistory: [], searchHistoryLoading: false, searchFocused: false, searchDropdownVisible: false, searchOutsideHandler: null, searchOffset: 0, searchVisibleCount: 4, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'all', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Daily Mix', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
+        data: () => ({ historyOverviewExpanded: false, historyOverviewLoading: false, historyOverviewError: '', historyOverview: null, videos: [], likedVideos: [], likedLoading: false, likedError: '', likedLoadToken: 0, likedLoadedAt: 0, shortsVideos: [], shortsSource: 'live', shortsLiveSessionStartedAt: 0, liveShortsSessionIds: [], liveShortsPlaylistIds: [], liveShortsPlaylistActive: false, shortsLoading: false, shortsLoadToken: 0, homepageCategories: [], homepageCategoryVideos: [], homepageCategoryLoading: false, homepageCategoryError: '', homepageCategoryOffset: 0, homepageCategoryHasMore: false, homepageCategoryTotal: 0, homepageCategoryLoadedAt: '', homepageCategoryRequestToken: 0, homepageLayout: { captureId: '', capturedAt: '', sections: [] }, downloadedVideos: [], historyVideos: [], playlists: [], dailyMix: { items: [], localCount: 0 }, dailyMixLoading: false, dailyMixError: '', dailyMixLoadPromise: null, selectedPlaylist: null, selectedPlaylistId: '', playlistLoading: false, deletingPlaylistId: '', playlistSaving: false, playlistPlayLoading: false, playlistRedownloadLoading: false, playlistRedownloadResult: null, playlistRedownloadPlaylistId: '', playlistDuplicating: false, playlistOperationError: '', playlistOperationPlaylistId: '', playlistStatus: '', playlistCaptureStatus: '', playlistCaptureError: '', playlistCaptureRequestId: '', playlistCaptureRequestedId: '', playlistCaptureTimeout: null, playlistPollTimer: null, playlistLoadToken: 0, playlistPollInFlight: false, showPlaylistCreate: false, newPlaylistTitle: '', playlistVideoToAdd: null, playlistDialogSelectedId: '', playlistDialogNewTitle: '', downloadSortOrder: 'newest', downloadedKindFilter: 'all', downloadedSourceFilter: 'all', autoDeleteEnabled: false, autoDeleteUpdating: false, autoDeleteUpdatedAt: '', searchVideos: [], searchResultCache: null, localSearchPreview: [], localSearchTotal: 0, subscriptions: [], networkMode: 'online', serverReachable: true, serverFailureCount: 0, networkModeUpdating: false, modeTransitionTarget: '', networkNotice: '', offlinePreparation: { phase: 'comments', completed: 0, total: 0 }, skipCommentAvatars: false, skipCommentAvatarUpdating: false, modePollTimer: null, backgroundQueueExpanded: false, backgroundQueueLoading: false, backgroundQueueError: '', backgroundRetrying: {}, backgroundQueueTimer: null, backgroundQueue: { updatedAt: '', totalItems: 0, groups: [] }, stats: { localFiles: 0, localVideos: 0, localShorts: 0, mediaBytes: 0, mediaIntegrity: { verified: 0, containerChecked: 0, unchecked: 0, failed: 0 }, historicalViews: 0, extensionVideos: 0, activeDownloads: 0, pausedDownloads: 0, queuedDownloads: 0, activeChannelCaptures: 0, durationLookupActive: false, pendingDurations: 0, downloadMetadata: { ready: 0, total: 0, pending: 0, active: false, phase: '', message: '' } }, error: '', actionNotice: '', actionError: false, noticeTimers: {}, dismissedNetworkNotice: '', refreshing: false, refreshTimer: null, searchPollTimer: null, searchLivePollTimer: null, searchDebounceTimer: null, searchCollectionTimer: null, searchHistoryTimer: null, searchRequestToken: 0, searchTerm: '', searchSessionId: '', searchSelectionRecorded: false, searchHistoryRecordedId: '', searchHistory: [], searchHistoryLoading: false, searchFocused: false, searchDropdownVisible: false, searchOutsideHandler: null, searchOffset: 0, searchVisibleCount: 4, searchTotal: 0, searchHasMore: false, searchResultsReady: false, searchStableCount: 0, searchLastSignature: '', searchLoading: false, searchError: '', searchSessionComplete: false, searchSessionAcknowledged: false, searchSource: 'youtube', activeSearchSource: 'youtube', currentView: 'home', channelKey: '', channelTab: 'videos', channelData: null, channelVideos: [], channelCaptures: [], channelCaptureId: '', channelCaptureStatus: '', channelCaptureError: '', channelLoading: false, channelPollTimer: null, channelOpenTimeout: null, channelLoadToken: 0, channelTabs: [{ key: 'home', label: 'Home' }, { key: 'videos', label: 'Videos' }, { key: 'shorts', label: 'Shorts' }, { key: 'streams', label: 'Live' }, { key: 'playlists', label: 'Playlists' }, { key: 'community', label: 'Community' }], query: '', activeChip: 'all', forYouAgeFilter: '', homeExpanded: {}, homeViewportWidth: window.innerWidth || 1280, subscriptionsExpanded: false, clipsVisible: false, collapsedSections: {}, topics: ['Music', 'Gaming', 'News', 'Live', 'Sports', 'Learning', 'Movies & TV', 'Podcasts'], youLinks: ['Your channel', 'History', 'Playlists', 'Daily Mix', 'Watch later', 'Liked videos', 'Your videos'], exploreLinks: ['Music', 'Movies & TV', 'Live'] }),
         computed: {
           homepageChips() {
             const fallback = [
@@ -1124,7 +1213,7 @@
           },
           downloadedVideosSorted() {
             const time = video => Date.parse(video.acquiredAt || video.seenAt || '') || 0;
-            const filtered = this.downloadedVideos.filter(video => this.downloadedKindFilter === 'all' || (this.downloadedKindFilter === 'shorts' ? video.kind === 'short' : video.kind !== 'short'));
+            const filtered = this.downloadedVideosSourceFiltered.filter(video => this.downloadedKindFilter === 'all' || (this.downloadedKindFilter === 'shorts' ? video.kind === 'short' : video.kind !== 'short'));
             const durationSeconds = video => {
               const parts = String(video.duration || '').trim().split(':');
               if (parts.length < 2 || parts.length > 3 || parts.some(part => !/^\d+$/.test(part))) return null;
@@ -1151,11 +1240,19 @@
           },
           downloadedChannelGroups() { return this.buildDownloadedGroups('channel'); },
           downloadedTopicGroups() { return this.buildDownloadedGroups('topic'); },
+          downloadedVideosSourceFiltered() {
+            if (this.downloadedSourceFilter === 'all') return this.downloadedVideos;
+            return this.downloadedVideos.filter(video => (video.sourceProvider === 'x' ? 'x' : 'youtube') === this.downloadedSourceFilter);
+          },
+          downloadedSourceCounts() {
+            const x = this.downloadedVideos.filter(video => video.sourceProvider === 'x').length;
+            return { all: this.downloadedVideos.length, x, youtube: this.downloadedVideos.length - x };
+          },
           downloadedKindCounts() {
-            const shorts = this.downloadedVideos.filter(video => video.kind === 'short').length;
+            const shorts = this.downloadedVideosSourceFiltered.filter(video => video.kind === 'short').length;
             return {
-              all: this.downloadedVideos.length,
-              videos: this.downloadedVideos.length - shorts,
+              all: this.downloadedVideosSourceFiltered.length,
+              videos: this.downloadedVideosSourceFiltered.length - shorts,
               shorts,
               channels: this.downloadedChannelGroups.filter(group => !group.unattributed).length,
               topics: this.downloadedTopicGroups.filter(group => !group.unattributed).length
@@ -1322,6 +1419,8 @@
               if (['newest', 'oldest', 'mostPlayed', 'autodeletion', 'durationAscending', 'durationDescending'].includes(savedSort)) this.downloadSortOrder = savedSort;
               const savedKindFilter = localStorage.getItem('yourtube-downloaded-kind-filter');
               if (['all', 'videos', 'shorts', 'channel', 'topic'].includes(savedKindFilter)) this.downloadedKindFilter = savedKindFilter;
+              const savedSourceFilter = localStorage.getItem('yourtube-downloaded-source-filter');
+              if (['all', 'youtube', 'x'].includes(savedSourceFilter)) this.downloadedSourceFilter = savedSourceFilter;
               if (this.downloadedKindFilter !== 'videos' && ['durationAscending', 'durationDescending'].includes(this.downloadSortOrder)) this.downloadSortOrder = 'newest';
               if (localStorage.getItem('yourtube-search-source') === 'local') this.searchSource = 'local';
             } catch {}
@@ -1944,7 +2043,7 @@
               if (!group.channelKey && video.channelKey) group.channelKey = video.channelKey;
               if (!group.channelUrl && video.channelUrl) group.channelUrl = video.channelUrl;
             };
-            for (const video of this.downloadedVideos) {
+            for (const video of this.downloadedVideosSourceFiltered) {
               if (showUnwatchedOnly && Number(video.viewCount) > 0) continue;
               if (mode === 'channel') {
                 const name = usableChannelName(video);
@@ -2069,6 +2168,11 @@
             }
             try { localStorage.setItem('yourtube-downloaded-kind-filter', kind); } catch {}
             if (this.currentView === 'downloaded' && ['channel', 'topic'].includes(kind) && this.downloadedGroupSort(kind) === 'biggestFileSize') void this.refresh();
+          },
+          setDownloadedSourceFilter(source) {
+            if (!['all', 'youtube', 'x'].includes(source)) return;
+            this.downloadedSourceFilter = source;
+            try { localStorage.setItem('yourtube-downloaded-source-filter', source); } catch {}
           },
           async refreshMode() {
             try {
@@ -3206,7 +3310,73 @@
           toggleSection(key) { this.collapsedSections = { ...this.collapsedSections, [key]: !this.isCollapsed(key) }; },
           iconFor(item) { return ({ 'Your channel': 'user', History: 'history', Playlists: 'playlist', 'Daily Mix': 'music', 'Watch later': 'clock', 'Liked videos': 'heart', 'Your videos': 'video', Music: 'music', 'Movies & TV': 'film', Live: 'live' })[item] || 'video'; },
           subscriptionInitials(name) { return String(name || '•').trim().slice(0, 1).toUpperCase(); },
+          async toggleHistoryOverview() {
+            this.historyOverviewExpanded = !this.historyOverviewExpanded;
+            if (this.historyOverviewExpanded) await this.loadHistoryOverview();
+          },
+          async loadHistoryOverview() {
+            if (this.historyOverviewLoading) return;
+            this.historyOverviewLoading = true;
+            this.historyOverviewError = '';
+            try {
+              const response = await fetch(`/api/history/overview?refresh=${Date.now()}`, { cache: 'no-store' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || 'Library details could not be loaded.');
+              this.historyOverview = result;
+            } catch (error) { this.historyOverviewError = error.message || 'Library details could not be loaded.'; }
+            finally { this.historyOverviewLoading = false; }
+          },
+          formatReadingEstimate(value) {
+            const minutes = Math.max(0, Math.ceil(Number(value) || 0));
+            if (!minutes) return 'Less than a minute';
+            if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+            const totalHours = Math.ceil(minutes / 60);
+            const totalDays = Math.floor(totalHours / 24);
+            const years = Math.floor(totalDays / 365);
+            const months = Math.floor((totalDays % 365) / 30);
+            const days = totalDays - years * 365 - months * 30;
+            const hours = totalHours % 24;
+            const parts = [];
+            if (years) parts.push(`${years} ${years === 1 ? 'year' : 'years'}`);
+            if (months) parts.push(`${months} ${months === 1 ? 'month' : 'months'}`);
+            if (days) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+            if (hours) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+            return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+          },
+          historyTrackingDate(value) {
+            const date = Date.parse(value || '');
+            return Number.isFinite(date) ? new Date(date).toLocaleDateString() : 'now';
+          },
+          sourceMixWidth(value) { return `${Math.max(0, Math.min(100, Number(value) || 0))}%`; },
           formatCount(value) { return new Intl.NumberFormat().format(Number(value) || 0); },
+          formatPlaybackTotal(value) {
+            const totalSeconds = Math.floor(Math.max(0, Number(value) || 0) / 1000);
+            if (totalSeconds < 60) return totalSeconds ? `${totalSeconds}s` : '0s';
+            const totalMinutes = Math.floor(totalSeconds / 60);
+            const days = Math.floor(totalMinutes / 1440);
+            const hours = Math.floor(totalMinutes % 1440 / 60);
+            const minutes = totalMinutes % 60;
+            if (days) return `${days}d ${hours}h`;
+            if (hours) return `${hours}h ${minutes}m`;
+            return `${totalMinutes}m`;
+          },
+          formatAdAvoidedTime(value) {
+            const format = seconds => {
+              const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+              if (whole < 60) return `${whole}s`;
+              const minutes = Math.floor(whole / 60);
+              const remainder = whole % 60;
+              return remainder ? `${minutes}m${remainder}s` : `${minutes}m`;
+            };
+            const low = Math.max(0, Number(value?.secondsLow) || 0);
+            const high = Math.max(low, Number(value?.secondsHigh) || 0);
+            return low === high ? format(low) : `${format(low)}–${format(high)}`;
+          },
+          adAvoidanceLower(value) { return this.formatAdAvoidedTime({ secondsLow: value?.secondsLow, secondsHigh: value?.secondsLow }); },
+          adAvoidanceHigher(value) { return this.formatAdAvoidedTime({ secondsLow: value?.secondsHigh, secondsHigh: value?.secondsHigh }); },
+          adAvoidanceTooltip(value) {
+            return `This is an estimate, not a measured YouTube ad count. It assumes about 3 breaks (2–3 minutes of ads) per 10 minutes of playback. Actual ad load varies by video, viewer, device, and region. Mini-player and simultaneous browser playback are included.`;
+          },
           formatDurationBaseline(value) { return value ? `${value.firstWithDuration}/${value.sampled} · ${value.firstRatePercent}%` : '—'; },
           durationBaselineTitle(value) { return value ? `Extension ${value.version}: video length present on first capture for ${value.firstWithDuration} of ${value.sampled} unique stubs (${value.firstRatePercent}%). Latest capture coverage: ${value.latestWithDuration}/${value.sampled} (${value.latestRatePercent}%). ${value.filledLater} stubs gained a video length in a later capture.` : 'Waiting for extension 0.4.0 captures. Existing video rows are excluded from this baseline.'; },
           formatBytes(value) {
@@ -3357,6 +3527,123 @@
       @media (max-width: 560px) { .mini-player { right: 8px; bottom: 8px; width: min(460px, calc(100vw - 16px)); max-height: 84vh; } .mini-player-video-slot video { max-height: 42vh; } .mini-queue-thumbnail-wrap { width: 96px; flex-basis: 96px; } }
     </style>
     <script src="/header-value-ticker.js"></script>
+    <script>
+      (() => {
+        const triggerSelector = '.ad-info-trigger[data-info-tooltip]';
+        let activeTrigger = null;
+        let pinned = false;
+        let closeTimer = 0;
+        const tooltip = document.createElement('div');
+        tooltip.className = 'ad-info-tooltip';
+        tooltip.id = 'yourtube-ad-info-tooltip';
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.hidden = true;
+        document.body.append(tooltip);
+
+        function positionTooltip() {
+          if (!activeTrigger?.isConnected || tooltip.hidden) return;
+          const triggerRect = activeTrigger.getBoundingClientRect();
+          tooltip.style.left = '0px';
+          tooltip.style.top = '0px';
+          const tooltipRect = tooltip.getBoundingClientRect();
+          const margin = 14;
+          const left = Math.max(margin, Math.min(triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2, window.innerWidth - tooltipRect.width - margin));
+          const roomBelow = window.innerHeight - triggerRect.bottom;
+          const top = roomBelow >= tooltipRect.height + 14 || triggerRect.top < tooltipRect.height + 20
+            ? Math.min(window.innerHeight - tooltipRect.height - margin, triggerRect.bottom + 12)
+            : Math.max(margin, triggerRect.top - tooltipRect.height - 12);
+          tooltip.style.left = `${left}px`;
+          tooltip.style.top = `${top}px`;
+        }
+
+        function show(trigger, shouldPin = false) {
+          window.clearTimeout(closeTimer);
+          if (activeTrigger && activeTrigger !== trigger) activeTrigger.setAttribute('aria-expanded', 'false');
+          activeTrigger = trigger;
+          pinned = shouldPin;
+          const heading = document.createElement('strong');
+          heading.textContent = trigger.dataset.tooltipTitle || 'About this estimate';
+          const copy = document.createElement('span');
+          copy.className = 'ad-info-tooltip-details';
+          copy.textContent = trigger.dataset.infoTooltip || '';
+          const contents = [heading];
+          if (trigger.dataset.estimateLower || trigger.dataset.estimateHigher) {
+            const estimates = document.createElement('div');
+            estimates.className = 'ad-info-estimates';
+            const lower = document.createElement('div');
+            lower.className = 'ad-info-estimate-line';
+            lower.textContent = `On the lower end ~ ${trigger.dataset.estimateLower || '0s'}`;
+            const higher = document.createElement('div');
+            higher.className = 'ad-info-estimate-line ad-info-estimate-line-high';
+            higher.textContent = `On the higher end ~${trigger.dataset.estimateHigher || '0s'} unskippable ads.`;
+            estimates.replaceChildren(lower, higher);
+            contents.push(estimates);
+          }
+          contents.push(copy);
+          tooltip.replaceChildren(...contents);
+          tooltip.hidden = false;
+          trigger.setAttribute('aria-describedby', tooltip.id);
+          trigger.setAttribute('aria-expanded', 'true');
+          positionTooltip();
+          requestAnimationFrame(() => tooltip.classList.add('is-visible'));
+        }
+
+        function hide() {
+          window.clearTimeout(closeTimer);
+          if (activeTrigger) {
+            activeTrigger.setAttribute('aria-expanded', 'false');
+            activeTrigger.removeAttribute('aria-describedby');
+          }
+          activeTrigger = null;
+          pinned = false;
+          tooltip.classList.remove('is-visible');
+          window.setTimeout(() => { if (!activeTrigger) tooltip.hidden = true; }, 170);
+        }
+
+        function scheduleHide() {
+          if (pinned) return;
+          window.clearTimeout(closeTimer);
+          closeTimer = window.setTimeout(hide, 140);
+        }
+
+        document.addEventListener('pointerover', event => {
+          const trigger = event.target.closest?.(triggerSelector);
+          if (trigger) show(trigger);
+        });
+        document.addEventListener('pointerout', event => {
+          if (!activeTrigger) return;
+          if (activeTrigger.contains(event.target) && !activeTrigger.contains(event.relatedTarget) && !tooltip.contains(event.relatedTarget)) scheduleHide();
+          else if (tooltip.contains(event.target) && !tooltip.contains(event.relatedTarget) && !activeTrigger.contains(event.relatedTarget)) scheduleHide();
+        });
+        document.addEventListener('focusin', event => {
+          const trigger = event.target.closest?.(triggerSelector);
+          if (trigger) show(trigger);
+        });
+        document.addEventListener('focusout', event => {
+          if (activeTrigger?.contains(event.target) && !activeTrigger.contains(event.relatedTarget)) scheduleHide();
+        });
+        document.addEventListener('click', event => {
+          const trigger = event.target.closest?.(triggerSelector);
+          if (trigger) {
+            if (activeTrigger === trigger && pinned) hide();
+            else show(trigger, true);
+            return;
+          }
+          if (!tooltip.contains(event.target)) hide();
+        }, true);
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && activeTrigger) {
+            const trigger = activeTrigger;
+            hide();
+            trigger.focus();
+          }
+        });
+        tooltip.addEventListener('pointerenter', () => window.clearTimeout(closeTimer));
+        tooltip.addEventListener('pointerleave', scheduleHide);
+        window.addEventListener('scroll', positionTooltip, true);
+        window.addEventListener('resize', positionTooltip);
+      })();
+    </script>
     <script src="/app-router.js"></script>
   </body>
 </html>

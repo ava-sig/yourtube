@@ -542,6 +542,8 @@
       .shorts-caption-avatar { object-fit: cover; }
       .shorts-caption-avatar[hidden], .shorts-caption-initial[hidden] { display: none !important; }
       .shorts-caption-channel-name { overflow: hidden; font-size: 13px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+      .shorts-caption-source { display: inline-grid; width: 21px; height: 21px; flex: 0 0 21px; place-items: center; border: 1px solid #ffffff70; border-radius: 6px; background: #111d; color: #fff; font-size: 12px; font-weight: 800; line-height: 1; text-shadow: none; }
+      .shorts-caption-source[hidden] { display: none !important; }
       .shorts-caption-title { display: -webkit-box; overflow: hidden; font-size: 13px; font-weight: 500; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
       body.yourtube-shorts-page.yourtube-shorts-comments-open #watch-comments { position: fixed; top: 76px; right: 22px; bottom: 18px; z-index: 30; display: flex; width: min(380px, calc(100vw - 116px)); max-height: calc(100dvh - 94px); flex-direction: column; margin: 0; padding: 1px; overflow: hidden; border: 1px solid #393a40; border-radius: 20px; background: #17191d; box-shadow: 0 22px 60px #000b, 0 0 0 1px #0008; }
       body.yourtube-shorts-page.yourtube-shorts-comments-open #watch-comments .comments-inner { display: flex; height: 100%; min-height: 0; flex: 1 1 auto; flex-direction: column; padding: 18px 16px 16px; border-radius: 19px; }
@@ -571,6 +573,12 @@
       .watch-channel-link { color: #aaa; text-decoration: none; }
       .watch-channel-link:hover { color: #f1f1f1; text-decoration: underline; }
       .view-count { margin-top: 4px; color: #aaa; font-size: 13px; }
+      .source-origin { display: flex; width: max-content; max-width: 100%; align-items: center; gap: 7px; margin-top: 5px; color: #aeb6c0; font-size: 12px; }
+      .source-origin[hidden] { display: none !important; }
+      .source-origin-mark { display: inline-grid; width: 19px; height: 19px; place-items: center; border: 1px solid #ffffff2b; border-radius: 6px; background: #252a30; color: #fff; font-size: 11px; font-weight: 800; }
+      .source-origin a { color: inherit; text-decoration: none; }
+      .source-origin a:hover { color: #fff; text-decoration: underline; }
+      body.yourtube-shorts-page #source-origin { display: none !important; }
       .error { max-width: 620px; padding: 0 20px; text-align: center; }
       .error h2 { color: #ff9b9b; }
       .shorts-caught-up { max-width: 420px; padding: 24px; color: #eee; text-align: center; }
@@ -635,6 +643,9 @@
         <div class="watch-sidebar-stat" title="Local media files"><span>Local files</span><strong id="stat-local-files">—</strong></div>
         <div class="watch-sidebar-stat" title="Media space used on disk"><span>Media on disk</span><strong id="stat-media-bytes">—</strong></div>
         <div class="watch-sidebar-stat" title="Historical local views"><span>Views</span><strong id="stat-historical-views">—</strong></div>
+        <div class="watch-sidebar-stat" title="Cumulative wall time while local media advanced. Mini-player playback counts; concurrent sessions count separately."><span>Total playback</span><strong id="stat-total-playback">—</strong></div>
+        <div class="watch-sidebar-stat"><span>Ad breaks avoided <button class="ad-info-trigger watch-stats-info" type="button" aria-label="How ad avoidance is estimated" data-tooltip-title="About your estimate" data-estimate-lower="0s" data-estimate-higher="0s" data-info-tooltip="This is an estimate, not a measured YouTube ad count. It assumes about 3 breaks (2–3 minutes of ads) per 10 minutes of playback. Actual ad load varies by video, viewer, device, and region. Mini-player and simultaneous browser playback are included.">i</button></span><strong>≈ <span id="stat-ad-breaks-avoided">—</span></strong></div>
+        <div class="watch-sidebar-stat" title="Cumulative media timeline advanced. Seeking is excluded; replayed sections count again."><span>Content advanced</span><strong id="stat-total-content">—</strong></div>
         <div class="watch-sidebar-stat" title="Unique video stubs received from the browser extension"><span>Extension stubs</span><strong id="stat-extension-videos">—</strong></div>
         <div class="watch-sidebar-stat" id="stat-duration-baseline-row" title="Waiting for extension 0.4.0 captures"><span>Extension duration baseline</span><strong id="stat-duration-baseline">—</strong></div>
       </footer>
@@ -645,6 +656,7 @@
         <div id="watch-stage" class="watch-only"><div id="stage" class="stage"></div>
         <h1 id="title"></h1>
         <div id="channel" class="channel"></div>
+        <div id="source-origin" class="source-origin" hidden><span class="source-origin-mark" aria-label="Source X">𝕏</span><a id="source-origin-link" href="" target="_blank" rel="noreferrer">Original post on X</a></div>
         <div id="view-count" class="view-count"></div>
         <div id="shorts-rail" class="shorts-rail" hidden aria-label="Shorts controls">
           <span id="shorts-position" class="shorts-position">—</span>
@@ -837,6 +849,8 @@
       let shortsNavigationBusy = false;
       const title = watchApp.querySelector('#title');
       const channel = watchApp.querySelector('#channel');
+      const sourceOrigin = watchApp.querySelector('#source-origin');
+      const sourceOriginLink = watchApp.querySelector('#source-origin-link');
       const viewCount = watchApp.querySelector('#view-count');
       const autoplayToggle = watchApp.querySelector('#autoplay-toggle');
       const recommendationsList = watchApp.querySelector('#recommendations');
@@ -871,6 +885,9 @@
         localFiles: watchApp.querySelector('#stat-local-files'),
         mediaBytes: watchApp.querySelector('#stat-media-bytes'),
         historicalViews: watchApp.querySelector('#stat-historical-views'),
+        totalPlayback: watchApp.querySelector('#stat-total-playback'),
+        adBreaksAvoided: watchApp.querySelector('#stat-ad-breaks-avoided'),
+        totalContent: watchApp.querySelector('#stat-total-content'),
         extensionVideos: watchApp.querySelector('#stat-extension-videos'),
         durationBaseline: watchApp.querySelector('#stat-duration-baseline'),
         durationBaselineRow: watchApp.querySelector('#stat-duration-baseline-row')
@@ -1720,6 +1737,7 @@
         }
         if (nextId !== videoId) {
           activeVideoInfo = null;
+          updateSourceIdentity(null);
           decodeRecoveryAttemptedFor = '';
         }
         videoId = nextId;
@@ -2394,6 +2412,35 @@
       fetch('/api/subscriptions').then(response => response.ok ? response.json() : []).then(rows => { watchSubscriptions = rows; renderSubscriptions(); }).catch(() => {});
 
       function formatStatCount(value) { return new Intl.NumberFormat().format(Number(value) || 0); }
+      function formatPlaybackTotal(value) {
+        const totalSeconds = Math.floor(Math.max(0, Number(value) || 0) / 1000);
+        if (totalSeconds < 60) return totalSeconds ? `${totalSeconds}s` : '0s';
+        const totalMinutes = Math.floor(totalSeconds / 60);
+        const days = Math.floor(totalMinutes / 1440);
+        const hours = Math.floor(totalMinutes % 1440 / 60);
+        const minutes = totalMinutes % 60;
+        if (days) return `${days}d ${hours}h`;
+        if (hours) return `${hours}h ${minutes}m`;
+        return `${totalMinutes}m`;
+      }
+      function formatAdAvoidedTime(value) {
+        const format = seconds => {
+          const whole = Math.max(0, Math.floor(Number(seconds) || 0));
+          if (whole < 60) return `${whole}s`;
+          const minutes = Math.floor(whole / 60);
+          const remainder = whole % 60;
+          return remainder ? `${minutes}m${remainder}s` : `${minutes}m`;
+        };
+        const low = Math.max(0, Number(value?.secondsLow) || 0);
+        const high = Math.max(low, Number(value?.secondsHigh) || 0);
+        return low === high ? format(low) : `${format(low)}–${format(high)}`;
+      }
+      function formatAdAvoidedEndpoint(seconds) {
+        return formatAdAvoidedTime({ secondsLow: seconds, secondsHigh: seconds });
+      }
+      function adAvoidanceTooltip(value) {
+        return `This is an estimate, not a measured YouTube ad count. It assumes about 3 breaks (2–3 minutes of ads) per 10 minutes of playback. Actual ad load varies by video, viewer, device, and region. Mini-player and simultaneous browser playback are included.`;
+      }
       function formatStatBytes(value) {
         const bytes = Math.max(0, Number(value) || 0);
         if (bytes < 1024) return `${bytes} B`;
@@ -2415,6 +2462,13 @@
           sidebarStats.localFiles.textContent = formatStatCount(stats.localFiles);
           sidebarStats.mediaBytes.textContent = formatStatBytes(stats.mediaBytes);
           sidebarStats.historicalViews.textContent = formatStatCount(stats.historicalViews);
+          sidebarStats.totalPlayback.textContent = formatPlaybackTotal(stats.totalPlaybackMs);
+          sidebarStats.adBreaksAvoided.textContent = formatStatCount(stats.adAvoidanceEstimate?.breaks);
+          const adInfo = watchApp.querySelector('.watch-stats-info');
+          adInfo?.setAttribute('data-estimate-lower', formatAdAvoidedEndpoint(stats.adAvoidanceEstimate?.secondsLow));
+          adInfo?.setAttribute('data-estimate-higher', formatAdAvoidedEndpoint(stats.adAvoidanceEstimate?.secondsHigh));
+          adInfo?.setAttribute('data-info-tooltip', adAvoidanceTooltip(stats.adAvoidanceEstimate));
+          sidebarStats.totalContent.textContent = formatPlaybackTotal(stats.totalContentMs);
           sidebarStats.extensionVideos.textContent = formatStatCount(stats.extensionVideos);
           const baseline = stats.durationBaseline;
           sidebarStats.durationBaseline.textContent = baseline ? `${baseline.firstWithDuration}/${baseline.sampled} · ${baseline.firstRatePercent}%` : '—';
@@ -2646,8 +2700,9 @@
             activeVideoInfo = {
               id: activeVideoId, title: info.title || activeVideoId, channel: info.channel || '',
               thumbnail: info.thumbnail || '', avatar: info.avatar || '', duration: durationInSeconds(info.duration),
-              liked: Number(info.liked) === 1
+              liked: Number(info.liked) === 1, sourceProvider: info.sourceProvider || '', sourceId: info.sourceId || '', sourceUrl: info.sourceUrl || ''
             };
+            updateSourceIdentity(activeVideoInfo);
             setShortsLikeState(activeVideoInfo.liked, !shortsMode);
             title.textContent = activeVideoInfo.title;
             if (shortsMode) document.title = `${activeVideoInfo.title} · Shorts · YourTube`;
@@ -2691,7 +2746,8 @@
           }
           if (startToken !== playerStartToken) return;
           if (!infoResponse.ok) throw new Error(info.error || 'This video ID could not be added to YourTube.');
-          activeVideoInfo = { id: activeVideoId, title: info.title || activeVideoId, channel: info.channel || '', thumbnail: info.thumbnail || '', avatar: info.avatar || '', duration: durationInSeconds(info.duration), liked: Number(info.liked) === 1 };
+          activeVideoInfo = { id: activeVideoId, title: info.title || activeVideoId, channel: info.channel || '', thumbnail: info.thumbnail || '', avatar: info.avatar || '', duration: durationInSeconds(info.duration), liked: Number(info.liked) === 1, sourceProvider: info.sourceProvider || '', sourceId: info.sourceId || '', sourceUrl: info.sourceUrl || '' };
+          updateSourceIdentity(activeVideoInfo);
           setShortsLikeState(activeVideoInfo.liked, !shortsMode);
           title.textContent = activeVideoInfo.title;
           if (shortsMode) document.title = `${activeVideoInfo.title} · Shorts · YourTube`;
@@ -4310,6 +4366,22 @@
         return words.join(' ');
       }
 
+      function updateSourceIdentity(info) {
+        const isX = info?.sourceProvider === 'x';
+        sourceOrigin.hidden = !isX;
+        if (!isX) {
+          sourceOriginLink.removeAttribute('href');
+          return;
+        }
+        let href = '';
+        try {
+          const source = new URL(info.sourceUrl || '');
+          if (source.protocol === 'https:' && ['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(source.hostname)) href = source.href;
+        } catch {}
+        if (href) sourceOriginLink.href = href;
+        else sourceOriginLink.removeAttribute('href');
+      }
+
       function buildPlayer(source, videoTitle, resumeAt = 0, mediaExtension = 'webm', resumePositionPromise = null) {
         clearPlayerGlobalListeners();
         stage.classList.remove('is-acquiring');
@@ -4324,7 +4396,7 @@
           <video playsinline preload="${shortsMode ? 'auto' : 'metadata'}"></video>
           <button class="shorts-sound-prompt" type="button" aria-label="Turn on sound" hidden>Sound off · Tap for sound</button>
           <div class="player-title"></div>
-          <div class="shorts-caption" hidden><div class="shorts-caption-channel"><img class="shorts-caption-avatar" alt="" hidden><span class="shorts-caption-initial" aria-hidden="true"></span><strong class="shorts-caption-channel-name"></strong></div><div class="shorts-caption-title"></div></div>
+          <div class="shorts-caption" hidden><div class="shorts-caption-channel"><img class="shorts-caption-avatar" alt="" hidden><span class="shorts-caption-initial" aria-hidden="true"></span><strong class="shorts-caption-channel-name"></strong><span class="shorts-caption-source" title="Source: X" aria-label="Source: X" hidden>𝕏</span></div><div class="shorts-caption-title"></div></div>
           <button class="center-play" type="button" aria-label="Play video">▶</button>
           <div class="player-controls">
             <div class="seek-row"><input class="seek" type="range" min="0" max="1000" value="0" aria-label="Seek video" /></div>
@@ -4351,6 +4423,7 @@
         const shortsAvatar = shortsCaption.querySelector('.shorts-caption-avatar');
         const shortsChannelName = shortsCaption.querySelector('.shorts-caption-channel-name');
         const shortsCaptionTitle = shortsCaption.querySelector('.shorts-caption-title');
+        const shortsCaptionSource = shortsCaption.querySelector('.shorts-caption-source');
         const shortsInitial = shortsCaption.querySelector('.shorts-caption-initial');
         const storedChannelName = cleanRepeatedLabel(activeVideoInfo?.channel || '');
         const channelKey = String(activeVideoChannelKey || '').trim();
@@ -4359,6 +4432,7 @@
           ? storedChannelName
           : channelFallback;
         shortsCaption.hidden = !shortsMode;
+        shortsCaptionSource.hidden = activeVideoInfo?.sourceProvider !== 'x';
         shortsChannelName.textContent = captionChannelName;
         shortsCaptionTitle.textContent = videoTitle;
         shortsInitial.textContent = [...captionChannelName.trim()][0]?.toUpperCase() || 'Y';
@@ -4383,6 +4457,36 @@
         let viewRecorded = false;
         let progressSavedAt = 0;
         let finished = false;
+        const playbackSessionId = globalThis.crypto?.randomUUID?.()
+          || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
+            const value = Math.floor(Math.random() * 16);
+            return (character === 'x' ? value : (value & 3) | 8).toString(16);
+          });
+        let playbackSequence = 0;
+        let playbackMilliseconds = 0;
+        let contentMilliseconds = 0;
+        let playbackAdvancing = false;
+        let lastPlaybackSample = null;
+        const resetPlaybackSample = () => {
+          lastPlaybackSample = { wall: performance.now(), media: Number(video.currentTime) || 0, rate: Number(video.playbackRate) || 1 };
+        };
+        const samplePlayback = () => {
+          const wall = performance.now();
+          const media = Number(video.currentTime);
+          const previous = lastPlaybackSample;
+          if (previous && playbackAdvancing && !video.seeking && Number.isFinite(media)) {
+            const elapsedWall = Math.max(0, wall - previous.wall);
+            const elapsedContent = (media - previous.media) * 1000;
+            const rate = Math.max(0.01, Number(previous.rate) || 1);
+            // A seek or discontinuity is not viewing. Normal advancement is
+            // bounded by elapsed wall time and the rate in effect for this sample.
+            if (elapsedContent > 0 && elapsedContent <= elapsedWall * rate + 500) {
+              playbackMilliseconds += Math.round(Math.min(elapsedWall, elapsedContent / rate));
+              contentMilliseconds += Math.round(elapsedContent);
+            }
+          }
+          if (Number.isFinite(media)) lastPlaybackSample = { wall, media, rate: Number(video.playbackRate) || 1 };
+        };
         let requestedResumePosition = Math.max(0, Number(resumeAt) || 0);
         let resumeLookupPending = Boolean(resumePositionPromise);
         let resumePositionReady = !resumeLookupPending && (restoringMiniSession ? requestedResumePosition <= 0.5 : requestedResumePosition <= 5);
@@ -4530,12 +4634,20 @@
         const saveProgress = (position = video.currentTime, keepalive = false, completed = false) => {
           const durationValue = Number.isFinite(video.duration) ? video.duration : 0;
           const currentTime = Math.max(0, Number(position) || 0);
-          if (!durationValue) return;
           progressSavedAt = Date.now();
+          const playbackSession = {
+            sessionId: playbackSessionId,
+            sequence: ++playbackSequence,
+            playbackMs: playbackMilliseconds,
+            contentMs: contentMilliseconds
+          };
           fetch(`/api/progress/${activeVideoId}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ currentTime: Math.min(currentTime, durationValue), duration: durationValue, completed, playing: !video.paused && !video.ended }),
+            body: JSON.stringify({
+              currentTime: durationValue ? Math.min(currentTime, durationValue) : currentTime,
+              duration: durationValue, completed, playing: !video.paused && !video.ended, playbackSession
+            }),
             keepalive
           }).catch(() => {});
         };
@@ -4582,7 +4694,44 @@
         playButtons.forEach(button => button.addEventListener('click', event => { event.stopPropagation(); togglePlayback(); }));
         video.addEventListener('click', () => { if (!video.controls) togglePlayback(); });
         video.addEventListener('play', () => { updatePlayState(); showControls(); recordView(); });
-        video.addEventListener('pause', () => { updatePlayState(); showControls(); if (!finished) saveProgress(); });
+        video.addEventListener('playing', () => {
+          if (!isCurrentPlayer()) return;
+          playbackAdvancing = true;
+          resetPlaybackSample();
+          saveProgress();
+        });
+        video.addEventListener('pause', () => {
+          if (!isCurrentPlayer()) return;
+          samplePlayback();
+          playbackAdvancing = false;
+          resetPlaybackSample();
+          updatePlayState();
+          showControls();
+          if (!finished) saveProgress();
+        });
+        video.addEventListener('waiting', () => {
+          samplePlayback();
+          playbackAdvancing = false;
+          resetPlaybackSample();
+        });
+        video.addEventListener('stalled', () => {
+          samplePlayback();
+          playbackAdvancing = false;
+          resetPlaybackSample();
+        });
+        video.addEventListener('seeking', () => {
+          playbackAdvancing = false;
+          resetPlaybackSample();
+        });
+        video.addEventListener('seeked', () => {
+          if (!isCurrentPlayer()) return;
+          playbackAdvancing = !video.paused && !video.ended;
+          resetPlaybackSample();
+        });
+        video.addEventListener('ratechange', () => {
+          samplePlayback();
+          resetPlaybackSample();
+        });
         video.addEventListener('error', () => {
           if (!isCurrentPlayer()) return;
           video.pause();
@@ -4607,6 +4756,9 @@
         }, { once: true });
         video.addEventListener('ended', () => {
           if (!isCurrentPlayer()) return;
+          samplePlayback();
+          playbackAdvancing = false;
+          resetPlaybackSample();
           finished = true;
           saveProgress(0, true, true);
           updatePlayState();
@@ -4615,6 +4767,7 @@
         });
         video.addEventListener('timeupdate', () => {
           if (!isCurrentPlayer()) return;
+          samplePlayback();
           confirmResumeSeek();
           updateSeek();
           if (Date.now() - progressSavedAt >= 5000) saveProgress();
@@ -4650,7 +4803,10 @@
           applyResumePosition();
           tryStartPlayback();
         });
-        const onPageHide = () => { if (!finished) saveProgress(video.currentTime, true); };
+        const onPageHide = () => {
+          samplePlayback();
+          if (!finished) saveProgress(video.currentTime, true);
+        };
         window.addEventListener('pagehide', onPageHide);
         shell.addEventListener('mousemove', showControls);
         shell.addEventListener('touchstart', showControls, { passive: true });

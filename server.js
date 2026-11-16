@@ -9,6 +9,21 @@ import path from 'node:path';
 import { inferVideoTopic, normalizeTopicLabel } from './lib/topic-classifier.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+let serverShuttingDown = false;
+const activeChildProcesses = new Set();
+
+function spawnTracked(command, args, options) {
+  const child = spawn(command, args, options);
+  activeChildProcesses.add(child);
+  const forget = () => activeChildProcesses.delete(child);
+  child.once('error', forget);
+  child.once('close', forget);
+  if (serverShuttingDown) {
+    try { child.kill('SIGINT'); } catch {}
+  }
+  return child;
+}
+
 const repositoryDataDirectory = path.resolve(root, 'data');
 const dataDirectory = path.resolve(process.env.YOURTUBE_DATA_DIR || repositoryDataDirectory);
 const dataDirectoryIsRepositoryDefault = dataDirectory === repositoryDataDirectory;
@@ -149,7 +164,7 @@ function integrityPauseError() {
 }
 
 function throwIfIntegrityPaused(downloadJob) {
-  if (downloadJob?.pauseRequested) throw integrityPauseError();
+  if (serverShuttingDown || downloadJob?.pauseRequested) throw integrityPauseError();
 }
 
 function trackIntegrityProcess(child, downloadJob = null) {
@@ -197,7 +212,7 @@ async function checksumMediaFile(filePath, onProgress = null, totalBytes = 0, do
       else resolve(result);
     };
     stream.on('data', chunk => {
-      if (downloadJob?.pauseRequested) {
+      if (serverShuttingDown || downloadJob?.pauseRequested) {
         stream.destroy(integrityPauseError());
         return;
       }
@@ -256,7 +271,7 @@ function runFfprobeHasAudio(filePath, downloadJob = null) {
   try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   if (!ffprobeAvailable) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
+    const child = spawnTracked(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=index', '-of', 'csv=p=0', filePath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     trackIntegrityProcess(child, downloadJob);
@@ -281,7 +296,7 @@ function runFfprobeHasAudio(filePath, downloadJob = null) {
     child.stdout.on('data', chunk => { stdout = `${stdout}${chunk}`.slice(-4000); });
     child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-2000); });
     child.once('error', error => finish(error));
-    child.once('close', code => downloadJob?.pauseRequested
+    child.once('close', code => (serverShuttingDown || downloadJob?.pauseRequested)
       ? finish(integrityPauseError())
       : code === 0
         ? finish(null, Boolean(stdout.trim()))
@@ -292,7 +307,7 @@ function runFfprobeHasAudio(filePath, downloadJob = null) {
 function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = null, durationSeconds = 0, downloadJob = null) {
   try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
+    const child = spawnTracked(process.env.FFMPEG_PATH || 'ffmpeg', [
       '-hide_banner', '-nostdin', '-v', 'error', '-stats_period', '0.5', '-progress', 'pipe:1', '-xerror', '-err_detect', 'explode',
       '-threads', '1', '-filter_threads', '1', '-i', filePath,
       '-map', '0:a:0', '-vn', '-sn', '-dn', '-ac', '1', '-ar', '16000', '-c:a', 'flac', '-compression_level', '5', outputPath
@@ -334,7 +349,7 @@ function runFfmpegAudioExtract(filePath, outputPath, timeoutMs, onProgress = nul
     child.once('error', error => finish(Object.assign(new Error(error.code === 'ENOENT'
       ? 'ffmpeg is unavailable to prepare local transcription audio.'
       : 'Could not start audio preparation.'), { code: 'AUDIO_EXTRACTION_FAILED', cause: error })));
-    child.once('close', code => downloadJob?.pauseRequested
+    child.once('close', code => (serverShuttingDown || downloadJob?.pauseRequested)
       ? finish(integrityPauseError())
       : code === 0
         ? finish(null, { status: 'awaiting_transcription' })
@@ -348,20 +363,6 @@ function hasSavedIntegrityChecksum(id) {
   return ['verified', 'container-checked'].includes(integrity?.status) && /^[a-f0-9]{64}$/i.test(String(integrity?.checksum || ''));
 }
 
-for (const [signal, exitCode] of [['SIGTERM', 143], ['SIGINT', 130]]) {
-  process.once(signal, () => {
-    for (const child of integrityCheckProcesses) {
-      try { child.kill('SIGKILL'); } catch {}
-    }
-    process.exit(exitCode);
-  });
-}
-process.once('exit', () => {
-  for (const child of integrityCheckProcesses) {
-    try { child.kill('SIGKILL'); } catch {}
-  }
-});
-
 function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, onProgress = null, audioOutputPath = '', downloadJob = null } = {}) {
   try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
@@ -371,7 +372,7 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
       '-i', filePath, '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn', '-f', 'null', '-'
     ];
     if (audioOutputPath) args.push('-map', '0:a:0', '-vn', '-sn', '-dn', '-ac', '1', '-ar', '16000', '-c:a', 'flac', '-compression_level', '5', audioOutputPath);
-    const child = spawn(process.env.FFMPEG_PATH || 'ffmpeg', [
+    const child = spawnTracked(process.env.FFMPEG_PATH || 'ffmpeg', [
       ...args
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     trackIntegrityProcess(child, downloadJob);
@@ -424,7 +425,7 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
     });
     child.once('close', code => {
       untrackIntegrityProcess(child, downloadJob);
-      if (downloadJob?.pauseRequested) { finish(integrityPauseError()); return; }
+      if (serverShuttingDown || downloadJob?.pauseRequested) { finish(integrityPauseError()); return; }
       if (code === 0) { finish(null, { status: 'verified', detail: '' }); return; }
       const detail = stderr.trim().replace(/https?:\/\/\S+/g, '[URL]').slice(-900);
       finish(Object.assign(new Error(`The local file failed its full audio/video decode check${detail ? `: ${detail}` : '.'}`), { code: 'MEDIA_INTEGRITY' }));
@@ -435,7 +436,7 @@ function runFfmpegIntegrityDecode(filePath, timeoutMs, { durationSeconds = 0, on
 function runFfprobeContainerCheck(filePath, downloadJob = null) {
   try { throwIfIntegrityPaused(downloadJob); } catch (error) { return Promise.reject(error); }
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
+    const child = spawnTracked(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', filePath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     trackIntegrityProcess(child, downloadJob);
@@ -460,7 +461,7 @@ function runFfprobeContainerCheck(filePath, downloadJob = null) {
     child.once('close', code => {
       clearTimeout(timeout);
       untrackIntegrityProcess(child, downloadJob);
-      if (downloadJob?.pauseRequested) { reject(integrityPauseError()); return; }
+      if (serverShuttingDown || downloadJob?.pauseRequested) { reject(integrityPauseError()); return; }
       if (code !== 0) {
         reject(Object.assign(new Error(`The local file failed its media container check${stderr.trim() ? `: ${stderr.trim().slice(-700)}` : '.'}`), { code: 'MEDIA_INTEGRITY' }));
         return;
@@ -878,6 +879,21 @@ database.exec(`
     integrity_file_size INTEGER NOT NULL DEFAULT 0,
     integrity_file_mtime_ms REAL NOT NULL DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS media_acquisition_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'youtube',
+    kind TEXT NOT NULL DEFAULT 'video',
+    file_size_bytes INTEGER NOT NULL DEFAULT 0,
+    file_checksum TEXT NOT NULL DEFAULT '',
+    file_mtime_ms REAL NOT NULL DEFAULT 0,
+    file_identity TEXT NOT NULL UNIQUE,
+    is_redownload INTEGER NOT NULL DEFAULT 0,
+    acquired_at TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'yt-dlp'
+  );
+  CREATE INDEX IF NOT EXISTS media_acquisition_events_video_time ON media_acquisition_events (video_id, acquired_at);
+  CREATE INDEX IF NOT EXISTS media_acquisition_events_time ON media_acquisition_events (acquired_at);
   CREATE TABLE IF NOT EXISTS transcription_assets (
     video_id TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'pending_audio',
@@ -944,6 +960,18 @@ database.exec(`
     local_assets_json TEXT NOT NULL DEFAULT '[]',
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS external_media_sources (
+    video_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    extractor_id TEXT NOT NULL DEFAULT '',
+    issues_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (provider, source_id)
+  );
+  CREATE INDEX IF NOT EXISTS external_media_sources_provider_id ON external_media_sources (provider, source_id);
   CREATE TABLE IF NOT EXISTS cached_images (
     image_key TEXT PRIMARY KEY,
     source_url TEXT NOT NULL UNIQUE,
@@ -974,6 +1002,16 @@ database.exec(`
     completed INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS playback_sessions (
+    session_id TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    playback_ms INTEGER NOT NULL DEFAULT 0,
+    content_ms INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS playback_sessions_video ON playback_sessions (video_id, updated_at);
   CREATE TABLE IF NOT EXISTS video_duration_lookups (
     video_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
@@ -1529,6 +1567,240 @@ function isAcquisitionExcluded(id) {
   return Boolean(database.prepare('SELECT 1 FROM acquisition_exclusions WHERE video_id = ?').get(id));
 }
 
+const externalMediaPublicById = new Map(database.prepare(`SELECT video_id AS id, provider, source_id AS sourceId,
+  source_url AS sourceUrl, extractor_id AS extractorId, issues_json AS issuesJson FROM external_media_sources`).all().map(row => {
+  let issues = [];
+  try { issues = JSON.parse(row.issuesJson); } catch {}
+  return [row.id, { provider: row.provider, sourceId: row.sourceId, sourceUrl: row.sourceUrl, extractorId: row.extractorId, issues: Array.isArray(issues) ? issues : [] }];
+}));
+
+function externalMediaSource(id) {
+  return externalMediaPublicById.get(id) || null;
+}
+
+function parseXStatusUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || !['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(host)) return null;
+    let match = url.pathname.match(/^\/@?[\p{L}\p{N}._-]{1,100}\/status\/(\d+)(?:\/video\/\d+)?\/?$/u);
+    if (!match) match = url.pathname.match(/^\/i\/(?:web\/)?status\/(\d+)(?:\/video\/\d+)?\/?$/);
+    if (!match || match[1].length > 40) return null;
+    const sourceId = match[1];
+    const handleMatch = url.pathname.match(/^\/(@?[\p{L}\p{N}._-]{1,100})\/status\//u);
+    const handle = handleMatch && handleMatch[1].replace(/^@/, '').toLowerCase() !== 'i'
+      ? handleMatch[1].replace(/^@/, '') : '';
+    return { sourceId, handle, sourceUrl: handle
+      ? `https://x.com/${encodeURIComponent(handle)}/status/${sourceId}`
+      : `https://x.com/i/web/status/${sourceId}` };
+  } catch { return null; }
+}
+
+function externalLocalVideoId(provider, sourceId) {
+  const existing = database.prepare('SELECT video_id AS id FROM external_media_sources WHERE provider = ? AND source_id = ?').get(provider, sourceId);
+  if (existing) return existing.id;
+  for (let collision = 0; collision < 100; collision += 1) {
+    const candidate = createHash('sha256').update(`${provider}:${sourceId}${collision ? `:${collision}` : ''}`).digest('base64url').slice(0, 11);
+    const source = database.prepare('SELECT provider, source_id AS sourceId FROM external_media_sources WHERE video_id = ?').get(candidate);
+    if (source?.provider === provider && source.sourceId === sourceId) return candidate;
+    if (!source && !database.prepare('SELECT 1 FROM videos WHERE video_id = ?').get(candidate)) return candidate;
+  }
+  throw new Error('Could not assign a stable local ID because of repeated ID collisions.');
+}
+
+function recordExternalExtractorId(id, extractorId) {
+  const source = externalMediaSource(id);
+  if (!source || !extractorId) return;
+  const issues = source.issues.filter(issue => issue?.code !== 'extractor-id-differs');
+  if (String(extractorId) !== String(source.sourceId)) {
+    issues.push({
+      code: 'extractor-id-differs',
+      message: `The downloader reported media ID ${String(extractorId).slice(0, 100)}, which differs from X post ID ${source.sourceId}.`,
+      mitigation: `The post URL remains the source of truth; the media is stored under YourTube ID ${id} and linked to both identifiers.`
+    });
+  }
+  database.prepare(`UPDATE external_media_sources SET extractor_id = ?, issues_json = ?, updated_at = ? WHERE video_id = ?`)
+    .run(String(extractorId).slice(0, 100), JSON.stringify(issues), new Date().toISOString(), id);
+  externalMediaPublicById.set(id, { ...source, extractorId: String(extractorId).slice(0, 100), issues });
+}
+
+function persistExternalDownloadMetadata(id, fields = {}) {
+  const source = externalMediaSource(id);
+  if (!source || !Object.values(fields).some(value => value !== null && value !== undefined && value !== '')) return false;
+  const text = (key, limit = 20_000) => typeof fields[key] === 'string' ? fields[key].trim().slice(0, limit) : '';
+  const number = key => Number.isFinite(Number(fields[key])) && Number(fields[key]) > 0 ? Number(fields[key]) : null;
+  const title = text('title', 500);
+  const author = text('channel', 200) || text('uploader', 200);
+  const thumbnail = safeImage(text('thumbnail', 2048)) || (Array.isArray(fields.thumbnails)
+    ? [...fields.thumbnails].sort((a, b) => (Number(b?.width) || 0) * (Number(b?.height) || 0) - (Number(a?.width) || 0) * (Number(a?.height) || 0))
+      .map(item => safeImage(item?.url)).find(Boolean) || '' : '');
+  const avatar = safeImage(text('avatar', 2048));
+  const duration = number('duration');
+  const current = database.prepare('SELECT title, channel FROM videos WHERE video_id = ?').get(id);
+  if (!current) return false;
+
+  // npm ingest has no browser page to provide the post caption. Replace only
+  // our generated fallback; keep any title and author captured from X itself.
+  if (title && /^X video(?:\s|$)/i.test(String(current.title || '').trim())) {
+    database.prepare('UPDATE videos SET title = ? WHERE video_id = ?').run(title, id);
+  }
+  const externalHandle = source.sourceUrl.match(/x\.com\/([^/]+)\/status\//i)?.[1] || '';
+  if (author && (!String(current.channel || '').trim() || /^X creator unavailable$/i.test(current.channel)
+      || externalHandle && String(current.channel).trim().toLowerCase() === `@${externalHandle}`.toLowerCase())) {
+    database.prepare('UPDATE videos SET channel = ? WHERE video_id = ?').run(author, id);
+  }
+
+  const info = {
+    id,
+    title,
+    uploader: text('uploader', 500) || author,
+    channel: author,
+    thumbnail: isAllowedXImageSource(thumbnail) ? thumbnail : '',
+    uploader_thumbnail: isAllowedXImageSource(avatar) ? avatar : '',
+    duration,
+    upload_date: text('uploadDate', 40),
+    timestamp: number('timestamp'),
+    description: text('description'),
+    view_count: number('viewCount'),
+    like_count: number('likeCount'),
+    comment_count: number('commentCount'),
+    channel_follower_count: number('followerCount'),
+    webpage_url: source.sourceUrl,
+    original_url: source.sourceUrl,
+    extractor: text('extractor', 100) || 'X',
+    extractor_key: text('extractorKey', 100) || 'Twitter',
+    metadata_source: 'yt-dlp',
+    extractorMetadataCaptured: true
+  };
+  saveVideoMetadataFromInfo(id, info);
+
+  let metadata = {};
+  try { metadata = JSON.parse(database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value || '{}'); } catch {}
+  metadata.externalAcquisition = {
+    ...(metadata.externalAcquisition || {}),
+    provider: 'x', sourceId: source.sourceId, sourceUrl: source.sourceUrl,
+    extractorId: source.extractorId || '', uploaderId: text('uploaderId', 300), uploaderUrl: text('uploaderUrl', 2048),
+    capturedAt: new Date().toISOString(), metadataSource: 'yt-dlp'
+  };
+  database.prepare('UPDATE video_metadata SET metadata_json = ?, updated_at = ? WHERE video_id = ?')
+    .run(JSON.stringify(metadata), new Date().toISOString(), id);
+
+  const fulfilled = new Set();
+  if (title) fulfilled.add('title-missing');
+  if (author) fulfilled.add('author-missing');
+  if (thumbnail) fulfilled.add('thumbnail-missing');
+  if (avatar) fulfilled.add('avatar-missing');
+  if (duration) fulfilled.add('duration-pending');
+  if (fulfilled.size) {
+    const issues = source.issues.filter(issue => !fulfilled.has(issue?.code));
+    if (issues.length !== source.issues.length) {
+      database.prepare('UPDATE external_media_sources SET issues_json = ?, updated_at = ? WHERE video_id = ?')
+        .run(JSON.stringify(issues), new Date().toISOString(), id);
+      externalMediaPublicById.set(id, { ...source, issues });
+    }
+  }
+  return true;
+}
+
+function externalMetadataNeedsRefresh(id) {
+  const source = externalMediaSource(id);
+  if (!source) return false;
+  let metadata = {};
+  try { metadata = JSON.parse(database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value || '{}'); } catch {}
+  if (metadata.extractorMetadataCaptured) return false;
+  const video = database.prepare('SELECT title, channel, thumbnail, duration FROM videos WHERE video_id = ?').get(id);
+  if (!video) return true;
+  const handle = source.sourceUrl.match(/x\.com\/([^/]+)\/status\//i)?.[1] || '';
+  return !String(video.title || '').trim() || /^X video(?:\s|$)/i.test(String(video.title || '').trim())
+    || !String(video.channel || '').trim() || /^(?:X creator unavailable|channel unavailable)$/i.test(String(video.channel || '').trim())
+    || Boolean(handle && String(video.channel).trim().toLowerCase() === `@${handle}`.toLowerCase())
+    || !String(video.thumbnail || '').trim() || !String(video.duration || '').trim();
+}
+
+function readExternalMetadataJson(id) {
+  const source = externalMediaSource(id);
+  if (!source) return Promise.reject(new Error('The X source mapping is missing.'));
+  return new Promise((resolve, reject) => {
+    const child = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', [
+      '--ignore-config', '--no-cookies', '--no-playlist', '--no-warnings', '--no-progress',
+      '--skip-download', '--dump-single-json', '--socket-timeout', '20', '--retries', '1', source.sourceUrl
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish(new Error('X metadata lookup timed out; it will retry later.'));
+    }, 45_000);
+    timer.unref();
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout = `${stdout}${chunk}`.slice(-8_000_000); });
+    child.stderr.on('data', chunk => { stderr = `${stderr}${chunk}`.slice(-8_000); });
+    child.once('error', error => finish(new Error(error.code === 'ENOENT' ? 'yt-dlp is not installed or not available on PATH.' : 'Could not start the X metadata lookup.')));
+    child.once('close', code => {
+      if (serverShuttingDown) return finish(new Error('Metadata lookup paused during server shutdown; it will resume later.'));
+      if (code !== 0) return finish(new Error(stderr.trim().slice(-1200) || `yt-dlp metadata lookup exited with code ${code}.`));
+      try {
+        const output = stdout.trim();
+        const firstObject = output.indexOf('{');
+        const lastObject = output.lastIndexOf('}');
+        if (firstObject < 0 || lastObject < firstObject) throw new Error('yt-dlp returned no metadata object for this X post.');
+        finish(null, JSON.parse(output.slice(firstObject, lastObject + 1)));
+      } catch (error) { finish(error); }
+    });
+  });
+}
+
+function persistExternalInfoJson(id, info) {
+  if (!info || typeof info !== 'object') return false;
+  const thumbnails = Array.isArray(info.thumbnails) ? info.thumbnails : [];
+  return persistExternalDownloadMetadata(id, {
+    title: info.title,
+    uploader: info.uploader,
+    channel: info.channel,
+    uploaderId: info.uploader_id,
+    uploaderUrl: info.uploader_url || info.channel_url,
+    thumbnail: info.thumbnail,
+    thumbnails,
+    avatar: info.channel_thumbnail || info.uploader_thumbnail || info.channel_avatar || info.uploader_avatar,
+    duration: info.duration,
+    uploadDate: info.upload_date,
+    timestamp: info.timestamp,
+    description: info.description,
+    viewCount: info.view_count,
+    likeCount: info.like_count,
+    commentCount: info.comment_count,
+    followerCount: info.channel_follower_count,
+    extractor: info.extractor,
+    extractorKey: info.extractor_key
+  });
+}
+
+function externalIssue(code, message, mitigation) {
+  return { code, message: String(message).slice(0, 300), mitigation: String(mitigation).slice(0, 300) };
+}
+
+function updateExternalMediaIssues(id, additions = []) {
+  const source = externalMediaSource(id);
+  if (!source) return null;
+  const issuesByCode = new Map(source.issues.map(issue => [issue?.code, issue]).filter(([code]) => code));
+  for (const issue of additions) if (issue?.code && !issuesByCode.has(issue.code)) issuesByCode.set(issue.code, issue);
+  const issues = [...issuesByCode.values()];
+  database.prepare('UPDATE external_media_sources SET issues_json = ?, updated_at = ? WHERE video_id = ?')
+    .run(JSON.stringify(issues), new Date().toISOString(), id);
+  const updated = { ...source, issues };
+  externalMediaPublicById.set(id, updated);
+  return updated;
+}
+
 function finalizeStalledCaptures() {
   const now = new Date().toISOString();
   const staleBefore = new Date(Date.now() - backgroundCaptureStaleMs).toISOString();
@@ -1628,7 +1900,7 @@ function cleanVideo(value, position) {
   } catch { return null; }
 }
 
-const videoProvenanceTypes = new Set(['homepage', 'homepage-section', 'search', 'channel', 'playlist', 'shorts', 'watch', 'youtube-page', 'direct-id', 'media-folder']);
+const videoProvenanceTypes = new Set(['homepage', 'homepage-section', 'search', 'channel', 'playlist', 'shorts', 'watch', 'youtube-page', 'direct-id', 'media-folder', 'external']);
 const saveVideoProvenance = database.prepare(`INSERT INTO video_provenance
   (video_id, source_type, source_key, source_label, source_url, first_seen, last_seen, observations)
   VALUES (?, ?, ?, ?, ?, ?, ?, 1)
@@ -1654,12 +1926,14 @@ function recordVideoProvenance(videoId, rawContext, seenAt, fallback = {}) {
         const listId = url.searchParams.get('list') || (sourceKey && !sourceKey.includes(':') ? sourceKey : '');
         if (listId && /^[A-Za-z0-9_-]{5,120}$/.test(listId)) sourceUrl += `?list=${encodeURIComponent(listId)}`;
       }
+    } else if (sourceType === 'external' && url.protocol === 'https:' && ['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname.toLowerCase()) && /\/status\/\d+/.test(url.pathname)) {
+      sourceUrl = `https://x.com${url.pathname.slice(0, 300)}`;
     }
   } catch {}
   const labels = {
     homepage: 'YouTube homepage', 'homepage-section': 'YouTube homepage section', search: 'YouTube search',
     channel: 'YouTube channel', playlist: 'YouTube playlist', shorts: 'YouTube Shorts feed',
-    watch: 'YouTube watch page', 'youtube-page': 'YouTube page', 'direct-id': 'Direct video ID', 'media-folder': 'Media folder'
+    watch: 'YouTube watch page', 'youtube-page': 'YouTube page', 'direct-id': 'Direct video ID', 'media-folder': 'Media folder', external: 'X post'
   };
   saveVideoProvenance.run(videoId, sourceType, sourceKey, sourceLabel || labels[sourceType], sourceUrl, seenAt, seenAt);
 }
@@ -1809,6 +2083,18 @@ let youtubeRateLimitResumePending = youtubeRateLimitUntil > 0;
 const persistAppSetting = (key, value) => database.prepare(`INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)
   ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`)
   .run(key, String(value), new Date().toISOString());
+const mediaAcquisitionTrackingKey = 'media_acquisition_tracking_started_at';
+let mediaAcquisitionTrackingStartedAt = database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(mediaAcquisitionTrackingKey)?.value || '';
+if (!mediaAcquisitionTrackingStartedAt) {
+  mediaAcquisitionTrackingStartedAt = new Date().toISOString();
+  persistAppSetting(mediaAcquisitionTrackingKey, mediaAcquisitionTrackingStartedAt);
+}
+let historyOverviewCache = null;
+let historyOverviewCacheExpiresAt = 0;
+let historyOverviewBuildPromise = null;
+function invalidateHistoryOverviewCache() {
+  historyOverviewCacheExpiresAt = 0;
+}
 if (!explicitOfflineSetting) persistAppSetting('explicit_offline_preference', explicitOfflinePreference);
 if (reconnectOnlineSetting?.value === 'true' && !autoOnlineAfterConnectivityLoss) persistAppSetting('auto_online_after_connectivity_loss', false);
 const autoDeleteSetting = database.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = 'auto_delete_enabled'").get();
@@ -1855,6 +2141,7 @@ const savedOfflinePreparation = {
 let offlinePreparationPaused = offlinePreparationTarget === 'paused' && networkMode === 'offline';
 let offlinePreparationBackground = networkMode !== 'offline' && ['paused', 'background'].includes(offlinePreparationTarget);
 let offlinePreparationRequested = offlinePreparationTarget === 'offline';
+let offlinePreparationTask = null;
 let offlinePreparation = offlinePreparationPaused
   ? { ...savedOfflinePreparation, status: 'paused', message: 'Preparation paused. It will resume in the background when you switch Online.' }
   : offlinePreparationBackground
@@ -2090,8 +2377,9 @@ function localizeCachedImages(value) {
   if (Array.isArray(value)) return value.map(localizeCachedImages);
   const result = {};
   const videoId = String(value.id || value.video_id || '');
+  const externalSource = externalMediaPublicById.get(videoId);
   for (const [key, item] of Object.entries(value)) {
-    const source = key === 'thumbnail' && !item && /^[A-Za-z0-9_-]{11}$/.test(videoId)
+    const source = key === 'thumbnail' && !item && !externalSource && /^[A-Za-z0-9_-]{11}$/.test(videoId)
       ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
       : item;
     if (imageFields.has(key) && typeof source === 'string' && source.trim()) {
@@ -2110,13 +2398,15 @@ function localizeCachedImages(value) {
         continue;
       }
       const normalizedSource = imageUrl.href;
+      const trustedImageSource = isAllowedYoutubeImageSource(normalizedSource) || isAllowedXImageSource(normalizedSource);
+      const isXImage = isAllowedXImageSource(normalizedSource);
       const isVideoThumbnail = key === 'thumbnail' && /^[A-Za-z0-9_-]{11}$/.test(videoId);
       const linkedThumbnail = isVideoThumbnail ? existingVideoThumbnail(videoId) : null;
       const cached = linkedThumbnail || existingCachedImage(normalizedSource);
       if (cached) {
         if (isVideoThumbnail && !linkedThumbnail) rememberVideoThumbnail(videoId, normalizedSource);
         result[key] = `/api/images/${cached.key}`;
-      } else if (networkMode === 'offline' || youtubeRateLimitIsActive() || !isAllowedYoutubeImageSource(normalizedSource)) result[key] = '';
+      } else if (networkMode === 'offline' || (!isXImage && youtubeRateLimitIsActive()) || !trustedImageSource) result[key] = '';
       else result[key] = `/api/remote-image?src=${encodeURIComponent(normalizedSource)}${isVideoThumbnail ? `&video_id=${encodeURIComponent(videoId)}` : ''}`;
     } else result[key] = localizeCachedImages(item);
   }
@@ -2126,6 +2416,13 @@ function localizeCachedImages(value) {
       result.metadataStatus = metadata.status || 'pending';
       result.metadataPhase = metadata.phase || 'queued';
       result.metadataMessage = metadata.message || 'Preparing local metadata for this media.';
+    }
+    const external = externalMediaPublicById.get(videoId);
+    if (external) {
+      result.sourceProvider = external.provider;
+      result.sourceId = external.sourceId;
+      result.sourceUrl = external.sourceUrl;
+      result.sourceIssues = external.issues;
     }
   }
   return result;
@@ -2145,7 +2442,13 @@ for (const row of database.prepare(`SELECT v.video_id AS id, v.thumbnail FROM vi
 function isAllowedYoutubeImageSource(source) {
   try {
     const image = new URL(source);
-    return image.protocol === 'https:' && /(^|\.)(ytimg\.com|googleusercontent\.com|ggpht\.com|youtube\.com)$/i.test(image.hostname);
+    return image.protocol === 'https:' && /(^|\.)(ytimg\.com|googleusercontent\.com|ggpht\.com|youtube\.com|pbs\.twimg\.com|abs\.twimg\.com)$/i.test(image.hostname);
+  } catch { return false; }
+}
+function isAllowedXImageSource(source) {
+  try {
+    const image = new URL(source);
+    return image.protocol === 'https:' && /(^|\.)(pbs\.twimg\.com|abs\.twimg\.com)$/i.test(image.hostname);
   } catch { return false; }
 }
 const remoteImageInFlight = new Map();
@@ -2153,7 +2456,12 @@ const remoteImageRetryAfter = new Map();
 let remoteImageActive = 0;
 let remoteImageWaiting = 0;
 let remoteImageNextStartAt = 0;
-async function acquireRemoteImageSlot() {
+function deferRemoteImageRetry(source, retryMs, reason, status = 502) {
+  const retryAt = Date.now() + retryMs;
+  remoteImageRetryAfter.set(source, { retryAt, reason, status });
+  console.warn(`[remote-image] ${reason}; retry in ${Math.max(1, Math.ceil(retryMs / 1000))}s`);
+}
+async function acquireRemoteImageSlot(isXImage = false) {
   if (remoteImageWaiting >= 160) return false;
   remoteImageWaiting += 1;
   while (remoteImageActive >= 2) await waitForBackground(50);
@@ -2162,7 +2470,7 @@ async function acquireRemoteImageSlot() {
   const startAt = Math.max(Date.now(), remoteImageNextStartAt);
   remoteImageNextStartAt = startAt + 400;
   if (startAt > Date.now()) await waitForBackground(startAt - Date.now());
-  if (youtubeRateLimitIsActive()) {
+  if (!isXImage && youtubeRateLimitIsActive()) {
     remoteImageActive -= 1;
     return false;
   }
@@ -2171,15 +2479,22 @@ async function acquireRemoteImageSlot() {
 async function cacheRemoteImage(source) {
   if (!source || !/^https:\/\//i.test(source)) return false;
   if (existingCachedImage(source)) return true;
-  if (youtubeRateLimitIsActive() || !isAllowedYoutubeImageSource(source)) return false;
-  const retryAt = remoteImageRetryAfter.get(source) || 0;
-  if (retryAt > Date.now()) return false;
-  if (retryAt) remoteImageRetryAfter.delete(source);
+  const isXImage = isAllowedXImageSource(source);
+  if ((!isXImage && youtubeRateLimitIsActive()) || (!isXImage && !isAllowedYoutubeImageSource(source))) return false;
+  const retry = remoteImageRetryAfter.get(source);
+  if (retry?.retryAt > Date.now()) return false;
+  if (retry) remoteImageRetryAfter.delete(source);
   if (remoteImageInFlight.has(source)) return remoteImageInFlight.get(source);
   const pending = (async () => {
     let current;
     try { current = new URL(source); } catch { return false; }
-    if (!await acquireRemoteImageSlot()) return false;
+    if (!await acquireRemoteImageSlot(isXImage)) {
+      if (!remoteImageRetryAfter.has(source)) {
+        if (!isXImage && youtubeRateLimitIsActive()) deferRemoteImageRetry(source, Math.max(1_000, youtubeRateLimitUntil - Date.now()), 'YouTube image service rate limit is active', 503);
+        else deferRemoteImageRetry(source, 2_000, 'image fetch capacity is temporarily full', 503);
+      }
+      return false;
+    }
     try {
       let response;
       for (let redirects = 0; redirects <= 4; redirects += 1) {
@@ -2187,33 +2502,54 @@ async function cacheRemoteImage(source) {
         if (![301, 302, 303, 307, 308].includes(response.status)) break;
         const location = response.headers.get('location');
         await response.body?.cancel().catch(() => {});
-        if (!location || redirects === 4) return false;
+        if (!location || redirects === 4) {
+          deferRemoteImageRetry(source, 60_000, 'upstream image redirect was incomplete or exceeded four hops', 502);
+          return false;
+        }
         current = new URL(location, current);
-        if (!isAllowedYoutubeImageSource(current.href)) return false;
+        if (!isAllowedYoutubeImageSource(current.href) && !isAllowedXImageSource(current.href)) {
+          deferRemoteImageRetry(source, 60_000, `upstream image redirected to an unapproved host (${current.hostname})`, 502);
+          return false;
+        }
       }
       if (response.status === 429) {
         await response.body?.cancel().catch(() => {});
-        reportYouTubeRateLimit('YouTube’s image service returned HTTP 429 Too Many Requests.');
-        remoteImageRetryAfter.set(source, youtubeRateLimitUntil);
+        if (isXImage) {
+          const retrySeconds = Number(response.headers.get('retry-after'));
+          deferRemoteImageRetry(source, Number.isFinite(retrySeconds) && retrySeconds > 0 ? retrySeconds * 1000 : 15 * 60_000, `upstream image returned HTTP 429 for ${new URL(source).hostname}`, 503);
+        } else {
+          reportYouTubeRateLimit('YouTube’s image service returned HTTP 429 Too Many Requests.');
+          deferRemoteImageRetry(source, Math.max(1_000, youtubeRateLimitUntil - Date.now()), 'YouTube image service rate limit is active', 503);
+        }
         return false;
       }
       const contentType = response.headers.get('content-type')?.toLowerCase() || '';
       if (!response.ok || !contentType.startsWith('image/')) {
-        remoteImageRetryAfter.set(source, Date.now() + (response.status === 404 ? 6 * 60 * 60_000 : 60_000));
+        const reason = !response.ok
+          ? `upstream image returned HTTP ${response.status} for ${current.hostname}`
+          : `upstream returned non-image content (${contentType || 'unknown type'}) for ${current.hostname}`;
+        deferRemoteImageRetry(source, response.status === 404 ? 6 * 60 * 60_000 : 60_000, reason, response.status === 404 ? 404 : 502);
         return false;
       }
       const declaredSize = Number(response.headers.get('content-length')) || 0;
-      if (declaredSize > 8_000_000) return false;
+      if (declaredSize > 8_000_000) {
+        deferRemoteImageRetry(source, 60_000, `upstream image exceeded the 8 MB limit (${declaredSize} bytes)`, 502);
+        return false;
+      }
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (!bytes.length || bytes.length > 8_000_000) return false;
+      if (!bytes.length || bytes.length > 8_000_000) {
+        deferRemoteImageRetry(source, 60_000, !bytes.length ? 'upstream returned an empty image' : `upstream image exceeded the 8 MB limit (${bytes.length} bytes)`, 502);
+        return false;
+      }
       const key = imageKey(source);
       await writeFile(path.join(imageCacheDirectory, key), bytes);
       database.prepare('INSERT OR REPLACE INTO cached_images (image_key, source_url, content_type, cached_at) VALUES (?, ?, ?, ?)')
         .run(key, source, contentType.split(';')[0], new Date().toISOString());
       remoteImageRetryAfter.delete(source);
       return true;
-    } catch {
-      remoteImageRetryAfter.set(source, Date.now() + 60_000);
+    } catch (error) {
+      const message = String(error?.message || error || 'unknown network error').replace(/[\r\n]+/g, ' ').slice(0, 180);
+      deferRemoteImageRetry(source, 60_000, `image fetch failed: ${message}`, 502);
       return false;
     } finally {
       remoteImageActive = Math.max(0, remoteImageActive - 1);
@@ -2232,7 +2568,7 @@ function pauseRetryQueueForOffline() {
   }
 }
 
-function markDownloadPausedOffline(id) {
+function markDownloadPausedOffline(id, progress = 0) {
   const now = new Date().toISOString();
   const attempts = database.prepare('SELECT attempts FROM download_retry_queue WHERE video_id = ?').get(id)?.attempts || 0;
   const message = 'Paused for Offline mode. It will resume when Online.';
@@ -2240,7 +2576,7 @@ function markDownloadPausedOffline(id) {
     VALUES (?, ?, 'paused-offline', ?, ?, ?) ON CONFLICT(video_id) DO UPDATE SET
     status = 'paused-offline', next_retry_at = excluded.next_retry_at, last_error = excluded.last_error, updated_at = excluded.updated_at`)
     .run(id, attempts, now, message, now);
-  saveDownload(id, 'paused-offline', message, 0, 'Paused for Offline mode');
+  saveDownload(id, 'paused-offline', message, progress, 'Paused for Offline mode');
 }
 
 function queueCancelledDownloadForOnline(id) {
@@ -2264,6 +2600,63 @@ function markDownloadPausedByUser(id, progress, message = 'Paused by you. Choose
     last_error = excluded.last_error, updated_at = excluded.updated_at`)
     .run(id, attempts, now, message, now);
   saveDownload(id, 'paused', message, progress, 'Paused by you');
+}
+
+function preserveDownloadForShutdown(id, progress = 0) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const message = 'YourTube shut down during this download. Partial files were preserved and the download will resume after the server starts again.';
+  const attempts = database.prepare('SELECT attempts FROM download_retry_queue WHERE video_id = ?').get(id)?.attempts || 0;
+  database.prepare(`INSERT INTO download_retry_queue (video_id, attempts, status, next_retry_at, last_error, updated_at)
+    VALUES (?, ?, 'pending', ?, ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET status = 'pending', next_retry_at = excluded.next_retry_at,
+      last_error = excluded.last_error, updated_at = excluded.updated_at`)
+    .run(id, attempts, nowIso, message, nowIso);
+  saveDownload(id, 'error', message, progress, 'Will resume after restart');
+}
+
+function preserveFinishForShutdown(id, progress = 0) {
+  const now = new Date().toISOString();
+  const message = 'Could not finish and save this partial yet: YourTube shut down during finalization. The captured files are preserved and will resume after restart.';
+  const attempts = database.prepare('SELECT attempts FROM download_retry_queue WHERE video_id = ?').get(id)?.attempts || 0;
+  database.prepare(`INSERT INTO download_retry_queue (video_id, attempts, status, next_retry_at, last_error, updated_at)
+    VALUES (?, ?, 'paused', ?, ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET status = 'paused', next_retry_at = excluded.next_retry_at,
+      last_error = excluded.last_error, updated_at = excluded.updated_at`)
+    .run(id, attempts, now, message, now);
+  saveDownload(id, 'paused', message, progress, 'Will finish after restart');
+}
+
+function preserveLiveFinishForShutdown(id, progress = 0) {
+  const now = new Date().toISOString();
+  const message = 'Could not finish and save this live capture yet: YourTube shut down during finalization. The captured files are preserved and will be finalized after restart.';
+  const attempts = database.prepare('SELECT attempts FROM download_retry_queue WHERE video_id = ?').get(id)?.attempts || 0;
+  database.prepare(`INSERT INTO download_retry_queue (video_id, attempts, status, next_retry_at, last_error, updated_at)
+    VALUES (?, ?, 'paused', ?, ?, ?)
+    ON CONFLICT(video_id) DO UPDATE SET status = 'paused', next_retry_at = excluded.next_retry_at,
+      last_error = excluded.last_error, updated_at = excluded.updated_at`)
+    .run(id, attempts, now, message, now);
+  saveDownload(id, 'paused', message, progress, 'Waiting to finalize live capture after restart');
+}
+
+function preserveJobForShutdown(id, job) {
+  if (job.shutdownWasOfflinePaused || job.offlinePauseRequested) {
+    markDownloadPausedOffline(id, job.progress);
+    return;
+  }
+  if (job.shutdownWasUserPaused || job.pauseRequested) {
+    markDownloadPausedByUser(id, job.progress, 'Paused by you. YourTube stopped while the server was closing; choose Retry when you want to resume.');
+    return;
+  }
+  if (job.endRequested || job.finishRequested && job.isLive) {
+    preserveLiveFinishForShutdown(id, job.progress);
+    return;
+  }
+  if (job.finishRequested) {
+    preserveFinishForShutdown(id, job.progress);
+    return;
+  }
+  preserveDownloadForShutdown(id, job.progress);
 }
 
 function markFinishWaitingForOnline(id, progress) {
@@ -2313,7 +2706,7 @@ async function prepareOfflineCache({ backgroundOnly = false } = {}) {
     status: 'running', phase: backgroundOnly ? 'video lengths' : 'downloads', completed: 0, total: backgroundOnly ? 0 : jobs.size,
     message: backgroundOnly ? 'Resuming local preparation in the background…' : 'Waiting for active media downloads…'
   };
-  (async () => {
+  const task = (async () => {
     if (!backgroundOnly) {
       await waitForDownloadsBeforeOffline(runId);
       if (runId !== offlinePreparationRun) return;
@@ -2486,7 +2879,10 @@ async function prepareOfflineCache({ backgroundOnly = false } = {}) {
       offlinePreparation = { ...offlinePreparation, status: 'complete', message: `Offline mode ready with some unavailable items: ${error.message}` };
       saveOfflinePreparationCheckpoint(offlinePreparation);
     });
+  }).finally(() => {
+    if (offlinePreparationTask === task) offlinePreparationTask = null;
   });
+  offlinePreparationTask = task;
 }
 
 function saveDownload(id, status, message = '', progress = 0, stage = '') {
@@ -2606,6 +3002,7 @@ function sameMediaFileVersion(left, right) {
 }
 
 function scheduleMediaFolderScan(delay = 500) {
+  if (serverShuttingDown) return;
   clearTimeout(mediaFolderScanTimer);
   mediaFolderScanTimer = setTimeout(() => {
     mediaFolderScan().catch(error => console.warn('[media-folder] Scan failed:', error.message || error));
@@ -2646,7 +3043,7 @@ function ensureMediaFolderStub(id, now, kind = 'normal') {
 }
 
 async function importMediaFolderFile(id, filePath, observedStats, fingerprint, kind = 'normal') {
-  if (mediaFolderImports.has(id) || integrityVerificationJobs.has(id) || jobs.has(id) || downloadStartingIds.has(id) || isAcquisitionExcluded(id)) return;
+  if (serverShuttingDown || mediaFolderImports.has(id) || integrityVerificationJobs.has(id) || jobs.has(id) || downloadStartingIds.has(id) || isAcquisitionExcluded(id)) return;
   mediaFolderImports.add(id);
   try {
     const activeDownload = database.prepare("SELECT status FROM downloads WHERE video_id = ?").get(id);
@@ -2737,6 +3134,7 @@ async function importMediaFolderFile(id, filePath, observedStats, fingerprint, k
 }
 
 async function scanMediaFolderOnce() {
+  if (serverShuttingDown) return;
   clearInterruptedMediaImportRetries.run();
   let entries;
   try {
@@ -2793,6 +3191,7 @@ async function scanMediaFolderOnce() {
     WHERE d.origin = 'media-folder' AND d.status = 'paused' AND q.status = 'paused'`).all().map(row => row.id));
   let queuedImport = false;
   for (const [id, entry] of mediaEntries) {
+    if (serverShuttingDown) return;
     if (jobs.has(id) || downloadStartingIds.has(id) || mediaFolderImports.has(id) || mediaFolderImportJobs.has(id) || pausedMediaFolderImports.has(id)) continue;
     const info = await stat(entry.filePath).catch(() => null);
     if (!info || info.size <= 0) continue;
@@ -2869,7 +3268,9 @@ function mediaFolderScan() {
 }
 
 function attachMediaFolderWatcher() {
+  if (serverShuttingDown) return;
   const scheduleWatcherRetry = () => {
+    if (serverShuttingDown) return;
     if (mediaFolderWatcherRetryTimer) return;
     mediaFolderWatcherRetryTimer = setTimeout(() => {
       mediaFolderWatcherRetryTimer = null;
@@ -2917,6 +3318,7 @@ function attachMediaFolderWatcher() {
 }
 
 function handleMediaFolderChange() {
+  if (serverShuttingDown) return;
   attachMediaFolderWatcher();
   mediaFolderScan().catch(error => console.warn('[media-folder] Scan failed:', error.message || error));
 }
@@ -2948,12 +3350,41 @@ function mediaFolderStatus() {
   };
 }
 
-function markFreshMediaAcquisition(id) {
+async function recordMediaAcquisitionEvent(id) {
+  try {
+    const filePath = getStoredMediaPath(id);
+    if (!filePath) return;
+    const file = await stat(filePath);
+    if (!file.isFile()) return;
+    const saved = database.prepare(`SELECT integrity_checksum AS checksum FROM downloads
+      WHERE video_id = ? AND status = 'ready'`).get(id);
+    const video = database.prepare('SELECT kind FROM videos WHERE video_id = ?').get(id);
+    if (!saved || !video) return;
+    const checksum = String(saved.checksum || '');
+    const fileIdentity = createHash('sha256')
+      .update(`${id}\u0000${checksum}\u0000${file.size}\u0000${file.mtimeMs.toFixed(3)}`)
+      .digest('hex');
+    if (database.prepare('SELECT 1 FROM media_acquisition_events WHERE file_identity = ?').get(fileIdentity)) return;
+    const previousAcquisitions = database.prepare('SELECT COUNT(*) AS total FROM media_acquisition_events WHERE video_id = ?').get(id).total;
+    const source = externalMediaSource(id);
+    const result = database.prepare(`INSERT OR IGNORE INTO media_acquisition_events
+      (video_id, provider, kind, file_size_bytes, file_checksum, file_mtime_ms, file_identity, is_redownload, acquired_at, method)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'yt-dlp')`)
+      .run(id, source?.provider || 'youtube', video.kind === 'short' ? 'short' : 'video', file.size,
+        checksum, file.mtimeMs, fileIdentity, previousAcquisitions > 0 ? 1 : 0, new Date().toISOString());
+    if (result.changes) invalidateHistoryOverviewCache();
+  } catch (error) {
+    console.warn(`[acquisition-history] Could not record completed media ${id}:`, error.message || error);
+  }
+}
+
+async function markFreshMediaAcquisition(id) {
   const acquiredAt = new Date().toISOString();
   const expiresAt = autoDeleteEnabled ? expiryFromAcquisition(acquiredAt) : '';
   try {
     database.prepare(`UPDATE downloads SET acquired_at = ?, expires_at = ?, expiry_paused_ms = NULL
       WHERE video_id = ? AND status = 'ready'`).run(acquiredAt, expiresAt, id);
+    await recordMediaAcquisitionEvent(id);
   } catch (error) { console.warn(`[downloads] Could not refresh acquisition time for ${id}:`, error.message || error); }
 }
 
@@ -3000,6 +3431,7 @@ function getDownload(id) {
   const job = jobs.get(id) || mediaFolderImportJobs.get(id);
   return result ? {
     ...result,
+    externalSource: externalMediaSource(id),
     youtubeCooldownUntil: getEnforcedYoutubeDownloadCooldownUntil(),
     mediaExtension: getStoredMediaExtension(id),
     integrityChecking: Boolean(job?.integrityChecking),
@@ -3038,20 +3470,25 @@ function startYoutubeDownloadCooldown() {
   database.prepare(`INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`)
     .run(youtubeCooldownKey, cooldownUntil, updatedAt);
-  const queued = database.prepare("SELECT video_id AS id FROM download_retry_queue WHERE status IN ('pending', 'waiting-live')").all();
-  database.prepare("UPDATE download_retry_queue SET status = 'paused-limit', updated_at = ? WHERE status IN ('pending', 'waiting-live')").run(updatedAt);
+  const queued = database.prepare(`SELECT video_id AS id FROM download_retry_queue
+    WHERE status IN ('pending', 'waiting-live')
+      AND video_id NOT IN (SELECT video_id FROM external_media_sources)`).all();
+  database.prepare(`UPDATE download_retry_queue SET status = 'paused-limit', updated_at = ?
+    WHERE status IN ('pending', 'waiting-live')
+      AND video_id NOT IN (SELECT video_id FROM external_media_sources)`).run(updatedAt);
   const updatePaused = database.prepare("UPDATE downloads SET status = 'paused', message = ?, stage = 'Paused while YouTube cools down', updated_at = ? WHERE video_id = ? AND status <> 'ready'");
   for (const { id } of queued) updatePaused.run(message, updatedAt, id);
 }
 
-function explainDownloadFailure(rawMessage) {
+function explainDownloadFailure(rawMessage, { external = false } = {}) {
+  const source = external ? 'X' : 'YouTube';
   const raw = String(rawMessage || '').replace(/https?:\/\/\S+/g, '').trim();
   const normalized = raw.replace(/^ERROR:\s*/i, '');
-  if (/this video requires payment to watch|requires a payment|paid content|purchase this video|members[- ]only|only available to (?:paid )?members|requires (?:a )?(?:youtube )?premium|available only with (?:youtube )?premium|included with (?:youtube )?premium/i.test(raw)) {
+  if (!external && /this video requires payment to watch|requires a payment|paid content|purchase this video|members[- ]only|only available to (?:paid )?members|requires (?:a )?(?:youtube )?premium|available only with (?:youtube )?premium|included with (?:youtube )?premium/i.test(raw)) {
     return { retryable: false, acquisitionExclusionReason: 'paid-content', message: 'YouTube marks this as paid content; YourTube removed it from acquisition.' };
   }
   if (/requested format is not available|requested format not available|no video formats found|did not offer a compatible (?:webm|mp4) format/i.test(raw)) {
-    return { retryable: false, message: 'YouTube did not offer a compatible WebM or MP4 format for this video. The download is paused because repeating the same format request will not help. Choose Retry later if YouTube makes another format available.' };
+    return { retryable: false, message: `${source} did not offer a compatible media format. The download is paused because repeating the same format request will not help. Choose Retry later if another format becomes available.` };
   }
   if (/yt-dlp (?:is )?not installed|not available on PATH|ENOENT|could not start yt-dlp/i.test(raw)) {
     return { retryable: false, message: 'YourTube could not find yt-dlp. Install it or add it to the server PATH, restart YourTube, then choose Retry.' };
@@ -3066,22 +3503,22 @@ function explainDownloadFailure(rawMessage) {
     return { retryable: false, message: 'YourTube cannot write this video to its media folder. Check the folder permissions, then choose Retry.' };
   }
   if (/private video|video unavailable|has been removed|video has been deleted|this video is unavailable/i.test(raw)) {
-    return { retryable: false, message: 'YouTube reports that this video is private, removed, or unavailable. Check that it can still be viewed, then choose Retry.' };
+    return { retryable: false, message: `${source} reports that this media is private, removed, or unavailable. Check that it can still be viewed, then choose Retry.` };
   }
-  if (/members-only|members only|age-restricted|age restricted|sign in to view this video|confirm your age/i.test(raw)) {
+  if (!external && /members-only|members only|age-restricted|age restricted|sign in to view this video|confirm your age/i.test(raw)) {
     return { retryable: false, message: 'YouTube limits this video to signed-in or age-verified viewers. YourTube does not use browser sign-in credentials; this video needs to be publicly available to the downloader.' };
   }
   if (/sign in to confirm|requires a signed-in session|signed-in session is required/i.test(raw)) {
-    return { retryable: true, message: 'YouTube requires sign-in for this video. YourTube keeps browser credentials out of the download backend.' };
+    return { retryable: true, message: `${source} requires sign-in for this media. YourTube keeps browser credentials out of the download backend.` };
   }
   if (/429|too many requests|rate.?limit|HTTP Error 503/i.test(raw)) {
-    return { retryable: true, message: 'YouTube is temporarily limiting download requests. YourTube will wait longer between retries.' };
+    return { retryable: true, message: `${source} is temporarily limiting media requests. YourTube will wait longer between retries.` };
   }
   if (/HTTP Error 403|forbidden/i.test(raw)) {
-    return { retryable: true, message: 'YouTube refused this download request. The restriction may be temporary; YourTube will retry with increasing delays.' };
+    return { retryable: true, message: `${source} refused this media request. The restriction may be temporary; YourTube will retry with increasing delays.` };
   }
   if (/timed? ?out|network is unreachable|could not resolve|temporary failure in name resolution|connection (?:reset|refused|closed)|TLS|SSL|network.*(?:error|unavailable)/i.test(raw)) {
-    return { retryable: true, message: 'The connection to YouTube was interrupted. YourTube will retry automatically when the connection is available.' };
+    return { retryable: true, message: `The connection to ${source} was interrupted. YourTube will retry automatically when the connection is available.` };
   }
   if (/no WebM file was produced/i.test(raw)) {
     return { retryable: false, message: 'yt-dlp finished without creating a playable WebM file. Check that ffmpeg is installed and that this video has a supported format, then choose Retry.' };
@@ -3096,22 +3533,23 @@ function explainDownloadFailure(rawMessage) {
 }
 
 function recordDownloadFailure(id, message) {
+  const external = Boolean(externalMediaSource(id));
   const previous = database.prepare('SELECT attempts FROM download_retry_queue WHERE video_id = ?').get(id);
   const attempts = (previous?.attempts || 0) + 1;
   const now = new Date();
   const requiresSignIn = /sign in to confirm (?:you(?:'|’)re|you are) not a bot|requires a signed-in session|signed-in session is required/i.test(String(message || ''));
-  const requiresProtectionPause = requiresSignIn && downloadProtectionMode !== 'off';
-  const explanation = explainDownloadFailure(message);
+  const requiresYoutubeSignInPause = !external && requiresSignIn && downloadProtectionMode !== 'off';
+  const explanation = explainDownloadFailure(message, { external });
   const permanentFailure = !explanation.retryable;
-  const paused = attempts >= maxDownloadAttempts || requiresProtectionPause || permanentFailure;
+  const paused = attempts >= maxDownloadAttempts || requiresYoutubeSignInPause || permanentFailure;
   const pausedOffline = !paused && (offlinePreparationRequested || networkMode === 'offline');
   const nextRetryAt = new Date(now.getTime() + retryDelayForAttempt(attempts)).toISOString();
   const storedMessage = requiresSignIn
-    ? requiresProtectionPause
+    ? requiresYoutubeSignInPause
       ? 'YouTube requires a signed-in session for this video. YourTube keeps browser credentials out of the download backend, so automatic retries are paused.'
       : attempts >= maxDownloadAttempts
-      ? `Paused after ${maxDownloadAttempts} attempts. YouTube asked for sign-in; YourTube keeps browser credentials out of the download backend. Choose Retry to try again later.`
-      : 'YouTube asked for sign-in. YourTube does not pass browser credentials to the downloader; this item remains queued for its scheduled retry.'
+      ? `Paused after ${maxDownloadAttempts} attempts. ${external ? 'X' : 'YouTube'} asked for sign-in; YourTube keeps browser credentials out of the download backend. Choose Retry to try again later.`
+      : `${external ? 'X' : 'YouTube'} asked for sign-in. YourTube does not pass browser credentials to the downloader; this item remains queued for its scheduled retry.`
     : permanentFailure
     ? explanation.message
     : attempts >= maxDownloadAttempts
@@ -3125,7 +3563,7 @@ function recordDownloadFailure(id, message) {
     status = excluded.status, next_retry_at = excluded.next_retry_at, last_error = excluded.last_error, updated_at = excluded.updated_at`)
     .run(id, attempts, paused ? 'paused' : pausedOffline ? 'paused-offline' : 'pending', nextRetryAt, storedMessage, now.toISOString());
   if (explanation.acquisitionExclusionReason) excludeAcquisitionVideo(id, explanation.acquisitionExclusionReason);
-  if (requiresSignIn && downloadProtectionMode !== 'off') startYoutubeDownloadCooldown();
+  if (!external && requiresSignIn && downloadProtectionMode !== 'off') startYoutubeDownloadCooldown();
 }
 
 async function recordMediaIntegrityFailure(id, error, { paused = false, progress = 0 } = {}) {
@@ -3150,6 +3588,7 @@ async function recordMediaIntegrityFailure(id, error, { paused = false, progress
 let playlistDownloadQueueRunning = false;
 
 async function runPlaylistDownloadQueue() {
+  if (serverShuttingDown) return false;
   if (playlistDownloadQueueRunning) return false;
   playlistDownloadQueueRunning = true;
   try {
@@ -3190,6 +3629,7 @@ async function runPlaylistDownloadQueue() {
       .run(now, now, id);
     try {
       const result = await beginDownload(id);
+      if (serverShuttingDown) return true;
       database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
       if (!result) {
         database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = 'Video stub is no longer available.', updated_at = ? WHERE video_id = ?")
@@ -3199,6 +3639,7 @@ async function runPlaylistDownloadQueue() {
       }
       return true;
     } catch (error) {
+      if (serverShuttingDown) return true;
       database.prepare('DELETE FROM playlist_download_queue WHERE video_id = ?').run(id);
       recordDownloadFailure(id, error.message);
       return true;
@@ -3227,6 +3668,7 @@ function handoffRetryToLocalIntegrity(id) {
 }
 
 async function runDownloadRetries() {
+  if (serverShuttingDown) return;
   // Local integrity recovery is independent of network mode and YouTube's
   // cooldown. Reconcile any present files before evaluating download retries.
   const retryCandidates = database.prepare(`SELECT q.video_id AS id FROM download_retry_queue q
@@ -3238,8 +3680,22 @@ async function runDownloadRetries() {
   if (networkMode === 'offline' || offlinePreparationRequested) return;
   const cooldownUntil = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
   const protectionsActive = areDownloadProtectionsActive();
-  if (protectionsActive && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()) return;
-  if (protectionsActive && Number.isFinite(cooldownUntil)) {
+  const youtubeCooldownActive = protectionsActive && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now();
+  if (youtubeCooldownActive) {
+    const now = new Date().toISOString();
+    database.prepare(`UPDATE download_retry_queue SET status = 'pending', updated_at = ?
+      WHERE status = 'paused-limit' AND video_id IN (SELECT video_id FROM external_media_sources)`).run(now);
+    database.prepare(`UPDATE downloads SET status = 'error', message = 'X acquisition is independent of the YouTube cooldown. Waiting for its scheduled retry.',
+      stage = 'Waiting to retry', updated_at = ? WHERE video_id IN (SELECT video_id FROM external_media_sources)
+      AND stage = 'Paused while YouTube cools down' AND status <> 'ready'`).run(now);
+  }
+  const dueExternalExists = youtubeCooldownActive && Boolean(database.prepare(`SELECT 1 FROM download_retry_queue q
+    JOIN external_media_sources x ON x.video_id = q.video_id
+    WHERE q.status IN ('pending', 'waiting-live') AND q.next_retry_at <= ? LIMIT 1`).get(new Date().toISOString()));
+  if (youtubeCooldownActive && !dueExternalExists) return;
+  // Do not clear an active YouTube cooldown just because an independent X
+  // item is eligible. Release held jobs only after the stored deadline passes.
+  if (protectionsActive && Number.isFinite(cooldownUntil) && cooldownUntil <= Date.now()) {
     const now = new Date().toISOString();
     database.prepare("UPDATE download_retry_queue SET status = 'pending', updated_at = ? WHERE status = 'paused-limit'").run(now);
     database.prepare("UPDATE downloads SET status = 'error', message = 'Cooldown ended. Waiting for the next retry.', stage = 'Waiting to retry', updated_at = ? WHERE stage = 'Paused while YouTube cools down'").run(now);
@@ -3248,15 +3704,17 @@ async function runDownloadRetries() {
   // Playlist batches advance one item at a time and wait for any active media
   // transfer to finish. They remain inside the existing persistent retry queue.
   if (protectionsActive && jobs.size) return;
-  if (!jobs.size && await runPlaylistDownloadQueue()) return;
+  if (!jobs.size && !youtubeCooldownActive && await runPlaylistDownloadQueue()) return;
   const now = new Date().toISOString();
   const due = database.prepare(`SELECT video_id AS id FROM download_retry_queue
     WHERE status IN ('pending', 'waiting-live') AND next_retry_at <= ?
       AND video_id NOT IN (SELECT video_id FROM playlist_download_queue)
+      AND (? = 0 OR EXISTS (SELECT 1 FROM external_media_sources x WHERE x.video_id = download_retry_queue.video_id))
       AND NOT EXISTS (SELECT 1 FROM downloads d WHERE d.video_id = download_retry_queue.video_id
         AND d.origin = 'media-folder' AND d.status = 'error' AND d.stage = 'Waiting for media-folder scan')
-    ORDER BY next_retry_at LIMIT ${protectionsActive ? 1 : 3}`).all(now);
+    ORDER BY next_retry_at LIMIT ${protectionsActive ? 1 : 3}`).all(now, youtubeCooldownActive ? 1 : 0);
   for (const { id } of due) {
+    if (serverShuttingDown) return;
     if (jobs.has(id)) continue;
     // A retry row can survive a server interruption even when the final media
     // file is already on disk. Hand it to local integrity work before marking
@@ -3265,8 +3723,10 @@ async function runDownloadRetries() {
     database.prepare("UPDATE download_retry_queue SET status = 'running', updated_at = ? WHERE video_id = ? AND status IN ('pending', 'waiting-live')").run(now, id);
     try {
       const result = await beginDownload(id);
+      if (serverShuttingDown) return;
       if (!result) database.prepare("UPDATE download_retry_queue SET status = 'exhausted', last_error = 'Video stub is no longer available.', updated_at = ? WHERE video_id = ?").run(new Date().toISOString(), id);
     } catch (error) {
+      if (serverShuttingDown) return;
       recordDownloadFailure(id, error.message);
     }
   }
@@ -3314,6 +3774,7 @@ function saveComments(id, status, comments = [], message = '') {
     ON CONFLICT(video_id) DO UPDATE SET status = excluded.status, comments_json = excluded.comments_json,
       message = excluded.message, updated_at = excluded.updated_at
   `).run(id, status, JSON.stringify(comments), message, new Date().toISOString());
+  invalidateHistoryOverviewCache();
   if (status === 'ready' && comments.length > 0 && !String(message).includes(commentSnapshotVersion)) {
     const now = new Date().toISOString();
     database.prepare(`INSERT OR IGNORE INTO comment_backfill_queue
@@ -3527,6 +3988,7 @@ function saveLocalVideoMetadataSnapshot(id, localAssets = []) {
   database.prepare(`INSERT INTO video_metadata (video_id, metadata_json, local_assets_json, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT(video_id) DO UPDATE SET metadata_json = excluded.metadata_json, local_assets_json = excluded.local_assets_json, updated_at = excluded.updated_at`)
     .run(id, JSON.stringify({ ...metadata, ...video }), JSON.stringify(localAssets), updatedAt);
+  invalidateHistoryOverviewCache();
 }
 
 function saveVideoChannel(id, info) {
@@ -3644,7 +4106,7 @@ function lookupVideoDuration(id, url) {
   return new Promise(resolve => {
     database.prepare("UPDATE videos SET duration = '' WHERE video_id = ? AND upper(trim(duration)) = 'UPCOMING'").run(id);
     setDurationLookup(id, 'running');
-    const child = spawn(process.env.YT_DLP_PATH || 'yt-dlp', [
+    const child = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', [
       '--ignore-config', '--no-cookies', '--no-playlist', '--no-color', '--no-warnings',
       '--skip-download', '--dump-single-json', url
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -3706,7 +4168,7 @@ function probeLocalDuration(id) {
   return new Promise(resolve => {
     const filePath = getStoredMediaPath(id);
     if (!filePath) { resolve(''); return; }
-    const probe = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
+    const probe = spawnTracked(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath
     ], { stdio: ['ignore', 'pipe', 'ignore'] });
     let output = '';
@@ -3735,7 +4197,7 @@ let backgroundDurationLookupCooldownUntil = 0;
 
 function scheduleBackgroundDurationLookup(currentVideoId = '') {
   const now = Date.now();
-  if (backgroundDurationLookupRunning || downloadedMetadataWorkerRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' || jobs.size || commentJobs.size) return;
+  if (serverShuttingDown || backgroundDurationLookupRunning || downloadedMetadataWorkerRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' || jobs.size || commentJobs.size) return;
   if (now - lastBackgroundDurationLookupAt < backgroundDurationLookupIntervalMs || now < backgroundDurationLookupCooldownUntil) return;
   const youtubeCooldown = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
   if (Number.isFinite(youtubeCooldown) && youtubeCooldown > now) return;
@@ -3787,12 +4249,12 @@ function scheduleBackgroundDurationLookup(currentVideoId = '') {
 }
 
 function beginChannelLookup(id) {
-  if (channelLookups.get(id)?.status === 'loading' || commentJobs.has(id)) return;
+  if (serverShuttingDown || channelLookups.get(id)?.status === 'loading' || commentJobs.has(id)) return;
   const video = database.prepare('SELECT url, channel FROM videos WHERE video_id = ?').get(id);
   if (!video || video.channel.trim()) return;
   const lookup = { status: 'loading' };
   channelLookups.set(id, lookup);
-  const child = spawn(process.env.YT_DLP_PATH || 'yt-dlp', [
+  const child = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', [
     '--ignore-config', '--no-cookies', '--no-color', '--no-warnings', '--skip-download', '--dump-single-json', video.url
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -3833,7 +4295,7 @@ function beginChannelLookup(id) {
 }
 
 function beginComments(id, { preserveExisting = false, refreshThreadStructure = false, backfill = false } = {}) {
-  if (commentJobs.has(id)) return;
+  if (serverShuttingDown || commentJobs.has(id)) return;
   const video = database.prepare('SELECT url FROM videos WHERE video_id = ?').get(id);
   if (!video) {
     if (backfill) updateCommentBackfill(id, 'skipped', 'The video stub no longer exists.');
@@ -3861,7 +4323,7 @@ function beginComments(id, { preserveExisting = false, refreshThreadStructure = 
     '--skip-download', '--write-comments', '--dump-single-json',
     '--extractor-args', `youtube:comment_sort=top;max_comments=${commentSnapshotLimit},${commentSnapshotLimit},${commentSnapshotLimit},${commentSnapshotLimit},all`, video.url
   ];
-  const child = spawn(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   commentJobs.set(id, child);
   let output = '';
   let stderr = '';
@@ -3962,7 +4424,7 @@ function seedCommentBackfillQueue() {
 seedCommentBackfillQueue();
 
 function runCommentBackfillQueue() {
-  if (commentBackfillWorkerRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' ||
+  if (serverShuttingDown || commentBackfillWorkerRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' ||
       connectivityStatus.available !== true || youtubeRateLimitIsActive()) return;
   const availableSlots = commentBackfillConcurrency() - commentJobs.size;
   if (availableSlots <= 0) return;
@@ -3979,6 +4441,7 @@ function runCommentBackfillQueue() {
   let started = 0;
   try {
     for (const item of items) {
+      if (serverShuttingDown) break;
       if (started >= availableSlots) break;
       if (commentJobs.has(item.id)) continue;
       if (String(item.commentsMessage || '').includes(commentSnapshotVersion)) {
@@ -4042,10 +4505,11 @@ function commentsForMetadata(id) {
 
 function metadataThumbnailCandidates(video) {
   const id = String(video?.id || video?.video_id || '');
+  const isExternal = Boolean(externalMediaSource(id));
   let storedMetadata = {};
   try { storedMetadata = JSON.parse(database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value || '{}'); } catch {}
   const variants = Array.isArray(storedMetadata.thumbnails) ? storedMetadata.thumbnails.map(item => item?.url) : [];
-  const defaults = /^[A-Za-z0-9_-]{11}$/.test(id)
+  const defaults = !isExternal && /^[A-Za-z0-9_-]{11}$/.test(id)
     ? [`https://i.ytimg.com/vi/${id}/hqdefault.jpg`, `https://i.ytimg.com/vi/${id}/mqdefault.jpg`, `https://i.ytimg.com/vi/${id}/sddefault.jpg`]
     : [];
   return [...new Set([video?.thumbnail, storedMetadata.thumbnail, ...variants, ...defaults].filter(value => typeof value === 'string' && value.startsWith('https://')))];
@@ -4088,22 +4552,23 @@ function downloadedMetadataGaps(id) {
   const video = database.prepare(`SELECT video_id AS id, title, channel, channel_key AS channelKey, thumbnail, avatar, duration
     FROM videos WHERE video_id = ?`).get(id);
   if (!video) return ['video metadata row is missing'];
+  const external = externalMediaSource(id);
   const gaps = [];
-  if (!String(video.title || '').trim()) gaps.push('title');
-  if (!String(video.channel || '').trim() || /^(youtube|channel unavailable)$/i.test(String(video.channel).trim())) gaps.push('channel name');
+  if (!external && !String(video.title || '').trim()) gaps.push('title');
+  if (!external && (!String(video.channel || '').trim() || /^(youtube|channel unavailable)$/i.test(String(video.channel).trim()))) gaps.push('channel name');
   const duration = String(video.duration || '').trim();
-  if (!duration || /^(LIVE|UPCOMING)$/i.test(duration)) gaps.push('video length');
+  if (!external && (!duration || /^(LIVE|UPCOMING)$/i.test(duration))) gaps.push('video length');
   const comments = commentsForMetadata(id);
-  if (!comments || comments.status !== 'ready') gaps.push('comments');
+  if (!external && (!comments || comments.status !== 'ready')) gaps.push('comments');
   let thumbnailAsset = existingVideoThumbnail(id);
   if (!thumbnailAsset) {
     const source = metadataThumbnailCandidates(video).find(candidate => existingCachedImage(candidate));
     if (source) thumbnailAsset = rememberVideoThumbnail(id, source);
   }
-  if (!thumbnailAsset) gaps.push('thumbnail');
+  if (!thumbnailAsset && !external) gaps.push('thumbnail');
   const commentImages = comments?.comments?.map(comment => comment.authorThumbnail).filter(Boolean) || [];
   for (const source of [video.avatar, ...commentImages].filter(Boolean)) {
-    if (!existingCachedImage(source)) gaps.push(source === video.avatar ? 'channel avatar' : 'commenter avatar');
+    if (!external && !existingCachedImage(source)) gaps.push(source === video.avatar ? 'channel avatar' : 'commenter avatar');
   }
   let storedMetadata = {};
   let localAssets = [];
@@ -4159,14 +4624,23 @@ async function waitForComments(id, timeoutMs = 100_000) {
 }
 
 async function ensureDownloadedMetadata(id, reportPhase) {
+  const external = externalMediaSource(id);
   const mediaPath = getStoredMediaPath(id);
   if (!mediaPath) throw new Error('The downloaded media file is missing.');
   let video = database.prepare(`SELECT video_id AS id, url, title, channel, channel_key AS channelKey, channel_url AS channelUrl,
     thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
   if (!video) throw new Error('The video metadata row is missing.');
 
+  if (external && externalMetadataNeedsRefresh(id)) {
+    await reportPhase('source details', 'Reading X title, creator, and media details…');
+    const info = await readExternalMetadataJson(id);
+    if (!persistExternalInfoJson(id, info)) throw new Error('yt-dlp returned no usable X metadata; it will retry later.');
+    video = database.prepare(`SELECT video_id AS id, url, title, channel, channel_key AS channelKey, channel_url AS channelUrl,
+      thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
+  }
+
   const channelMissing = !String(video.channel || '').trim() || /^(youtube|channel unavailable)$/i.test(String(video.channel || '').trim());
-  if (channelMissing && networkMode === 'online' && !offlinePreparationRequested) {
+  if (!external && channelMissing && networkMode === 'online' && !offlinePreparationRequested) {
     queueExtensionMetadataCapture(id, 'The channel name is missing from local metadata.', { force: true });
     throw new Error('Channel name is missing; requesting rendered details from the signed-in YouTube page.');
   }
@@ -4177,16 +4651,20 @@ async function ensureDownloadedMetadata(id, reportPhase) {
     const localDuration = await probeLocalDuration(id) || formatDurationSeconds(playbackDuration);
     if (localDuration) {
       database.prepare(`UPDATE videos SET duration = ? WHERE video_id = ? AND (trim(duration) = '' OR upper(trim(duration)) IN ('LIVE', 'UPCOMING'))`).run(localDuration, id);
+    } else if (external) {
+      updateExternalMediaIssues(id, [externalIssue('duration-unavailable', 'Neither X page capture nor local media probing returned a duration.', 'Media integrity is still verified before saving; playback remains available without a duration label.')]);
     }
   }
 
-  await reportPhase('comments', 'Storing comments and commenter details…');
   let comments = commentsForMetadata(id);
-  if (!comments || comments.status !== 'ready') {
-    if (!commentJobs.has(id)) beginComments(id);
-    comments = await waitForComments(id);
+  if (!external) {
+    await reportPhase('comments', 'Storing comments and commenter details…');
+    if (!comments || comments.status !== 'ready') {
+      if (!commentJobs.has(id)) beginComments(id);
+      comments = await waitForComments(id);
+    }
+    if (!comments || comments.status !== 'ready') throw new Error(comments?.message || 'Comments are not stored yet.');
   }
-  if (!comments || comments.status !== 'ready') throw new Error(comments?.message || 'Comments are not stored yet.');
 
   video = database.prepare(`SELECT video_id AS id, url, title, channel, channel_key AS channelKey, channel_url AS channelUrl,
     thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
@@ -4200,9 +4678,9 @@ async function ensureDownloadedMetadata(id, reportPhase) {
   }
   let storedMetadata = {};
   try { storedMetadata = JSON.parse(database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value || '{}'); } catch {}
-  const missingVideoDetails = !String(video.title || '').trim() || !String(video.channel || '').trim() ||
+  const missingVideoDetails = !external && (!String(video.title || '').trim() || !String(video.channel || '').trim() ||
     /^(youtube|channel unavailable)$/i.test(String(video.channel || '').trim()) || !video.thumbnail ||
-    !video.duration || /^(LIVE|UPCOMING)$/i.test(String(video.duration).trim());
+    !video.duration || /^(LIVE|UPCOMING)$/i.test(String(video.duration).trim()));
   if (missingVideoDetails && networkMode === 'online' && !offlinePreparationRequested) {
     await reportPhase('video details', 'Filling missing video details from yt-dlp…');
     const result = await lookupVideoDuration(id, video.url);
@@ -4212,22 +4690,30 @@ async function ensureDownloadedMetadata(id, reportPhase) {
       thumbnail, avatar, duration, meta, kind, section, topic FROM videos WHERE video_id = ?`).get(id);
   }
 
-  await reportPhase('thumbnails', 'Caching the video thumbnail and channel image…');
+  await reportPhase('thumbnails', external ? 'Saving captured X images…' : 'Caching the video thumbnail and channel image…');
   const thumbnailCandidates = metadataThumbnailCandidates(video);
   let localThumbnail = existingVideoThumbnail(id)?.sourceUrl || thumbnailCandidates.find(source => existingCachedImage(source)) || '';
   for (const source of thumbnailCandidates) {
     if (localThumbnail) break;
     if (await cacheRemoteImage(source)) localThumbnail = source;
   }
-  if (!localThumbnail) throw new Error('The video thumbnail could not be stored locally; it will retry later.');
-  rememberVideoThumbnail(id, localThumbnail);
-  if (video.thumbnail !== localThumbnail) database.prepare('UPDATE videos SET thumbnail = ? WHERE video_id = ?').run(localThumbnail, id);
+  if (!localThumbnail && !external) throw new Error('The video thumbnail could not be stored locally; it will retry later.');
+  if (localThumbnail) {
+    rememberVideoThumbnail(id, localThumbnail);
+    if (video.thumbnail !== localThumbnail) database.prepare('UPDATE videos SET thumbnail = ? WHERE video_id = ?').run(localThumbnail, id);
+  } else {
+    updateExternalMediaIssues(id, [externalIssue('thumbnail-cache-failed', 'No locally cached thumbnail is available for this X post.', 'The card uses YourTube’s placeholder; capture the post again when X exposes a stable thumbnail.')]);
+  }
 
-  const imageSources = [video.avatar, ...(comments.comments || []).map(comment => comment.authorThumbnail)].filter(Boolean);
-  const localAssets = [{ type: 'thumbnail', sourceUrl: localThumbnail, cacheKey: existingCachedImage(localThumbnail)?.key }];
+  const imageSources = [video.avatar, ...(comments?.comments || []).map(comment => comment.authorThumbnail)].filter(Boolean);
+  const localAssets = localThumbnail ? [{ type: 'thumbnail', sourceUrl: localThumbnail, cacheKey: existingCachedImage(localThumbnail)?.key }] : [];
   for (const source of [...new Set(imageSources)]) {
-    await reportPhase(source === video.avatar ? 'channel avatar' : 'comment avatars', source === video.avatar ? 'Caching the channel avatar…' : 'Caching commenter avatars…');
-    if (!await cacheRemoteImage(source)) throw new Error(`An image used by this video's comments or channel could not be stored locally; it will retry later.`);
+    await reportPhase(source === video.avatar ? 'channel avatar' : 'comment avatars', external ? 'Saving captured creator avatar…' : source === video.avatar ? 'Caching the channel avatar…' : 'Caching commenter avatars…');
+    if (!await cacheRemoteImage(source)) {
+      if (!external) throw new Error(`An image used by this video's comments or channel could not be stored locally; it will retry later.`);
+      updateExternalMediaIssues(id, [externalIssue('avatar-cache-failed', 'The captured X creator avatar could not be stored locally.', 'The video remains playable; capture the post again if the avatar should be refreshed.')]);
+      continue;
+    }
     localAssets.push({ type: source === video.avatar ? 'channel-avatar' : 'commenter-avatar', sourceUrl: source, cacheKey: existingCachedImage(source)?.key });
   }
   saveLocalVideoMetadataSnapshot(id, localAssets);
@@ -4236,16 +4722,22 @@ async function ensureDownloadedMetadata(id, reportPhase) {
 }
 
 async function runDownloadedMetadataQueue() {
-  if (downloadedMetadataWorkerRunning || backgroundDurationLookupRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' || jobs.size || commentJobs.size || [...channelLookups.values()].some(lookup => lookup.status === 'loading')) return;
+  if (serverShuttingDown || downloadedMetadataWorkerRunning || backgroundDurationLookupRunning || networkMode !== 'online' || offlinePreparationRequested || offlinePreparation.status === 'running' || jobs.size || commentJobs.size || [...channelLookups.values()].some(lookup => lookup.status === 'loading')) return;
   if (connectivityStatus.available === false) return;
   const cooldownUntil = Date.parse(database.prepare('SELECT setting_value AS value FROM app_settings WHERE setting_key = ?').get(youtubeCooldownKey)?.value || '');
-  if (areDownloadProtectionsActive() && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now()) return;
+  const youtubeCooldownActive = areDownloadProtectionsActive() && Number.isFinite(cooldownUntil) && cooldownUntil > Date.now();
+  const pendingExternal = youtubeCooldownActive && Boolean(database.prepare(`SELECT 1 FROM downloads d
+    JOIN external_media_sources x ON x.video_id = d.video_id LEFT JOIN download_metadata m ON m.video_id = d.video_id
+    WHERE d.status = 'ready' AND (m.video_id IS NULL OR m.status IN ('pending', 'retry'))
+      AND (COALESCE(m.next_attempt_at, '') = '' OR m.next_attempt_at <= ?) LIMIT 1`).get(new Date().toISOString()));
+  if (youtubeCooldownActive && !pendingExternal) return;
   const now = new Date().toISOString();
   const item = database.prepare(`SELECT d.video_id AS id, m.attempts
     FROM downloads d LEFT JOIN download_metadata m ON m.video_id = d.video_id
     WHERE d.status = 'ready' AND (m.video_id IS NULL OR m.status IN ('pending', 'retry'))
       AND (COALESCE(m.next_attempt_at, '') = '' OR m.next_attempt_at <= ?)
-    ORDER BY d.acquired_at ASC LIMIT 1`).get(now);
+    ORDER BY CASE WHEN EXISTS (SELECT 1 FROM external_media_sources x WHERE x.video_id = d.video_id) THEN 0 ELSE 1 END,
+      d.acquired_at ASC LIMIT 1`).get(now);
   if (!item) {
     downloadedMetadataWorkerRunning = true;
     try { await cacheNextViewedStubThumbnail(); }
@@ -4260,8 +4752,15 @@ async function runDownloadedMetadataQueue() {
   updateDownloadedMetadata(item.id, 'running', 'starting', 'Checking locally stored media metadata…', { attempts, nextAttemptAt: '' });
   try {
     await ensureDownloadedMetadata(item.id, reportPhase);
-    updateDownloadedMetadata(item.id, 'ready', 'complete', 'Video details, comments, and referenced images are stored locally.', { attempts: 0, nextAttemptAt: '' });
+    const message = externalMediaSource(item.id)
+      ? 'X source details and available images are stored locally. X replies are not captured by this flow.'
+      : 'Video details, comments, and referenced images are stored locally.';
+    updateDownloadedMetadata(item.id, 'ready', 'complete', message, { attempts: 0, nextAttemptAt: '' });
   } catch (error) {
+    if (serverShuttingDown) {
+      updateDownloadedMetadata(item.id, 'pending', 'queued', 'Metadata preparation paused during server shutdown; it will resume after restart.', { attempts, nextAttemptAt: '' });
+      return;
+    }
     const lookupStatus = database.prepare('SELECT status FROM video_duration_lookups WHERE video_id = ?').get(item.id)?.status;
     if (lookupStatus === 'extension' || lookupStatus === 'capturing' || lookupStatus === 'extension-retry') {
       updateDownloadedMetadata(item.id, 'waiting-extension', 'extension capture', 'Waiting for the extension to capture metadata from the signed-in browser page.', { attempts, nextAttemptAt: '' });
@@ -4275,11 +4774,12 @@ async function runDownloadedMetadataQueue() {
     console.warn(`[download-metadata] ${item.id}: ${error.message || 'metadata preparation failed'}`);
   } finally {
     downloadedMetadataWorkerRunning = false;
-    setTimeout(() => runDownloadedMetadataQueue().catch(error => console.error('Downloaded metadata preparation:', error)), 2500).unref();
+    if (!serverShuttingDown) setTimeout(() => runDownloadedMetadataQueue().catch(error => console.error('Downloaded metadata preparation:', error)), 2500).unref();
   }
 }
 
 async function beginDownload(id) {
+  if (serverShuttingDown) return { status: 'error', message: 'YourTube is shutting down. The download will resume after restart.' };
   if (mediaFolderImports.has(id)) return getDownload(id) || { status: 'importing', message: 'Checking the media file already present in the library folder.' };
   if (downloadStartingIds.has(id)) return { status: 'downloading', message: 'Preparing the local media destination.' };
   if (getStoredMediaPath(id)) {
@@ -4287,6 +4787,7 @@ async function beginDownload(id) {
     if (previousStatus !== 'ready' || !hasSavedIntegrityChecksum(id)) {
       try { await verifyLocalMediaIntegrity(id); }
       catch (error) {
+        if (serverShuttingDown) throw error;
         if (String(error.code || '').startsWith('INTEGRITY_') || ['MEDIA_INTEGRITY', 'MEDIA_MISSING'].includes(error.code)) {
           const message = await recordMediaIntegrityFailure(id, error);
           return getDownload(id) || { status: 'error', message };
@@ -4303,8 +4804,11 @@ async function beginDownload(id) {
   const video = database.prepare('SELECT url, duration FROM videos WHERE video_id = ?').get(id);
   if (!video) return null;
 
+  const external = Boolean(externalMediaSource(id));
   const allowMp4Fallback = hasFiniteVideoDuration(video.duration);
-  const format = ffmpegAvailable
+  const format = external
+    ? (ffmpegAvailable ? 'bestvideo+bestaudio/best' : 'best')
+    : ffmpegAvailable
     ? `bestvideo[ext=webm]+bestaudio[ext=webm]/best[ext=webm]${allowMp4Fallback ? '/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]' : ''}`
     : `best[ext=webm]${allowMp4Fallback ? '/best[ext=mp4]' : ''}`;
   downloadStartingIds.add(id);
@@ -4315,6 +4819,10 @@ async function beginDownload(id) {
     downloadStartingIds.delete(id);
     mediaFolderDeferredRechecks.delete(id);
     throw error;
+  }
+  if (serverShuttingDown) {
+    downloadStartingIds.delete(id);
+    return { status: 'error', message: 'YourTube is shutting down. The download will resume after restart.' };
   }
   if (jobs.has(id) || mediaFolderImports.has(id)) {
     downloadStartingIds.delete(id);
@@ -4336,16 +4844,30 @@ async function beginDownload(id) {
     scheduleMediaFolderScan(0);
     return { status: 'importing', message: 'A local copy appeared while the download was being prepared. Checking that file first.', stage: 'Queued for integrity check' };
   }
+  const outputTemplate = external ? path.join(outputDirectory, `${id}.%(ext)s`) : path.join(outputDirectory, '%(id)s.%(ext)s');
   const args = [
     '--ignore-config', '--no-cookies', '--no-playlist', '--no-color', '--newline', '--progress', '--progress-delta', '0.5',
     '--progress-template', 'download:YT_PROGRESS:%(progress._percent_str)s', '--format', format,
-    '--print', 'before_dl:YT_LIVE:%(live_status)s', '--merge-output-format', 'webm/mp4', '--output', path.join(outputDirectory, '%(id)s.%(ext)s'), video.url
+    '--print', 'before_dl:YT_LIVE:%(live_status)s',
+    ...(external ? [
+      '--print', 'before_dl:YT_EXTERNAL_ID:%(id)s',
+      ...[
+        ['TITLE', 'title'], ['UPLOADER', 'uploader'], ['CHANNEL', 'channel'], ['UPLOADER_ID', 'uploader_id'],
+        ['UPLOADER_URL', 'uploader_url'], ['THUMBNAIL', 'thumbnail'], ['CHANNEL_THUMBNAIL', 'channel_thumbnail'],
+        ['UPLOADER_THUMBNAIL', 'uploader_thumbnail'], ['DURATION', 'duration'], ['UPLOAD_DATE', 'upload_date'],
+        ['TIMESTAMP', 'timestamp'], ['DESCRIPTION', 'description'], ['VIEW_COUNT', 'view_count'],
+        ['LIKE_COUNT', 'like_count'], ['COMMENT_COUNT', 'comment_count'],
+        ['FOLLOWER_COUNT', 'channel_follower_count'], ['EXTRACTOR', 'extractor'], ['EXTRACTOR_KEY', 'extractor_key']
+      ].flatMap(([label, field]) => ['--print', `before_dl:YT_EXTERNAL_META:${label}:%(${field})j`]),
+      '--print', 'before_dl:YT_EXTERNAL_META_DONE:1'
+    ] : []),
+    '--merge-output-format', external ? 'mp4' : 'webm/mp4', '--output', outputTemplate, video.url
   ];
   let job;
   try {
     saveDownload(id, 'downloading', '', 0, 'Checking video formats…');
     const startedAt = database.prepare('SELECT started_at AS value FROM downloads WHERE video_id = ?').get(id)?.value || new Date().toISOString();
-    job = { status: 'downloading', progress: 0, stage: 'Checking video formats…', startedAt, transferStarted: false, offlinePauseRequested: false, pauseRequested: false, finishRequested: false, finishPhase: '', isLive: false, endRequested: false, discardRequested: false };
+    job = { status: 'downloading', progress: 0, stage: 'Checking video formats…', startedAt, transferStarted: false, offlinePauseRequested: false, pauseRequested: false, finishRequested: false, finishPhase: '', isLive: false, endRequested: false, discardRequested: false, shutdownRequested: false, externalMetadata: {}, externalMetadataPersisted: false };
     jobs.set(id, job);
   } catch (error) {
     downloadStartingIds.delete(id);
@@ -4353,7 +4875,7 @@ async function beginDownload(id) {
     throw error;
   }
   downloadStartingIds.delete(id);
-  const downloadProcess = spawn(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const downloadProcess = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   job.process = downloadProcess;
   let ytOutput = '';
   const progressBuffers = { stdout: '', stderr: '' };
@@ -4364,6 +4886,29 @@ async function beginDownload(id) {
       let stage = job.stage;
       let progress = job.progress;
       const cleanLine = line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+      const externalId = cleanLine.match(/YT_EXTERNAL_ID:([^\s]+)/i);
+      if (externalId && external) recordExternalExtractorId(id, externalId[1]);
+      const externalMeta = cleanLine.match(/^YT_EXTERNAL_META:([A-Z_]+):(.*)$/i);
+      if (externalMeta && external) {
+        const labels = {
+          TITLE: 'title', UPLOADER: 'uploader', CHANNEL: 'channel', UPLOADER_ID: 'uploaderId',
+          UPLOADER_URL: 'uploaderUrl', THUMBNAIL: 'thumbnail', CHANNEL_THUMBNAIL: 'avatar',
+          UPLOADER_THUMBNAIL: 'avatar', DURATION: 'duration', UPLOAD_DATE: 'uploadDate', TIMESTAMP: 'timestamp',
+          DESCRIPTION: 'description', VIEW_COUNT: 'viewCount', LIKE_COUNT: 'likeCount', COMMENT_COUNT: 'commentCount',
+          FOLLOWER_COUNT: 'followerCount', EXTRACTOR: 'extractor', EXTRACTOR_KEY: 'extractorKey'
+        };
+        const key = labels[externalMeta[1].toUpperCase()];
+        if (key) {
+          const raw = externalMeta[2].trim();
+          let value = raw;
+          try { value = JSON.parse(raw); } catch { if (raw === 'NA' || raw === 'null') value = ''; }
+          if (typeof value === 'string' && /^(?:NA|N\/A|none|null|undefined)$/i.test(value.trim())) value = '';
+          if (value !== '' && value !== null && value !== undefined && (key !== 'avatar' || !job.externalMetadata.avatar)) job.externalMetadata[key] = value;
+        }
+      }
+      if (external && /^YT_EXTERNAL_META_DONE:1$/.test(cleanLine) && !job.externalMetadataPersisted) {
+        job.externalMetadataPersisted = persistExternalDownloadMetadata(id, job.externalMetadata);
+      }
       const liveStatus = cleanLine.match(/YT_LIVE:(is_live|is_upcoming|was_live|post_live|not_live)/i);
       if (liveStatus && liveStatus[1].toLowerCase() === 'is_live') {
         job.isLive = true;
@@ -4408,6 +4953,11 @@ async function beginDownload(id) {
     consumeProgress('stderr', chunk);
   });
   downloadProcess.on('error', error => {
+    if (serverShuttingDown || job.shutdownRequested) {
+      preserveJobForShutdown(id, job);
+      releaseDownloadJob(id);
+      return;
+    }
     const message = error.code === 'ENOENT' ? 'yt-dlp is not installed or not available on PATH.' : 'Could not start yt-dlp.';
     saveDownload(id, 'error', message, 0, 'Could not start download');
     recordDownloadFailure(id, message);
@@ -4424,6 +4974,11 @@ async function beginDownload(id) {
     for (const stream of ['stdout', 'stderr']) {
       if (progressBuffers[stream]) consumeProgress(stream, '\n');
     }
+    if (serverShuttingDown || job.shutdownRequested) {
+      preserveJobForShutdown(id, job);
+      releaseDownloadJob(id);
+      return;
+    }
     if (job.finishRequested) {
       try {
         if (job.isLive) {
@@ -4436,9 +4991,10 @@ async function beginDownload(id) {
         }
         await verifyLocalMediaIntegrity(id, { downloadJob: job });
         saveDownload(id, 'ready', '', 100, 'Ready to play');
-        markFreshMediaAcquisition(id);
+        await markFreshMediaAcquisition(id);
       } catch (error) {
-        if (error.code === 'WAITING_FOR_ONLINE') markFinishWaitingForOnline(id, job.progress);
+        if (serverShuttingDown) preserveJobForShutdown(id, job);
+        else if (error.code === 'WAITING_FOR_ONLINE') markFinishWaitingForOnline(id, job.progress);
         else if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY') {
           await recordMediaIntegrityFailure(id, error, { progress: job.progress });
         }
@@ -4455,8 +5011,13 @@ async function beginDownload(id) {
         await finalizePartialWebm(id, { allowLongerAudio: true });
         await verifyLocalMediaIntegrity(id, { downloadJob: job });
         saveDownload(id, 'ready', '', 100, 'Ready to play');
-        markFreshMediaAcquisition(id);
+        await markFreshMediaAcquisition(id);
       } catch (error) {
+        if (serverShuttingDown) {
+          preserveJobForShutdown(id, job);
+          releaseDownloadJob(id);
+          return;
+        }
         if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY') {
           await recordMediaIntegrityFailure(id, error, { progress: job.progress });
           releaseDownloadJob(id);
@@ -4474,6 +5035,11 @@ async function beginDownload(id) {
           await verifyLocalMediaIntegrity(id, { downloadJob: job });
           saveDownload(id, 'ready', '', 100, 'Ready to play');
         } catch (error) {
+          if (serverShuttingDown) {
+            preserveJobForShutdown(id, job);
+            releaseDownloadJob(id);
+            return;
+          }
           await recordMediaIntegrityFailure(id, error, { paused: true, progress: job.progress });
         }
       } else {
@@ -4508,8 +5074,13 @@ async function beginDownload(id) {
       if (!getStoredMediaPath(id)) throw new Error('No complete local media file was created.');
       await verifyLocalMediaIntegrity(id, { downloadJob: job });
       saveDownload(id, 'ready', '', 100, 'Ready to play');
-      markFreshMediaAcquisition(id);
+      await markFreshMediaAcquisition(id);
     } catch (error) {
+      if (serverShuttingDown) {
+        preserveJobForShutdown(id, job);
+        releaseDownloadJob(id);
+        return;
+      }
       if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY' || error.code === 'MEDIA_MISSING') {
         await recordMediaIntegrityFailure(id, error, { progress: job.progress });
         releaseDownloadJob(id);
@@ -4518,16 +5089,19 @@ async function beginDownload(id) {
       const unsupported = /requested format is not available|no video formats found|requested format not available/i.test(ytOutput);
       const signInRequired = /sign in to confirm (?:you(?:'|’)re|you are) not a bot/i.test(ytOutput);
       const lastErrorLine = ytOutput.split(/\r?\n/).map(line => line.trim()).filter(line => /^ERROR:/i.test(line)).at(-1)?.replace(/https?:\/\/\S+/g, '[URL]');
-      if (/HTTP Error 429|too many requests|rate.?limit/i.test(ytOutput)) {
+      if (!external && /HTTP Error 429|too many requests|rate.?limit/i.test(ytOutput)) {
         reportYouTubeRateLimit('YouTube returned HTTP 429 Too Many Requests during a media download.');
       }
-      const message = signInRequired
+      const xRateLimited = external && /HTTP Error 429|too many requests|rate.?limit/i.test(ytOutput);
+      const message = signInRequired && !external
         ? 'YouTube requires a signed-in session for this video. YourTube keeps browser credentials out of the download backend, so automatic retries are paused.'
+        : xRateLimited
+          ? 'X rate-limited the media request. YourTube will retry it using the scheduled backoff.'
         : unsupported
-        ? 'YouTube did not offer a compatible WebM or MP4 format for this video.'
+        ? `${external ? 'The source' : 'YouTube'} did not offer a compatible media format for this video.`
         : code === 0
           ? 'yt-dlp finished, but no playable WebM or MP4 file was produced.'
-          : lastErrorLine || 'This video could not be acquired as a local WebM or MP4. It may be unavailable or require unsupported access.';
+          : lastErrorLine || `This ${external ? 'X media' : 'video'} could not be acquired as a local playable file. It may be unavailable or require unsupported access.`;
       saveDownload(id, 'error', message, job.progress, 'Download failed');
       recordDownloadFailure(id, message);
     }
@@ -4641,7 +5215,7 @@ async function finalizePartialWebm(id, { allowLongerAudio = false, requireAudioT
   if (!candidates.length) throw finalizeError('NO_MEDIA', 'No partial WebM media files were found.');
 
   const inspectStreams = filePath => new Promise((resolve, reject) => {
-    const probe = spawn(process.env.FFPROBE_PATH || 'ffprobe', [
+    const probe = spawnTracked(process.env.FFPROBE_PATH || 'ffprobe', [
       '-v', 'error', '-show_entries', 'stream=codec_type,duration:format=duration', '-of', 'json', filePath
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -4731,7 +5305,7 @@ async function finalizePartialWebm(id, { allowLongerAudio = false, requireAudioT
   args.push('-c', 'copy', '-shortest', '-f', 'webm', temporaryPath);
   try {
     await new Promise((resolve, reject) => {
-      const ffmpeg = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args, { stdio: 'ignore' });
+      const ffmpeg = spawnTracked(process.env.FFMPEG_PATH || 'ffmpeg', args, { stdio: 'ignore' });
       ffmpeg.once('error', error => reject(new Error(error.code === 'ENOENT' ? 'ffmpeg is unavailable to combine the partial tracks.' : 'Could not start ffmpeg to combine the partial tracks.')));
       ffmpeg.once('close', code => code === 0 ? resolve() : reject(new Error('ffmpeg could not combine the partial video and audio tracks.')));
     });
@@ -4770,7 +5344,7 @@ async function downloadAudioTrackForFinish(id, url, job) {
   saveDownload(id, 'downloading', '', job.progress, job.stage);
 
   await new Promise((resolve, reject) => {
-    const audioProcess = spawn(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const audioProcess = spawnTracked(process.env.YT_DLP_PATH || 'yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     job.audioProcess = audioProcess;
     let output = '';
     const buffers = { stdout: '', stderr: '' };
@@ -4837,8 +5411,46 @@ async function finishPartialDownload(id, url, job) {
   await finalizePartialWebm(id, { allowLongerAudio: true, requireAudioThroughVideo: true });
 }
 
+function resumePendingLiveFinishRecoveries() {
+  const item = database.prepare(`SELECT video_id AS id, progress, started_at AS startedAt
+    FROM downloads WHERE status = 'paused' AND stage = 'Waiting to finalize live capture after restart'
+    ORDER BY updated_at LIMIT 1`).get();
+  if (!item || jobs.has(item.id)) return false;
+
+  const job = {
+    status: 'downloading', progress: Number(item.progress) || 0,
+    stage: 'Finalizing the captured live audio and video…', startedAt: item.startedAt,
+    transferStarted: true, offlinePauseRequested: false, pauseRequested: false,
+    finishRequested: false, finishPhase: 'merge', isLive: true,
+    endRequested: true, discardRequested: false
+  };
+  jobs.set(item.id, job);
+  saveDownload(item.id, 'downloading', '', job.progress, job.stage);
+  void finalizePartialWebm(item.id, { allowLongerAudio: true })
+    .then(async () => {
+      await verifyLocalMediaIntegrity(item.id, { downloadJob: job });
+      saveDownload(item.id, 'ready', '', 100, 'Ready to play');
+      await markFreshMediaAcquisition(item.id);
+    })
+    .catch(async error => {
+      if (serverShuttingDown) {
+        preserveJobForShutdown(item.id, job);
+        return;
+      }
+      if (String(error.code || '').startsWith('INTEGRITY_') || error.code === 'MEDIA_INTEGRITY') {
+        await recordMediaIntegrityFailure(item.id, error, { progress: job.progress });
+        return;
+      }
+      markDownloadPausedByUser(item.id, job.progress,
+        `The saved live capture could not be finalized: ${error.message} The captured files are preserved; choose Retry to try again.`);
+    })
+    .finally(() => releaseDownloadJob(item.id));
+  return true;
+}
+
 function resumePendingFinishRecoveries() {
-  if (jobs.size) return;
+  if (serverShuttingDown || jobs.size) return;
+  if (resumePendingLiveFinishRecoveries()) return;
   if (networkMode !== 'online' || offlinePreparationRequested) {
     const item = database.prepare(`
       SELECT d.video_id AS id, d.progress
@@ -4883,9 +5495,13 @@ function resumePendingFinishRecoveries() {
     .then(async () => {
       await verifyLocalMediaIntegrity(item.id, { downloadJob: job });
       saveDownload(item.id, 'ready', '', 100, 'Ready to play');
-      markFreshMediaAcquisition(item.id);
+      await markFreshMediaAcquisition(item.id);
     })
     .catch(async error => {
+      if (serverShuttingDown) {
+        preserveFinishForShutdown(item.id, job.progress);
+        return;
+      }
       if (error.code === 'WAITING_FOR_ONLINE') {
         markFinishWaitingForOnline(item.id, job.progress);
         return;
@@ -4900,12 +5516,133 @@ function resumePendingFinishRecoveries() {
     .finally(() => jobs.delete(item.id));
 }
 
+async function getHistoryOverview() {
+  if (historyOverviewCache && Date.now() < historyOverviewCacheExpiresAt) return historyOverviewCache;
+  if (historyOverviewBuildPromise) return historyOverviewBuildPromise;
+  historyOverviewBuildPromise = (async () => {
+    const playbackByKind = database.prepare(`SELECT
+      CASE WHEN v.kind = 'short' THEN 'short' ELSE 'video' END AS kind,
+      COALESCE(SUM(p.playback_ms), 0) AS playbackMs
+      FROM playback_sessions p LEFT JOIN videos v ON v.video_id = p.video_id GROUP BY kind`).all();
+    const videoPlaybackMs = Number(playbackByKind.find(row => row.kind === 'video')?.playbackMs) || 0;
+    const shortsPlaybackMs = Number(playbackByKind.find(row => row.kind === 'short')?.playbackMs) || 0;
+    const firstPlayback = database.prepare('SELECT MIN(started_at) AS firstAt FROM playback_sessions WHERE playback_ms > 0').get()?.firstAt;
+    const firstPlaybackMs = Date.parse(firstPlayback || '');
+    const trackedPlaybackDays = Number.isFinite(firstPlaybackMs) ? Math.max(1, Math.floor((Date.now() - firstPlaybackMs) / 86_400_000) + 1) : 0;
+    const totalPlaybackMs = videoPlaybackMs + shortsPlaybackMs;
+    const acquisition = database.prepare(`SELECT COUNT(*) AS eventCount,
+      COALESCE(SUM(file_size_bytes), 0) AS totalBytes,
+      COALESCE(SUM(CASE WHEN is_redownload = 1 THEN 1 ELSE 0 END), 0) AS repeatDownloads,
+      COALESCE(SUM(CASE WHEN is_redownload = 1 THEN file_size_bytes ELSE 0 END), 0) AS repeatedBytes
+      FROM media_acquisition_events`).get();
+    const liked = database.prepare('SELECT COUNT(*) AS total FROM video_preferences WHERE liked = 1').get().total;
+
+    const mediaFiles = (await Promise.all([
+      { directory: mediaDirectory, kind: 'video' },
+      { directory: shortsMediaDirectory, kind: 'short' }
+    ].map(async source => {
+      const entries = await readdir(source.directory, { withFileTypes: true }).catch(() => []);
+      return entries.filter(entry => entry.isFile() && /^[A-Za-z0-9_-]{11}\.(?:webm|mp4)$/i.test(entry.name))
+        .map(entry => ({ id: path.basename(entry.name, path.extname(entry.name)), filePath: path.join(source.directory, entry.name), kind: source.kind }));
+    }))).flat();
+    const currentFiles = await Promise.all(mediaFiles.map(async item => {
+      try { return { ...item, size: (await stat(item.filePath)).size }; } catch { return null; }
+    }));
+    const availableFiles = currentFiles.filter(Boolean);
+    const providers = new Map(database.prepare('SELECT video_id AS id, provider FROM external_media_sources').all().map(row => [row.id, row.provider || 'x']));
+    const sourceTotals = new Map();
+    for (const file of availableFiles) {
+      const provider = providers.get(file.id) || 'youtube';
+      const current = sourceTotals.get(provider) || { provider, count: 0, bytes: 0 };
+      current.count += 1;
+      current.bytes += file.size;
+      sourceTotals.set(provider, current);
+    }
+    const totalLocalBytes = availableFiles.reduce((sum, file) => sum + file.size, 0);
+    const sourceMix = [...sourceTotals.values()].sort((a, b) => b.count - a.count).map(item => ({
+      ...item,
+      percent: availableFiles.length ? Math.round(item.count * 100 / availableFiles.length) : 0,
+      label: item.provider === 'x' ? 'X / Twitter' : item.provider === 'youtube' ? 'YouTube' : item.provider
+    }));
+
+    let savedComments = 0;
+    let commentWords = 0;
+    let scannedRows = 0;
+    const sampleComments = [];
+    for (const row of database.prepare('SELECT comments_json AS commentsJson FROM video_comments').iterate()) {
+      let comments = [];
+      try { comments = JSON.parse(row.commentsJson || '[]'); } catch {}
+      if (Array.isArray(comments)) for (const comment of comments) {
+        const text = String(comment?.text || '').trim();
+        if (!text) continue;
+        savedComments += 1;
+        commentWords += (text.match(/[\p{L}\p{N}]+(?:['’.-][\p{L}\p{N}]+)*/gu) || []).length;
+        const sample = { text: text.replace(/\s+/g, ' ').slice(0, 170), author: String(comment.author || 'YouTube user').slice(0, 80) };
+        if (sampleComments.length < 3) sampleComments.push(sample);
+        else {
+          const pick = Math.floor(Math.random() * savedComments);
+          if (pick < sampleComments.length) sampleComments[pick] = sample;
+        }
+      }
+      scannedRows += 1;
+      if (scannedRows % 40 === 0) await new Promise(resolve => setImmediate(resolve));
+    }
+    const commenterAvatarKeys = new Set();
+    scannedRows = 0;
+    for (const row of database.prepare('SELECT local_assets_json AS assetsJson FROM video_metadata').iterate()) {
+      let assets = [];
+      try { assets = JSON.parse(row.assetsJson || '[]'); } catch {}
+      if (Array.isArray(assets)) for (const asset of assets) {
+        if (asset?.type !== 'commenter-avatar') continue;
+        const key = String(asset.cacheKey || asset.sourceUrl || '').trim();
+        if (key) commenterAvatarKeys.add(key);
+      }
+      scannedRows += 1;
+      if (scannedRows % 80 === 0) await new Promise(resolve => setImmediate(resolve));
+    }
+    const overview = {
+      playback: {
+        videoMs: videoPlaybackMs,
+        shortsMs: shortsPlaybackMs,
+        dailyAverageMs: trackedPlaybackDays ? Math.round(totalPlaybackMs / trackedPlaybackDays) : 0,
+        trackedSince: firstPlayback || ''
+      },
+      sources: { totalFiles: availableFiles.length, totalBytes: totalLocalBytes, mix: sourceMix },
+      acquisition: {
+        totalBytes: Number(acquisition.totalBytes) || 0,
+        redownloadBytes: Number(acquisition.repeatedBytes) || 0,
+        repeatDownloads: Number(acquisition.repeatDownloads) || 0,
+        events: Number(acquisition.eventCount) || 0,
+        trackedSince: mediaAcquisitionTrackingStartedAt
+      },
+      liked: Number(liked) || 0,
+      comments: {
+        count: savedComments,
+        words: commentWords,
+        readingMinutes: commentWords / 238,
+        samples: sampleComments,
+        commenterAvatars: commenterAvatarKeys.size
+      }
+    };
+    historyOverviewCache = overview;
+    historyOverviewCacheExpiresAt = Date.now() + 60_000;
+    return overview;
+  })();
+  try { return await historyOverviewBuildPromise; }
+  finally { historyOverviewBuildPromise = null; }
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   response.setHeader('X-Content-Type-Options', 'nosniff');
 
+  if (serverShuttingDown) {
+    sendJson(response, 503, { error: 'YourTube is shutting down. Restart the server to continue.' });
+    return;
+  }
+
   const origin = request.headers.origin || '';
-  const extensionOrigin = origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
+  const extensionOrigin = /^(?:chrome-extension|moz-extension|safari-web-extension):\/\//i.test(origin);
   const remoteAddress = request.socket.remoteAddress || '';
   const loopbackAddress = remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1';
 
@@ -4927,14 +5664,14 @@ const server = createServer(async (request, response) => {
   const dockerForwardedLoopbackRequest = !origin && loopbackHost && dockerGatewayAddresses.has(normalizedRemoteAddress);
   const localExtensionRequest = extensionOrigin || (!origin && loopbackAddress) || dockerForwardedLoopbackRequest;
   const extensionOnlyRoute = ['/api/extension/metadata-capture-jobs', '/api/extension/video-metadata', '/api/extension/diagnostics'].includes(url.pathname);
-  if (extensionOrigin && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
+  if (extensionOrigin && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/external-media' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname))) {
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Vary', 'Origin');
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'content-type');
     response.setHeader('Access-Control-Allow-Private-Network', 'true');
   }
-  if (request.method === 'OPTIONS' && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname)) && extensionOrigin) {
+  if (request.method === 'OPTIONS' && (extensionOnlyRoute || url.pathname === '/api/sync' || url.pathname === '/api/search-sync' || url.pathname === '/api/channel-sync' || url.pathname === '/api/external-media' || url.pathname === '/api/mode' || /^\/api\/(?:search-sessions\/[a-f0-9-]{36}|channel-captures\/(?:[a-f0-9-]{36}(?:\/status)?|batch))$/i.test(url.pathname)) && extensionOrigin) {
     response.writeHead(204).end();
     return;
   }
@@ -5150,8 +5887,18 @@ const server = createServer(async (request, response) => {
     let cached = videoId ? existingVideoThumbnail(videoId) : null;
     if (!cached && !isAllowedYoutubeImageSource(source)) { response.writeHead(400, { 'cache-control': 'no-store' }).end(); return; }
     if (!cached) cached = existingCachedImage(source);
-    if (!cached && youtubeRateLimitIsActive()) { response.writeHead(503, { 'cache-control': 'no-store', 'retry-after': String(Math.max(1, Math.ceil((youtubeRateLimitUntil - Date.now()) / 1000))) }).end(); return; }
-    if (!cached && !await cacheRemoteImage(source)) { response.writeHead(503, { 'cache-control': 'no-store' }).end(); return; }
+    if (!cached && !isAllowedXImageSource(source) && youtubeRateLimitIsActive()) {
+      const retryAfter = Math.max(1, Math.ceil((youtubeRateLimitUntil - Date.now()) / 1000));
+      response.writeHead(503, { 'cache-control': 'no-store', 'retry-after': String(retryAfter), 'x-yourtube-image-reason': 'youtube-rate-limit' }).end('YouTube image requests are temporarily paused after rate limiting.');
+      return;
+    }
+    if (!cached && !await cacheRemoteImage(source)) {
+      const retry = remoteImageRetryAfter.get(source);
+      const retryAfter = retry?.retryAt > Date.now() ? Math.max(1, Math.ceil((retry.retryAt - Date.now()) / 1000)) : 2;
+      const reason = retry?.reason || 'image-fetch-unavailable';
+      response.writeHead(retry?.status || 503, { 'cache-control': 'no-store', 'retry-after': String(retryAfter), 'x-yourtube-image-reason': reason.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 120) }).end(reason);
+      return;
+    }
     // Once a video has a canonical local thumbnail, a stale source URL must not
     // trigger another network lookup or replace the image we already saved.
     if (!cached) cached = existingVideoThumbnail(videoId) || existingCachedImage(source);
@@ -6006,6 +6753,7 @@ const server = createServer(async (request, response) => {
           ON CONFLICT(video_id) DO UPDATE SET liked = excluded.liked, updated_at = excluded.updated_at`).run(videoId, liked ? 1 : 0, now);
         shortsApiCache = null;
         shortsApiCacheExpiresAt = 0;
+        invalidateHistoryOverviewCache();
         sendJson(response, 200, { saved: true, action, liked });
         return;
       }
@@ -6503,6 +7251,15 @@ const server = createServer(async (request, response) => {
     }
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/history/overview') {
+    try { sendJson(response, 200, await getHistoryOverview()); }
+    catch (error) {
+      console.warn('[history-overview] Could not prepare expanded library stats:', error.message || error);
+      sendJson(response, 500, { error: 'Expanded library statistics could not be prepared.' });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/stats') {
     const mediaFiles = (await Promise.all([
       { directory: mediaDirectory, kind: 'video' },
@@ -6535,6 +7292,16 @@ const server = createServer(async (request, response) => {
       FROM downloads`).get();
     mediaIntegrity.failed = Math.max(mediaIntegrity.failed, quarantineFiles.filter(name => /^[A-Za-z0-9_-]{11}-\d+\.(?:webm|mp4)$/i.test(name)).length);
     const historicalViews = database.prepare('SELECT COALESCE(SUM(view_count), 0) AS total FROM video_views').get().total;
+    const playbackTotals = database.prepare(`SELECT
+      COALESCE(SUM(playback_ms), 0) AS totalPlaybackMs,
+      COALESCE(SUM(content_ms), 0) AS totalContentMs
+      FROM playback_sessions`).get();
+    const playbackMs = Math.max(0, Number(playbackTotals.totalPlaybackMs) || 0);
+    const adAvoidanceEstimate = {
+      breaks: Math.round(playbackMs * 3 / (10 * 60_000)),
+      secondsLow: Math.floor(playbackMs * 0.2 / 1000),
+      secondsHigh: Math.ceil(playbackMs * 0.3 / 1000)
+    };
     const extensionVideos = database.prepare('SELECT COUNT(*) AS total FROM videos').get().total;
     const durationVersion = database.prepare(`SELECT extension_version AS version, MAX(last_seen_at) AS lastSeen
       FROM extension_duration_baseline GROUP BY extension_version ORDER BY lastSeen DESC LIMIT 1`).get();
@@ -6579,7 +7346,8 @@ const server = createServer(async (request, response) => {
       phase: currentMetadata?.phase || '',
       message: currentMetadata?.message || ''
     };
-    sendJson(response, 200, { localFiles, localVideos, localShorts, mediaBytes, mediaIntegrity, mediaFolder: mediaFolderStatus(), historicalViews, extensionVideos, activeDownloads, pausedDownloads, queuedDownloads,
+    sendJson(response, 200, { localFiles, localVideos, localShorts, mediaBytes, mediaIntegrity, mediaFolder: mediaFolderStatus(), historicalViews,
+      totalPlaybackMs: playbackTotals.totalPlaybackMs, totalContentMs: playbackTotals.totalContentMs, adAvoidanceEstimate, extensionVideos, activeDownloads, pausedDownloads, queuedDownloads,
       youtubeCooldownUntil: getEnforcedYoutubeDownloadCooldownUntil(), activeChannelCaptures, durationLookupActive, pendingDurations, durationBaseline, downloadMetadata });
     return;
   }
@@ -7499,17 +8267,58 @@ const server = createServer(async (request, response) => {
       const currentTime = Number(payload.currentTime);
       const duration = Number(payload.duration);
       const completed = payload.completed === true;
+      const playbackSession = payload.playbackSession && typeof payload.playbackSession === 'object'
+        ? payload.playbackSession : null;
       if (!Number.isFinite(currentTime) || !Number.isFinite(duration) || currentTime < 0 || duration < 0) {
         sendJson(response, 400, { error: 'Playback progress must be non-negative numbers.' });
         return;
       }
+      if (playbackSession && (!/^[a-f0-9-]{36}$/i.test(String(playbackSession.sessionId || ''))
+        || !Number.isSafeInteger(playbackSession.sequence) || playbackSession.sequence < 1
+        || !Number.isSafeInteger(playbackSession.playbackMs) || playbackSession.playbackMs < 0
+        || !Number.isSafeInteger(playbackSession.contentMs) || playbackSession.contentMs < 0)) {
+        sendJson(response, 400, { error: 'Playback session totals are invalid.' });
+        return;
+      }
       const now = new Date().toISOString();
       const videoId = progressMatch[1];
-      database.prepare(`
-        INSERT INTO video_progress (video_id, current_time, duration, completed, updated_at) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(video_id) DO UPDATE SET current_time = excluded.current_time,
-          duration = excluded.duration, completed = excluded.completed, updated_at = excluded.updated_at
-      `).run(videoId, completed ? 0 : Math.min(currentTime, duration || currentTime), duration, completed ? 1 : 0, now);
+      let acceptedSessionUpdate = true;
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        if (playbackSession) {
+          const previous = database.prepare('SELECT video_id AS videoId, sequence FROM playback_sessions WHERE session_id = ?')
+            .get(playbackSession.sessionId);
+          if (previous && previous.videoId !== videoId) {
+            database.exec('ROLLBACK');
+            sendJson(response, 409, { error: 'A playback session cannot be assigned to another video.' });
+            return;
+          }
+          acceptedSessionUpdate = !previous || playbackSession.sequence > previous.sequence;
+        }
+        if (acceptedSessionUpdate && duration > 0) {
+          database.prepare(`
+            INSERT INTO video_progress (video_id, current_time, duration, completed, updated_at) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET current_time = excluded.current_time,
+              duration = excluded.duration, completed = excluded.completed, updated_at = excluded.updated_at
+          `).run(videoId, completed ? 0 : Math.min(currentTime, duration), duration, completed ? 1 : 0, now);
+        }
+        if (playbackSession && acceptedSessionUpdate) {
+          database.prepare(`
+            INSERT INTO playback_sessions (session_id, video_id, sequence, playback_ms, content_ms, started_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET sequence = excluded.sequence,
+              playback_ms = MAX(playback_sessions.playback_ms, excluded.playback_ms),
+              content_ms = MAX(playback_sessions.content_ms, excluded.content_ms), updated_at = excluded.updated_at
+            WHERE excluded.sequence > playback_sessions.sequence
+          `).run(playbackSession.sessionId, videoId, playbackSession.sequence,
+            playbackSession.playbackMs, playbackSession.contentMs, now, now);
+        }
+        database.exec('COMMIT');
+      } catch (error) {
+        try { database.exec('ROLLBACK'); } catch {}
+        throw error;
+      }
+      if (playbackSession && acceptedSessionUpdate) invalidateHistoryOverviewCache();
       const storedDuration = database.prepare('SELECT duration FROM videos WHERE video_id = ?').get(videoId)?.duration;
       const playbackDuration = formatDurationSeconds(duration);
       if (!String(storedDuration || '').trim() && playbackDuration) {
@@ -7517,7 +8326,8 @@ const server = createServer(async (request, response) => {
         setDurationLookup(videoId, 'ready', 'Duration recorded from local playback metadata.');
       }
       if (payload.playing === true) scheduleBackgroundDurationLookup(videoId);
-      sendJson(response, 200, { currentTime: completed ? 0 : currentTime, duration, completed, updatedAt: now });
+      sendJson(response, 200, { currentTime: completed ? 0 : currentTime, duration, completed, updatedAt: now,
+        playbackSessionAccepted: acceptedSessionUpdate });
     } catch {
       sendJson(response, 400, { error: 'Playback progress must be valid JSON.' });
     }
@@ -8097,6 +8907,120 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/external-media' && localExtensionRequest) {
+    try {
+      if (networkMode !== 'online' || offlinePreparationRequested) {
+        sendJson(response, 409, { error: 'X media acquisition is unavailable while YourTube is Offline or switching Offline.', mode: reportedNetworkMode() });
+        return;
+      }
+      if (connectivityStatus.available === false) {
+        sendJson(response, 503, { error: 'YourTube is Online, but the internet connection is unavailable. The X item was not queued.' });
+        return;
+      }
+      const body = await readBody(request, 40_000);
+      const parsed = parseXStatusUrl(body.sourceUrl);
+      if (!parsed) { sendJson(response, 400, { error: 'Open a supported X post containing a video, then use its YourTube download control.' }); return; }
+
+      const cleanText = value => String(value || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+      const suppliedTitle = cleanText(body.title).slice(0, 500);
+      const authorName = cleanText(body.authorName).slice(0, 200);
+      const validXImage = value => {
+        const source = safeImage(value);
+        return source && isAllowedXImageSource(source) ? source : '';
+      };
+      const id = externalLocalVideoId('x', parsed.sourceId);
+      const existingVideo = database.prepare('SELECT title, channel, thumbnail, avatar, duration FROM videos WHERE video_id = ?').get(id);
+      const priorTitle = String(existingVideo?.title || '').trim();
+      const priorAuthor = String(existingVideo?.channel || '').trim();
+      const title = suppliedTitle || (priorTitle && !/^X video(?:\s|$)/i.test(priorTitle) ? priorTitle : `X video${parsed.handle ? ` · @${parsed.handle}` : ''}`);
+      const priorAuthorIsFallback = !priorAuthor || /^(?:X creator unavailable|channel unavailable)$/i.test(priorAuthor)
+        || parsed.handle && priorAuthor.toLowerCase() === `@${parsed.handle}`.toLowerCase();
+      const author = authorName || (!priorAuthorIsFallback ? priorAuthor : parsed.handle ? `@${parsed.handle}` : 'X creator unavailable');
+      const thumbnail = validXImage(body.thumbnail) || String(existingVideo?.thumbnail || '').trim();
+      const avatar = validXImage(body.avatar) || String(existingVideo?.avatar || '').trim();
+      const durationSeconds = Math.max(0, Math.min(24 * 60 * 60, Number(body.durationSeconds) || 0));
+      const duration = durationSeconds > 0 ? formatDurationSeconds(durationSeconds) : String(existingVideo?.duration || '').trim();
+      const now = new Date().toISOString();
+      const issues = [externalIssue('id-mapping', `X post ID ${parsed.sourceId} is mapped to YourTube ID ${id}.`, 'The source link is stored separately; local media filenames, playback, and checksums use the stable YourTube ID.')];
+      if (/^X video(?:\s|$)/i.test(title)) issues.push(externalIssue('title-missing', 'The post did not expose readable text to use as a title.', 'A fallback title was saved; the captured text can be updated later without changing the media ID.'));
+      if (/^(?:X creator unavailable|channel unavailable|@[\p{L}\p{N}._-]+)$/iu.test(author)) issues.push(externalIssue('author-missing', 'The post did not expose the creator display name.', 'The media remains linked to its X status URL; yt-dlp metadata or a later page capture can fill the creator name.'));
+      if (!thumbnail) issues.push(externalIssue('thumbnail-missing', 'No supported X thumbnail was visible when the download was requested.', 'The local media can still be acquired; the card will use YourTube’s placeholder until a thumbnail is captured.'));
+      if (!avatar) issues.push(externalIssue('avatar-missing', 'No X profile avatar was available to store.', 'The card will use the author initials until an avatar is captured.'));
+      if (!duration) issues.push(externalIssue('duration-pending', 'The X player had not exposed its duration yet.', 'YourTube will probe the finished local media file and save its actual duration.'));
+
+      const priorSource = database.prepare('SELECT video_id AS id FROM external_media_sources WHERE provider = ? AND source_id = ?').get('x', parsed.sourceId);
+      if (priorSource?.id) {
+        const existingIssues = externalMediaSource(priorSource.id)?.issues || [];
+        for (const oldIssue of existingIssues) {
+          if (oldIssue?.code === 'extractor-id-differs') issues.push(oldIssue);
+        }
+      }
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        upsertVideo.run(id, parsed.sourceUrl, title, author, '', '', thumbnail, avatar, duration,
+          'Captured from X by the YourTube browser extension.', 'short', 'search', '', 0, now, now);
+        database.prepare(`INSERT INTO video_provisions (video_id, category, first_seen, last_seen) VALUES (?, 'external', ?, ?)
+          ON CONFLICT(video_id, category) DO UPDATE SET last_seen = excluded.last_seen`).run(id, now, now);
+        recordVideoProvenance(id, { sourceType: 'external', sourceKey: `x:${parsed.sourceId}`, sourceLabel: 'X', sourceUrl: parsed.sourceUrl }, now,
+          { sourceType: 'external', sourceKey: `x:${parsed.sourceId}`, sourceLabel: 'X', sourceUrl: parsed.sourceUrl });
+        database.prepare(`INSERT INTO external_media_sources (video_id, provider, source_id, source_url, extractor_id, issues_json, created_at, updated_at)
+          VALUES (?, 'x', ?, ?, '', ?, ?, ?)
+          ON CONFLICT(video_id) DO UPDATE SET source_url = excluded.source_url, issues_json = excluded.issues_json, updated_at = excluded.updated_at`)
+          .run(id, parsed.sourceId, parsed.sourceUrl, JSON.stringify(issues), now, now);
+        let previousMetadata = {};
+        try { previousMetadata = JSON.parse(database.prepare('SELECT metadata_json AS value FROM video_metadata WHERE video_id = ?').get(id)?.value || '{}'); } catch {}
+        const metadata = {
+          ...previousMetadata,
+          sourceProvider: 'x', sourceId: parsed.sourceId, sourceUrl: parsed.sourceUrl,
+          sourceTitle: suppliedTitle || previousMetadata.sourceTitle || title,
+          sourceAuthor: authorName || previousMetadata.sourceAuthor || author,
+          sourceDescription: cleanText(body.description).slice(0, 5000) || previousMetadata.sourceDescription || '',
+          sourceCapturedAt: body.title || body.authorName || body.description ? now : previousMetadata.sourceCapturedAt || now,
+          metadataSource: previousMetadata.extractorMetadataCaptured ? 'yt-dlp' : body.title || body.authorName || body.description ? 'browser-page' : previousMetadata.metadataSource || 'url-ingest',
+          idMapping: { sourceId: parsed.sourceId, localId: id },
+          issues
+        };
+        database.prepare(`INSERT INTO video_metadata (video_id, metadata_json, local_assets_json, updated_at) VALUES (?, ?, '[]', ?)
+          ON CONFLICT(video_id) DO UPDATE SET metadata_json = excluded.metadata_json, updated_at = excluded.updated_at`)
+          .run(id, JSON.stringify(metadata), now);
+        database.prepare(`INSERT OR IGNORE INTO video_comments (video_id, status, comments_json, message, updated_at)
+          VALUES (?, 'unavailable', '[]', 'X reply capture is not part of this acquisition flow.', ?)`)
+          .run(id, now);
+        isolateShortFromStandardFlows(id);
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+      externalMediaPublicById.set(id, { provider: 'x', sourceId: parsed.sourceId, sourceUrl: parsed.sourceUrl, extractorId: '', issues });
+
+      if (getStoredMediaPath(id)) {
+        const current = database.prepare('SELECT status FROM downloads WHERE video_id = ?').get(id);
+        if (current?.status !== 'ready' || !hasSavedIntegrityChecksum(id)) await beginDownload(id);
+      } else {
+        const retry = database.prepare('SELECT status FROM download_retry_queue WHERE video_id = ?').get(id);
+        if (!retry || !['pending', 'running', 'waiting-live', 'paused', 'paused-offline', 'paused-limit', 'exhausted'].includes(retry.status)) {
+          saveDownload(id, 'error', 'Queued from X in the browser.', 0, 'Waiting in download queue');
+          database.prepare(`INSERT INTO download_retry_queue (video_id, attempts, status, next_retry_at, last_error, updated_at)
+            VALUES (?, 0, 'pending', ?, 'Queued from X in the browser.', ?)
+            ON CONFLICT(video_id) DO UPDATE SET attempts = 0, status = 'pending', next_retry_at = excluded.next_retry_at,
+              last_error = excluded.last_error, updated_at = excluded.updated_at`).run(id, now, now);
+          await runDownloadRetries();
+        }
+      }
+      const download = getDownload(id) || { status: 'error', message: 'The download queue did not create a status record.' };
+      if (download.status === 'ready' && externalMetadataNeedsRefresh(id)) {
+        updateDownloadedMetadata(id, 'pending', 'queued', 'Refreshing X metadata from yt-dlp for this existing local file.', { attempts: 0, nextAttemptAt: '' });
+        setTimeout(() => runDownloadedMetadataQueue().catch(error => console.warn('[download-metadata] X refresh:', error.message || error)), 0).unref();
+      }
+      sendJson(response, download.status === 'ready' ? 200 : 202, { id, provider: 'x', sourceId: parsed.sourceId, sourceUrl: parsed.sourceUrl, issues, download });
+    } catch (error) {
+      const tooLarge = error instanceof RangeError;
+      sendJson(response, tooLarge ? 413 : 400, { error: tooLarge ? 'X capture details were too large.' : error.message || 'X media could not be queued.' });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/sync') {
     try {
       if (mediaDiscoveryPaused()) { const mode = reportedNetworkMode(); sendJson(response, 409, { error: mode === 'preparing' ? 'New media discovery is paused while YourTube is switching to Offline.' : 'YourTube is offline.', mode }); return; }
@@ -8378,6 +9302,199 @@ const commentBackfillTimer = setInterval(() => {
   catch (error) { console.error('Historical comment expansion:', error); }
 }, 15_000);
 commentBackfillTimer.unref();
+
+let shutdownPromise = null;
+let forceShutdownRequested = false;
+let shutdownExitCode = 0;
+let mustExitAfterShutdown = false;
+const shutdownIntegrityIds = new Set();
+const shutdownMediaFolderIds = new Set();
+const shutdownGraceMs = Math.max(1_000, Number(process.env.YOURTUBE_SHUTDOWN_TIMEOUT_MS) || 30_000);
+
+function shutdownWorkPending() {
+  return Boolean(jobs.size || downloadStartingIds.size || mediaFolderImports.size || mediaFolderImportJobs.size ||
+    integrityVerificationJobs.size || activeChildProcesses.size || commentJobs.size || remoteImageInFlight.size ||
+    mediaFolderScanPromise || offlinePreparationTask || downloadedMetadataWorkerRunning || backgroundDurationLookupRunning ||
+    commentBackfillWorkerRunning || playlistDownloadQueueRunning ||
+    [...channelLookups.values()].some(lookup => lookup.status === 'loading'));
+}
+
+function stopBackgroundWork() {
+  offlinePreparationRun += 1;
+  if (offlinePreparation.status === 'running') {
+    offlinePreparation = {
+      ...offlinePreparation,
+      status: 'paused',
+      message: 'Preparation paused during server shutdown; it will resume after restart.'
+    };
+    saveOfflinePreparationCheckpoint(offlinePreparation);
+  }
+  for (const timer of [downloadRetryTimer, finishRecoveryTimer, mediaCleanupTimer, mediaFolderPeriodicScanTimer,
+    connectivityMonitorTimer, backgroundDurationLookupTimer, staleCaptureTimer, downloadedMetadataTimer, commentBackfillTimer]) {
+    clearInterval(timer);
+  }
+  clearTimeout(mediaFolderScanTimer);
+  clearTimeout(mediaFolderWatcherRetryTimer);
+  mediaFolderWatcherRetryTimer = null;
+  for (const watcher of [mediaFolderWatcher, shortsMediaFolderWatcher]) {
+    try { watcher?.close(); } catch {}
+  }
+  mediaFolderWatcher = null;
+  shortsMediaFolderWatcher = null;
+
+  for (const id of integrityVerificationJobs.keys()) shutdownIntegrityIds.add(id);
+  for (const id of mediaFolderImports) shutdownMediaFolderIds.add(id);
+  for (const id of mediaFolderImportJobs.keys()) shutdownMediaFolderIds.add(id);
+  for (const [, job] of mediaFolderImportJobs) pauseIntegrityJob(job);
+  for (const job of jobs.values()) {
+    job.shutdownWasUserPaused = Boolean(job.pauseRequested);
+    job.shutdownWasOfflinePaused = Boolean(job.offlinePauseRequested);
+    job.shutdownRequested = true;
+    for (const child of [job.process, job.audioProcess]) {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try { child.kill('SIGINT'); } catch {}
+      }
+    }
+  }
+  for (const child of activeChildProcesses) {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill('SIGINT'); } catch {}
+    }
+  }
+}
+
+function checkpointInterruptedWork() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const mediaFolderIds = new Set([...shutdownMediaFolderIds, ...mediaFolderImports, ...mediaFolderImportJobs.keys()]);
+  for (const [id, job] of jobs) {
+    if (job.acquisitionExclusionReason) continue;
+    preserveJobForShutdown(id, job);
+  }
+  for (const id of new Set([...shutdownIntegrityIds, ...integrityVerificationJobs.keys()])) {
+    if (mediaFolderIds.has(id)) continue;
+    const row = database.prepare('SELECT origin, progress FROM downloads WHERE video_id = ?').get(id);
+    if (!row || row.origin === 'media-folder') {
+      mediaFolderIds.add(id);
+      continue;
+    }
+    preserveDownloadForShutdown(id, Number(row.progress) || 0);
+  }
+  for (const id of mediaFolderIds) {
+    database.prepare(`UPDATE downloads SET status = 'error',
+      message = 'The local integrity check stopped during server shutdown. YourTube will scan the media folder and resume it after restart.',
+      progress = 0, stage = 'Waiting for media-folder scan', updated_at = ?
+      WHERE video_id = ? AND status IN ('importing', 'paused')`).run(nowIso, id);
+    database.prepare('DELETE FROM download_retry_queue WHERE video_id = ?').run(id);
+  }
+
+  for (const row of database.prepare("SELECT video_id AS id, progress FROM downloads WHERE status = 'downloading'").all()) {
+    const job = jobs.get(row.id);
+    if (job) preserveJobForShutdown(row.id, job);
+    else preserveDownloadForShutdown(row.id, Number(row.progress) || 0);
+  }
+  database.prepare(`UPDATE download_retry_queue SET status = 'pending', next_retry_at = ?,
+    last_error = CASE WHEN trim(last_error) = '' THEN 'Retry will resume after server startup.' ELSE last_error END, updated_at = ?
+    WHERE status = 'running'`).run(nowIso, nowIso);
+  database.prepare(`UPDATE download_metadata SET status = 'pending', phase = 'queued',
+    message = 'Metadata preparation paused during server shutdown; it will resume after restart.',
+    next_attempt_at = '', updated_at = ? WHERE status = 'running'`).run(nowIso);
+  database.prepare(`UPDATE video_duration_lookups SET status = 'pending',
+    message = 'Duration lookup paused during server shutdown; it will resume after restart.', updated_at = ?
+    WHERE status = 'running'`).run(nowIso);
+  const commentsRetryAt = new Date(now.getTime() + commentBackfillPaceMs).toISOString();
+  database.prepare(`UPDATE comment_backfill_queue SET status = 'retry', next_attempt_at = ?,
+    message = 'Comment expansion paused during server shutdown; it will resume after restart.', updated_at = ?
+    WHERE status = 'running'`).run(commentsRetryAt, nowIso);
+  database.prepare(`UPDATE video_comments SET status = 'error',
+    message = 'Comment lookup stopped during server shutdown. Reload to try again.', updated_at = ? WHERE status = 'loading'`).run(nowIso);
+}
+
+async function waitForShutdownWork(deadline) {
+  while (!forceShutdownRequested && shutdownWorkPending() && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+async function gracefulShutdown(signal) {
+  if (shutdownPromise) return shutdownPromise;
+  serverShuttingDown = true;
+  shutdownExitCode = signal === 'SIGINT' ? 130 : 143;
+  console.log(`\nYourTube received ${signal}; stopping new work and preserving active jobs…`);
+  stopBackgroundWork();
+
+  let serverClosedNormally = false;
+  let serverClosed = Promise.resolve();
+  try {
+    serverClosed = new Promise(resolve => server.close(() => {
+      serverClosedNormally = true;
+      resolve();
+    }));
+    server.closeIdleConnections?.();
+  } catch (error) {
+    if (error?.code === 'ERR_SERVER_NOT_RUNNING') serverClosedNormally = true;
+    else console.warn('Could not close the HTTP listener cleanly:', error.message || error);
+  }
+
+  shutdownPromise = (async () => {
+    const deadline = Date.now() + shutdownGraceMs;
+    await Promise.all([
+      waitForShutdownWork(deadline),
+      new Promise(resolve => {
+        const timer = setTimeout(resolve, Math.max(1, deadline - Date.now()));
+        serverClosed.then(() => { clearTimeout(timer); resolve(); });
+      })
+    ]);
+
+    if (!serverClosedNormally) {
+      mustExitAfterShutdown = true;
+      server.closeAllConnections?.();
+    }
+    if (shutdownWorkPending() || forceShutdownRequested || mustExitAfterShutdown) {
+      console.warn('Shutdown grace period ended; terminating remaining subprocesses after saving restart state.');
+      for (const child of activeChildProcesses) {
+        try { child.kill('SIGKILL'); } catch {}
+      }
+      server.closeAllConnections?.();
+      await waitForShutdownWork(Date.now() + 2_000);
+      if (shutdownWorkPending()) mustExitAfterShutdown = true;
+    }
+
+    try {
+      checkpointInterruptedWork();
+      database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (error) {
+      console.error('Could not finish the shutdown checkpoint:', error.message || error);
+    }
+    try { database.close(); }
+    catch (error) { console.error('Could not close the YourTube database cleanly:', error.message || error); }
+    console.log('YourTube shutdown complete. Active downloads and checks will recover on the next start.');
+    process.exitCode = shutdownExitCode;
+    if (shutdownWorkPending() || forceShutdownRequested || mustExitAfterShutdown) process.exit(shutdownExitCode);
+  })();
+  return shutdownPromise;
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (!shutdownPromise) {
+      void gracefulShutdown(signal);
+      return;
+    }
+    forceShutdownRequested = true;
+    console.warn(`Received another ${signal}; forcing shutdown after the recovery checkpoint.`);
+    for (const child of activeChildProcesses) {
+      try { child.kill('SIGKILL'); } catch {}
+    }
+    server.closeAllConnections?.();
+  });
+}
+
+process.once('exit', () => {
+  for (const child of activeChildProcesses) {
+    try { child.kill('SIGKILL'); } catch {}
+  }
+});
 
 server.listen(port, host, () => {
   console.log(`YourTube local feed: http://${host}:${port}`);

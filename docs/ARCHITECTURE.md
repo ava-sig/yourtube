@@ -6,8 +6,10 @@ This document describes the current implementation. It separates the shipped beh
 
 ```mermaid
 flowchart LR
-  YT[Signed-in YouTube page] -->|Rendered cards and page details| CS[Extension content script]
+  YT[Signed-in YouTube page] -->|Rendered cards and page details| CS[YouTube capture script]
+  X[X post with video] -->|User-triggered visible metadata| XCS[X media control]
   CS -->|Validated messages| BG[Extension service worker]
+  XCS -->|Validated source URL and page metadata| BG
   BG -->|Structured local API requests| API[Node.js server]
   UI[YourTube Vue interface] <-->|HTTP API| API
   API <--> DB[(SQLite library and queues)]
@@ -26,6 +28,7 @@ The server and UI are one local application. `server.js` serves the HTML pages, 
 | --- | --- |
 | `server.js` | SQLite schema and migrations, API routes, feed/search results, downloads, playback history, retention, background metadata work, local media/image serving. |
 | `extension/capture.js` | Reads rendered YouTube cards, durations, subscriptions, playlist/Mix structures, channel details, and page-visible video/comment data. Expands supported “Show more” controls and scrolls tracked channel sections. |
+| `extension/external-media.js` | Adds the user-triggered X post download control and captures only rendered post/video details. |
 | `extension/background.js` | Sends captured records, manages browser-side sync retries, reflects Online/Offline state, sequences channel captures, and runs browser-page metadata captures. |
 | `extension/bridge.js` | Relays requests from the YourTube page to the extension, including search and channel-capture requests. |
 | `extension/popup.*` | Extension diagnostics for server/mode connectivity, browser capture tabs, local sync retries, queue samples, and recent failures; also controls Online/Offline mode. |
@@ -36,15 +39,16 @@ The server and UI are one local application. `server.js` serves the HTML pages, 
 
 ## Data and identity
 
-YouTube's 11-character video ID is the stable local identity. Repeated captures update the existing `videos` row instead of duplicating a card. Important tables include:
+YouTube's 11-character video ID remains its stable local identity. For other sources, YourTube generates its own 11-character local ID and stores the provider's ID and URL separately; repeated captures resolve to the same local record. Important tables include:
 
 - `videos`, `video_provisions`, and `video_provenance`: canonical stub metadata, broad provision categories, and a separate source history with source type/key/label/URL, first/last observation times, and observation count.
+- `external_media_sources`: provider, provider-native ID/URL, yt-dlp extractor ID, and acquisition issues linked to a YourTube-local video ID. This prevents an X post ID from being mistaken for a YouTube ID or used as the media filename.
 - `subscriptions`, `channels`, `channel_items`, and `channel_captures`: subscription presentation and captured channel profiles, tabs, items, and progress.
 - `playlists`, `playlist_items`, and `playback_queue`: local playlists, read-only YouTube playlist/Mix imports, and the play-next queue.
 - `downloads` and `download_retry_queue`: acquisition state, progress, retry schedule, pause reason, acquisition/expiry timestamps, and integrity checksum, file size, and file modification time.
 - `transcription_assets`: optional retained audio derivatives, source/audio checksums, transcription status, and fields for future transcript text, segments, model, and language.
 - `video_metadata`, `download_metadata`, `video_comments`, `cached_images`, and `video_thumbnail_assets`: saved metadata, completeness work, capped comment data, cached image indexes, and the first locally stored thumbnail linked by video ID.
-- `video_views`, `video_progress`, `search_history`, `search_history_results`, and `search_history_clicks`: aggregate opens, latest resume position, search sessions, and clicked results.
+- `video_views`, `video_progress`, `playback_sessions`, `search_history`, `search_history_results`, and `search_history_clicks`: aggregate opens, latest resume position, cumulative per-player playback/content totals, search sessions, and clicked results.
 - `video_duration_lookups` and `extension_duration_baseline`: duration work state and per-extension-version duration coverage observations.
 - `app_settings`: persistent Online/Offline, auto-delete, protection-cooldown, and preparation settings.
 
@@ -68,9 +72,19 @@ Opening a channel shows stored channel data immediately and asks the extension t
 
 One shared extension adapter recognizes YouTube playlist and Mix records from homepage, search, channel playlist tabs, and an open playlist page. It normalizes `/playlist?list=…` and `/watch?list=…` links, preserves Mix identity, and sends every captured record through the same asynchronous sync queue. Opening an incomplete YouTube playlist in YourTube asks the extension to open one inactive YouTube tab, scroll its playlist container, and sync entries as they load. The local detail view polls the playlist record, so entries appear without a manual refresh. The extension closes its capture tab after the final sync is acknowledged or queued. When the app returns Online, open YouTube tabs recapture their rendered data. Playlist-page entries come only from the playlist container, not unrelated watch recommendations; unloaded entries remain marked as incomplete. Imports are read-only with respect to the YouTube account. Local playlists support create/rename, add/remove, reordering, Watch later, shuffle, queueing, and sequential playback. Playlist entries point at local stubs; acquisition begins when a user starts playback.
 
+### X manual media acquisition
+
+On X and Twitter pages, `extension/external-media.js` adds a small control over each rendered video player. It reads the enclosing post's canonical status URL, visible post text, author, poster image, avatar, and player duration when available. The service worker validates that the sender is an X page and forwards the capture to `/api/external-media`; the server validates the X status URL again and never accepts a direct media URL or browser credentials.
+
+The X post ID and yt-dlp's extracted media ID are not assumed to be the same. `external_media_sources` maps both to a stable YourTube-generated ID, which is used by the database, media path, checksum, playback, and Shorts catalog. The downloader writes X media into the existing `shorts/` subfolder and uses the cookie-free yt-dlp pipeline. An extractor-ID mismatch is recorded as an issue while retaining the post URL as source of truth. The UI displays an X mark and original-post link; Downloads filters by source.
+
+Rendered post text supplies the title when present. If a field is not yet rendered, YourTube stores a readable fallback and records an issue; it does not fabricate metadata by querying a YouTube endpoint. Missing duration is probed from the completed local file. Captured X thumbnails and avatars are cached through the local image pipeline. If an image remains unavailable, the library keeps the playable media and a visible placeholder rather than looping metadata retries. X comments/replies are explicitly unavailable in this first adapter. Because X's page structure and yt-dlp's extractor support can change independently, unavailable posts, format errors, authentication requirements, and rate limits remain visible acquisition outcomes.
+
+X download retries share the durable download queue, but do not trigger or get held by the YouTube sign-in/rate-limit cooldown. YouTube protection pauses affect YouTube retry rows only, so a restriction from one provider does not stall the other provider's independent acquisition work.
+
 ### Browser metadata capture
 
-When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, and sends structured metadata to localhost. Source version **0.5.39** supports one to five configurable concurrent video-length capture tabs, with a pause control that stops new tabs while existing tabs continue. It filters YouTube movie and explicit paid/member-only card markers, while server-confirmed paid items are suppressed from future syncs. Permanently unavailable live recordings retain their metadata stubs and stop retrying. It tolerates YouTube URL rewrites, waits up to ten minutes for user-resolved CAPTCHA or age verification, then closes the tab and retries if no duration arrived. The extension popup exposes capture state and recent events, probes localhost directly if its worker is unavailable, and distinguishes a stale worker from a server outage. Its diagnostics endpoint accepts extension-origin or originless loopback requests. On extension updates, the worker reloads open YourTube tabs that are not playing audio, so Chrome drops invalidated bridge contexts and injects the current bridge without interrupting active playback.
+When `yt-dlp` cannot return a video length or browser-visible details are needed, the server marks the lookup for extension capture. The extension opens an inactive signed-in YouTube watch page, reads rendered fields, and sends structured metadata to localhost. Source version **0.5.40** supports one to five configurable concurrent video-length capture tabs, with a pause control that stops new tabs while existing tabs continue. It filters YouTube movie and explicit paid/member-only card markers, while server-confirmed paid items are suppressed from future syncs. Permanently unavailable live recordings retain their metadata stubs and stop retrying. It tolerates YouTube URL rewrites, waits up to ten minutes for user-resolved CAPTCHA or age verification, then closes the tab and retries if no duration arrived. The extension popup exposes capture state and recent events, probes localhost directly if its worker is unavailable, and distinguishes a stale worker from a server outage. Its diagnostics endpoint accepts extension-origin or originless loopback requests. On extension updates, the worker reloads open YourTube tabs that are not playing audio, so Chrome drops invalidated bridge contexts and injects the current bridge without interrupting active playback.
 
 ## Acquisition and playback
 
@@ -80,7 +94,7 @@ At the save boundary, ffmpeg decodes the full audio/video to verify the media. T
 
 Downloads run independently of watch-page polling while the Node process remains running. A persistent SQLite retry queue handles transient failures, exponential delay, and pause states. After ten failures an item is paused for user attention. Optional anti-throttling behavior is configurable; it is off by default. Live acquisition is identified separately; a captured playable file can be finalized and saved, or discarded.
 
-The local player writes an aggregate view-start counter and a latest playback-progress snapshot. It saves progress during playback and on page exit, resumes incomplete clips, supports autoplay through playlists and Up next, and has theater/expanded and fullscreen layouts. The app shell routes between home, channel, downloads, and watch views while keeping one watch DOM root and its media element alive. On other views the router moves that same element into a draggable mini player, then restores it when the watch view returns. The mini player and watch view both read the SQLite `playback_queue`; queue entries are played ahead of automatic recommendations and removed after the local file is ready. Keyboard shortcuts include J/K/L, Space, number-key seeking, and F for fullscreen. The watch page includes comments and local recommendations. Comment snapshots are capped at 1,000 per video; YouTube may disable or withhold them.
+The local player writes an aggregate view-start counter, a latest playback-progress snapshot, and cumulative per-player playback totals. The same media element continues through mini-player navigation, so its session counters continue with it. Timeline movement estimates content time; dividing by the active playback rate estimates wall-clock playback time, excluding seeks and decode stalls. Separate browser/player sessions are summed independently, so playback time is not presented as literal attention. Progress saves during playback, on pause, and on page exit; incomplete clips resume from the saved position. The player supports autoplay through playlists and Up next, and has theater/expanded and fullscreen layouts. The app shell routes between home, channel, downloads, and watch views while keeping one watch DOM root and its media element alive. On other views the router moves that same element into a draggable mini player, then restores it when the watch view returns. The mini player and watch view both read the SQLite `playback_queue`; queue entries are played ahead of automatic recommendations and removed after the local file is ready. Keyboard shortcuts include J/K/L, Space, number-key seeking, and F for fullscreen. The watch page includes comments and local recommendations. Comment snapshots are capped at 1,000 per video; YouTube may disable or withhold them.
 
 ## Metadata, Offline mode, and retention
 

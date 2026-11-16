@@ -41,6 +41,41 @@ function isYouTubePageSender(sender) {
   } catch { return false; }
 }
 
+function isXPageSender(sender) {
+  try {
+    const url = new URL(sender.url || '');
+    return url.protocol === 'https:' && ['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname);
+  } catch { return false; }
+}
+
+function parseExternalStatusUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || !['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname)) return null;
+    const match = url.pathname.match(/^\/@?[\p{L}\p{N}._-]{1,100}\/status\/(\d+)(?:\/video\/\d+)?\/?$/u)
+      || url.pathname.match(/^\/i\/(?:web\/)?status\/(\d+)(?:\/video\/\d+)?\/?$/);
+    return match && match[1].length <= 40 ? url.href : null;
+  } catch { return null; }
+}
+
+async function queueExternalMedia(message, sender) {
+  if (!isXPageSender(sender) || sender.tab?.id === undefined) throw new Error('X download controls only work on an X or Twitter page.');
+  const capture = message?.capture && typeof message.capture === 'object' ? message.capture : {};
+  const sourceUrl = parseExternalStatusUrl(capture.sourceUrl);
+  if (!sourceUrl) throw new Error('The selected item did not pass the X post URL check.');
+  await refreshMode();
+  if (extensionMode !== 'online') throw new Error('Set YourTube Online to queue a new X download.');
+  const response = await fetch('http://127.0.0.1:4173/api/external-media', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...capture, sourceUrl })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (result.mode) await saveMode(result.mode);
+  if (!response.ok && response.status !== 202) throw new Error(result.error || `YourTube returned HTTP ${response.status}`);
+  return result;
+}
+
 async function fetchLocalAvailability() {
   if (localAvailabilityCache.expiresAt > Date.now()) return localAvailabilityCache.ids;
   const response = await fetch('http://127.0.0.1:4173/api/downloads/available', { cache: 'no-store' });
@@ -1118,6 +1153,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tab = await chrome.tabs.create({ url: `http://127.0.0.1:4173/watch/${encodeURIComponent(id)}`, active: true });
       sendResponse({ ok: true, tabId: tab.id });
     })().catch(error => sendResponse({ ok: false, error: error?.message || 'Could not open the local video.' }));
+    return true;
+  }
+  if (message?.type === 'yourtube:queue-external-media') {
+    queueExternalMedia(message, sender).then(result => sendResponse({ ok: true, ...result }))
+      .catch(error => sendResponse({ ok: false, error: error?.message || 'Could not queue this X download.' }));
+    return true;
+  }
+  if (message?.type === 'yourtube:get-external-download-progress') {
+    const id = String(message.videoId || '');
+    if (!isXPageSender(sender) || !/^[A-Za-z0-9_-]{11}$/.test(id)) {
+      sendResponse({ ok: false, error: 'Invalid X media download status request.' });
+      return;
+    }
+    readDownloadProgress(id).then(download => sendResponse({ ok: true, download }))
+      .catch(error => sendResponse({ ok: false, error: error?.message || 'Could not read X download progress.' }));
+    return true;
+  }
+  if (message?.type === 'yourtube:open-external-local-media') {
+    const id = String(message.videoId || '');
+    if (!isXPageSender(sender) || !/^[A-Za-z0-9_-]{11}$/.test(id)) {
+      sendResponse({ ok: false, error: 'Invalid X local playback request.' });
+      return;
+    }
+    (async () => {
+      const download = await readDownloadProgress(id);
+      if (download.status !== 'ready') throw new Error('The local X copy is not ready to play yet.');
+      const tab = await chrome.tabs.create({ url: `http://127.0.0.1:4173/shorts/${encodeURIComponent(id)}`, active: true });
+      sendResponse({ ok: true, tabId: tab.id });
+    })().catch(error => sendResponse({ ok: false, error: error?.message || 'Could not open the local X media.' }));
     return true;
   }
   if (message?.type === 'yourtube:get-diagnostics') {
